@@ -4,7 +4,7 @@ RTSyn is a Rust-based real-time electrophysiology platform for building and exec
 
 ## Dependences
 
-- Rust toolchain (stable) with Cargo
+### Rust toolchain (stable) with Cargo
 
 Install Rust via rustup:
 
@@ -16,6 +16,26 @@ Then ensure your environment is loaded:
 
 ```bash
 source "$HOME/.cargo/env"
+```
+
+### libfontconfig and pkg-config
+
+On Debian/Ubuntu:
+
+```bash
+sudo apt install libfontconfig1-dev pkg-config
+```
+
+On Fedora/RHEL/CentOS
+
+```bash
+sudo dnf install fontconfig-devel pkgconf-pkg-config
+```
+
+On Arch:
+
+```bash
+sudo pacman -Syu fontconfig pkgconf
 ```
 
 ## Usage
@@ -74,11 +94,13 @@ sudo setcap cap_sys_nice=ep target/release/rtsyn
 The NI DAQ plugin supports two compilation modes:
 
 **Mock mode (default)** - for development without hardware:
+
 ```bash
 cargo build --release
 ```
 
 **Hardware mode** - when NI-DAQmx drivers are installed:
+
 ```bash
 cargo build --release --features ni_daq/hardware --no-default-features -p ni_daq
 ```
