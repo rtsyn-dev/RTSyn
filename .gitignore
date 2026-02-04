@@ -1,0 +1,5 @@
+/target
+
+# Workspaces
+app_workspaces/*.json
+app_plugins/*.json

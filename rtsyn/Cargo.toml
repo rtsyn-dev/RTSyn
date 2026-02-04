@@ -1,0 +1,16 @@
+[package]
+name = "rtsyn"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+rtsyn-runtime = { path = "../rtsyn-runtime" }
+workspace = { path = "../workspace" }
+gui = { path = "../gui" }
+log = { workspace = true }
+
+[features]
+default = []
+preempt_rt = ["rtsyn-runtime/preempt_rt"]
+xenomai = ["rtsyn-runtime/xenomai"]

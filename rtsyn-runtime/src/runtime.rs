@@ -1,0 +1,571 @@
+use csv_recorder_plugin::{normalize_path, CsvRecorderedPlugin};
+use libloading::Library;
+use live_plotter_plugin::LivePlotterPlugin;
+use ni_daq::NiDaqPlugin;
+use performance_monitor_plugin::PerformanceMonitorPlugin;
+use rtsyn_plugin::{Plugin, PluginApi, PluginContext, PluginString, RTSYN_PLUGIN_API_SYMBOL};
+use serde_json::Value;
+use std::collections::{HashMap, HashSet};
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::time::{Duration, Instant};
+use workspace::{input_sum, input_sum_any, order_plugins_for_execution, WorkspaceDefinition};
+
+use crate::rt_thread::{ActiveRtBackend, RuntimeThread};
+
+#[derive(Debug, Clone)]
+pub struct LogicSettings {
+    pub cores: Vec<usize>,
+    pub period_seconds: f64,
+    pub time_scale: f64,
+    pub time_label: String,
+    pub ui_hz: f64,
+    pub max_integration_steps: usize, // Maximum integration steps per plugin per tick
+}
+
+#[derive(Debug, Clone)]
+pub struct LogicState {
+    pub outputs: HashMap<(u64, String), f64>,
+    pub viewer_values: HashMap<u64, f64>,
+    pub tick: u64,
+    pub plotter_samples: HashMap<u64, Vec<(u64, Vec<f64>)>>,
+}
+
+#[derive(Debug, Clone)]
+pub enum LogicMessage {
+    UpdateSettings(LogicSettings),
+    UpdateWorkspace(WorkspaceDefinition),
+    SetPluginRunning(u64, bool),
+    RestartPlugin(u64),
+}
+
+enum RuntimePlugin {
+    CsvRecorder(CsvRecorderedPlugin),
+    LivePlotter(LivePlotterPlugin),
+    PerformanceMonitor(PerformanceMonitorPlugin),
+    NiDaq(NiDaqPlugin),
+    Dynamic(DynamicPluginInstance),
+}
+
+struct DynamicPluginInstance {
+    _lib: Library,
+    api: *const PluginApi,
+    handle: *mut std::ffi::c_void,
+    inputs: Vec<String>,
+    outputs: Vec<String>,
+    input_bytes: Vec<Vec<u8>>,
+    output_bytes: Vec<Vec<u8>>,
+    last_config: Option<String>,
+    last_inputs: Vec<u64>,
+}
+
+impl DynamicPluginInstance {
+    unsafe fn load(path: &str, id: u64) -> Option<Self> {
+        let lib = Library::new(path).ok()?;
+        let symbol: libloading::Symbol<unsafe extern "C" fn() -> *const PluginApi> =
+            lib.get(RTSYN_PLUGIN_API_SYMBOL.as_bytes()).ok()?;
+        let api_ptr = symbol();
+        if api_ptr.is_null() {
+            return None;
+        }
+        let api = api_ptr;
+        let handle = ((*api).create)(id);
+        if handle.is_null() {
+            return None;
+        }
+        let inputs = Self::read_ports(unsafe { &*api }, handle, unsafe { (*api).inputs_json });
+        let outputs = Self::read_ports(unsafe { &*api }, handle, unsafe { (*api).outputs_json });
+        let input_bytes = inputs.iter().map(|v| v.as_bytes().to_vec()).collect();
+        let output_bytes = outputs.iter().map(|v| v.as_bytes().to_vec()).collect();
+        let last_inputs = vec![f64::NAN.to_bits(); inputs.len()];
+        Some(Self {
+            _lib: lib,
+            api,
+            handle,
+            inputs,
+            outputs,
+            input_bytes,
+            output_bytes,
+            last_config: None,
+            last_inputs,
+        })
+    }
+
+    unsafe fn read_ports(
+        _api: &PluginApi,
+        handle: *mut std::ffi::c_void,
+        fetch: extern "C" fn(*mut std::ffi::c_void) -> PluginString,
+    ) -> Vec<String> {
+        let raw = fetch(handle);
+        if raw.ptr.is_null() || raw.len == 0 {
+            return Vec::new();
+        }
+        let json = unsafe { raw.into_string() };
+        serde_json::from_str::<Vec<String>>(&json).unwrap_or_default()
+    }
+}
+
+pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), String> {
+    let (logic_tx, logic_rx) = mpsc::channel::<LogicMessage>();
+    let (logic_state_tx, logic_state_rx) = mpsc::channel::<LogicState>();
+
+    RuntimeThread::spawn(move || {
+        let mut settings = LogicSettings {
+            cores: vec![0],
+            period_seconds: 0.001,
+            time_scale: 1000.0,
+            time_label: "time_ms".to_string(),
+            ui_hz: 60.0,
+            max_integration_steps: 10, // Reasonable default for real-time performance
+        };
+        let mut period_duration = Duration::from_secs_f64(settings.period_seconds.max(0.0));
+        let mut sleep_deadline = ActiveRtBackend::init_sleep(period_duration);
+        let mut workspace: Option<WorkspaceDefinition> = None;
+        let mut plugin_instances: HashMap<u64, RuntimePlugin> = HashMap::new();
+        let mut plugin_running: HashMap<u64, bool> = HashMap::new();
+        let mut plugin_ctx = PluginContext {
+            period_seconds: settings.period_seconds,
+            ..Default::default()
+        };
+        let mut outputs: HashMap<(u64, String), f64> = HashMap::new();
+        let mut viewer_values: HashMap<u64, f64> = HashMap::new();
+        let mut plotter_samples: HashMap<u64, Vec<(u64, Vec<f64>)>> = HashMap::new();
+        let mut runtime = crate::Runtime::new(workspace::WorkspaceDefinition {
+            name: "test".to_string(),
+            description: String::new(),
+            target_hz: 1000,
+            plugins: Vec::new(),
+            connections: Vec::new(),
+            settings: workspace::WorkspaceSettings::default(),
+        });
+        let mut last_state = Instant::now();
+
+        loop {
+            while let Ok(message) = logic_rx.try_recv() {
+                match message {
+                    LogicMessage::UpdateSettings(new_settings) => {
+                        settings = new_settings;
+                        period_duration = Duration::from_secs_f64(settings.period_seconds.max(0.0));
+                        sleep_deadline = ActiveRtBackend::init_sleep(period_duration);
+                        plugin_ctx.period_seconds = settings.period_seconds;
+                    }
+                    LogicMessage::UpdateWorkspace(new_workspace) => {
+                        let mut new_ids: HashSet<u64> = HashSet::new();
+                        for plugin in &new_workspace.plugins {
+                            new_ids.insert(plugin.id);
+                            plugin_running.insert(plugin.id, plugin.running);
+                            if !plugin_instances.contains_key(&plugin.id) {
+                                let instance = match plugin.kind.as_str() {
+                                    "csv_recorder" => RuntimePlugin::CsvRecorder(
+                                        CsvRecorderedPlugin::new(plugin.id),
+                                    ),
+                                    "live_plotter" => RuntimePlugin::LivePlotter(
+                                        LivePlotterPlugin::new(plugin.id),
+                                    ),
+                                    "performance_monitor" => RuntimePlugin::PerformanceMonitor(
+                                        PerformanceMonitorPlugin::new(plugin.id),
+                                    ),
+                                    "ni_daq" => RuntimePlugin::NiDaq(
+                                        NiDaqPlugin::new(plugin.id),
+                                    ),
+                                    _ => {
+                                        let library_path = plugin
+                                            .config
+                                            .get("library_path")
+                                            .and_then(|v| v.as_str());
+                                        if let Some(path) = library_path {
+                                            unsafe {
+                                                if let Some(dynamic) =
+                                                    DynamicPluginInstance::load(path, plugin.id)
+                                                {
+                                                    RuntimePlugin::Dynamic(dynamic)
+                                                } else {
+                                                    continue;
+                                                }
+                                            }
+                                        } else {
+                                            continue;
+                                        }
+                                    }
+                                };
+                                plugin_instances.insert(plugin.id, instance);
+                            }
+                        }
+
+                        let removed_ids: Vec<u64> = plugin_instances
+                            .keys()
+                            .filter(|id| !new_ids.contains(id))
+                            .copied()
+                            .collect();
+                        for id in removed_ids {
+                            if let Some(instance) = plugin_instances.remove(&id) {
+                                if let RuntimePlugin::Dynamic(dynamic) = instance {
+                                    (unsafe { &*dynamic.api }.destroy)(dynamic.handle);
+                                }
+                            }
+                            plugin_running.remove(&id);
+                            viewer_values.remove(&id);
+                            outputs.retain(|(pid, _), _| *pid != id);
+                            plotter_samples.remove(&id);
+                        }
+                        workspace = Some(new_workspace);
+                    }
+                    LogicMessage::SetPluginRunning(plugin_id, running) => {
+                        plugin_running.insert(plugin_id, running);
+                    }
+                    LogicMessage::RestartPlugin(plugin_id) => {
+                        let Some(ws) = workspace.as_ref() else {
+                            continue;
+                        };
+                        let Some(plugin) = ws.plugins.iter().find(|p| p.id == plugin_id) else {
+                            continue;
+                        };
+                        let instance = match plugin.kind.as_str() {
+                            "csv_recorder" => {
+                                RuntimePlugin::CsvRecorder(CsvRecorderedPlugin::new(plugin.id))
+                            }
+                            "ni_daq" => {
+                                RuntimePlugin::NiDaq(NiDaqPlugin::new(plugin.id))
+                            }
+                            _ => {
+                                let library_path =
+                                    plugin.config.get("library_path").and_then(|v| v.as_str());
+                                if let Some(path) = library_path {
+                                    unsafe {
+                                        if let Some(dynamic) =
+                                            DynamicPluginInstance::load(path, plugin.id)
+                                        {
+                                            RuntimePlugin::Dynamic(dynamic)
+                                        } else {
+                                            continue;
+                                        }
+                                    }
+                                } else {
+                                    continue;
+                                }
+                            }
+                        };
+                        plugin_instances.insert(plugin.id, instance);
+                        viewer_values.remove(&plugin.id);
+                        outputs.retain(|(pid, _), _| *pid != plugin.id);
+                    }
+                }
+            }
+
+            if let Some(ws) = workspace.as_ref() {
+                let plugins = order_plugins_for_execution(&ws.plugins, &ws.connections);
+
+                for plugin in plugins {
+                    let is_running = plugin_running
+                        .get(&plugin.id)
+                        .copied()
+                        .unwrap_or(plugin.running);
+                    let instance = match plugin_instances.get_mut(&plugin.id) {
+                        Some(instance) => instance,
+                        None => continue,
+                    };
+
+                    match instance {
+                        RuntimePlugin::Dynamic(plugin_instance) => {
+                            let api = unsafe { &*plugin_instance.api };
+                            if let Value::Object(map) = plugin.config.clone() {
+                                let mut map = map;
+                                map.insert(
+                                    "period_seconds".to_string(),
+                                    Value::from(settings.period_seconds),
+                                );
+                                map.insert(
+                                    "max_integration_steps".to_string(),
+                                    Value::from(settings.max_integration_steps as f64),
+                                );
+                                let json = Value::Object(map).to_string();
+                                if plugin_instance
+                                    .last_config
+                                    .as_ref()
+                                    .map(|last| last != &json)
+                                    .unwrap_or(true)
+                                {
+                                    (api.set_config_json)(
+                                        plugin_instance.handle,
+                                        json.as_bytes().as_ptr(),
+                                        json.as_bytes().len(),
+                                    );
+                                    plugin_instance.last_config = Some(json);
+                                }
+                            }
+                            for (idx, input_name) in plugin_instance.inputs.iter().enumerate() {
+                                let value =
+                                    input_sum(&ws.connections, &outputs, plugin.id, input_name);
+                                let bits = value.to_bits();
+                                if plugin_instance.last_inputs[idx] != bits {
+                                    plugin_instance.last_inputs[idx] = bits;
+                                    let bytes = &plugin_instance.input_bytes[idx];
+                                    (api.set_input)(
+                                        plugin_instance.handle,
+                                        bytes.as_ptr(),
+                                        bytes.len(),
+                                        value,
+                                    );
+                                }
+                            }
+                            if is_running {
+                                (api.process)(
+                                    plugin_instance.handle,
+                                    plugin_ctx.tick,
+                                    plugin_ctx.period_seconds,
+                                );
+                                for (idx, output_name) in plugin_instance.outputs.iter().enumerate()
+                                {
+                                    let bytes = &plugin_instance.output_bytes[idx];
+                                    let value = (api.get_output)(
+                                        plugin_instance.handle,
+                                        bytes.as_ptr(),
+                                        bytes.len(),
+                                    );
+                                    outputs.insert((plugin.id, output_name.clone()), value);
+                                }
+                            }
+                        }
+                        RuntimePlugin::CsvRecorder(plugin_instance) => {
+                            let config_input_count = plugin
+                                .config
+                                .get("input_count")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0)
+                                as usize;
+                            let separator = plugin
+                                .config
+                                .get("separator")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or(",");
+                            let path = plugin
+                                .config
+                                .get("path")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            let include_time = plugin
+                                .config
+                                .get("include_time")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(true);
+                            let mut columns: Vec<String> = plugin
+                                .config
+                                .get("columns")
+                                .and_then(|v| v.as_array())
+                                .map(|arr| {
+                                    arr.iter()
+                                        .map(|value| value.as_str().unwrap_or("").to_string())
+                                        .collect()
+                                })
+                                .unwrap_or_default();
+                            let mut input_count = columns.len();
+                            if input_count < config_input_count {
+                                columns.resize(config_input_count, String::new());
+                                input_count = config_input_count;
+                            }
+                            for idx in 0..input_count {
+                                if columns.get(idx).map(|v| v.is_empty()).unwrap_or(true) {
+                                    columns[idx] = "empty".to_string();
+                                }
+                            }
+                            let mut inputs = Vec::with_capacity(input_count);
+                            for idx in 0..input_count {
+                                let port = format!("in_{idx}");
+                                let value = if idx == 0 {
+                                    let mut ports = vec![port.clone()];
+                                    ports.push("in".to_string());
+                                    input_sum_any(&ws.connections, &outputs, plugin.id, &ports)
+                                } else {
+                                    input_sum(&ws.connections, &outputs, plugin.id, &port)
+                                };
+                                inputs.push(value);
+                            }
+                            plugin_instance.set_config(
+                                input_count,
+                                separator.to_string(),
+                                columns,
+                                normalize_path(path),
+                                is_running,
+                                include_time,
+                                settings.time_scale,
+                                settings.time_label.clone(),
+                                settings.period_seconds,
+                            );
+                            plugin_instance.set_inputs(inputs);
+                            let _ = plugin_instance.process(&mut plugin_ctx);
+                        }
+                        RuntimePlugin::NiDaq(plugin_instance) => {
+                            let device_name = plugin
+                                .config
+                                .get("device_name")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("Dev1");
+                            let sample_rate = plugin
+                                .config
+                                .get("sample_rate")
+                                .and_then(|v| v.as_f64())
+                                .unwrap_or(10000.0);
+                            let samples_per_channel = plugin
+                                .config
+                                .get("samples_per_channel")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(1000) as u32;
+                            
+                            // Parse channel lists
+                            let ai_channels: Vec<String> = plugin
+                                .config
+                                .get("ai_channels")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .split(',')
+                                .filter(|s| !s.trim().is_empty())
+                                .map(|s| s.trim().to_string())
+                                .collect();
+                            let ao_channels: Vec<String> = plugin
+                                .config
+                                .get("ao_channels")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .split(',')
+                                .filter(|s| !s.trim().is_empty())
+                                .map(|s| s.trim().to_string())
+                                .collect();
+                            let di_channels: Vec<String> = plugin
+                                .config
+                                .get("di_channels")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .split(',')
+                                .filter(|s| !s.trim().is_empty())
+                                .map(|s| s.trim().to_string())
+                                .collect();
+                            let do_channels: Vec<String> = plugin
+                                .config
+                                .get("do_channels")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .split(',')
+                                .filter(|s| !s.trim().is_empty())
+                                .map(|s| s.trim().to_string())
+                                .collect();
+
+                            plugin_instance.set_config(
+                                device_name.to_string(),
+                                sample_rate,
+                                samples_per_channel,
+                                ai_channels.clone(),
+                                ao_channels.clone(),
+                                di_channels.clone(),
+                                do_channels.clone(),
+                            );
+
+                            // Set input values for analog/digital outputs
+                            for channel in &ao_channels {
+                                let port = format!("ao_{}", channel);
+                                let value = input_sum(&ws.connections, &outputs, plugin.id, &port);
+                                plugin_instance.set_input(&port, value);
+                            }
+                            for channel in &do_channels {
+                                let port = format!("do_{}", channel);
+                                let value = input_sum(&ws.connections, &outputs, plugin.id, &port);
+                                plugin_instance.set_input(&port, value);
+                            }
+
+                            // Process the plugin
+                            let _ = plugin_instance.process(&mut plugin_ctx);
+
+                            // Get output values from analog/digital inputs
+                            for channel in &ai_channels {
+                                let port = format!("ai_{}", channel);
+                                let value = plugin_instance.get_output(&port);
+                                outputs.insert((plugin.id, port), value);
+                            }
+                            for channel in &di_channels {
+                                let port = format!("di_{}", channel);
+                                let value = plugin_instance.get_output(&port);
+                                outputs.insert((plugin.id, port), value);
+                            }
+                        }
+                        RuntimePlugin::LivePlotter(plugin_instance) => {
+                            let config_input_count = plugin
+                                .config
+                                .get("input_count")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0)
+                                as usize;
+                            let input_count = config_input_count;
+                            plugin_instance.set_config(input_count, is_running);
+                            let mut inputs = Vec::with_capacity(input_count);
+                            for idx in 0..input_count {
+                                let port = format!("in_{idx}");
+                                let value = if idx == 0 {
+                                    let mut ports = vec![port.clone()];
+                                    ports.push("in".to_string());
+                                    input_sum_any(&ws.connections, &outputs, plugin.id, &ports)
+                                } else {
+                                    input_sum(&ws.connections, &outputs, plugin.id, &port)
+                                };
+                                inputs.push(value);
+                            }
+                            plugin_instance.set_inputs(inputs.clone());
+                            if plugin_instance.is_running() {
+                                plotter_samples
+                                    .entry(plugin.id)
+                                    .or_default()
+                                    .push((plugin_ctx.tick, inputs));
+                            }
+                        }
+                        RuntimePlugin::PerformanceMonitor(plugin_instance) => {
+                            let max_latency_us = plugin
+                                .config
+                                .get("max_latency_us")
+                                .and_then(|v| v.as_f64())
+                                .unwrap_or(1000.0);
+                            
+                            let workspace_period_us = settings.period_seconds * 1_000_000.0;
+                            plugin_instance.set_config(max_latency_us, workspace_period_us);
+                            let _ = plugin_instance.process(&mut plugin_ctx);
+                            
+                            // Output the performance values
+                            for (idx, output_name) in ["period_us", "latency_us", "jitter_us", "realtime_violation"].iter().enumerate() {
+                                let value = plugin_instance.get_output_values()[idx];
+                                outputs.insert((plugin.id, output_name.to_string()), value);
+                            }
+                        }
+                    }
+                }
+                plugin_ctx.tick = plugin_ctx.tick.wrapping_add(1);
+                let ui_interval = if settings.ui_hz > 0.0 {
+                    Duration::from_secs_f64(1.0 / settings.ui_hz)
+                } else {
+                    Duration::from_secs(1)
+                };
+                if last_state.elapsed() >= ui_interval {
+                    // Limit plotter samples to prevent memory issues
+                    let mut limited_plotter_samples = HashMap::new();
+                    for (plugin_id, samples) in &plotter_samples {
+                        let mut limited_samples = samples.clone();
+                        // Keep only the last 1000 samples per plugin to prevent memory overflow
+                        if limited_samples.len() > 1000 {
+                            limited_samples.drain(0..limited_samples.len() - 1000);
+                        }
+                        limited_plotter_samples.insert(*plugin_id, limited_samples);
+                    }
+                    
+                    let _ = logic_state_tx.send(LogicState {
+                        outputs: outputs.clone(),
+                        viewer_values: viewer_values.clone(),
+                        tick: plugin_ctx.tick,
+                        plotter_samples: limited_plotter_samples,
+                    });
+                    plotter_samples.clear();
+                    last_state = Instant::now();
+                }
+            }
+            let _ = runtime.tick();
+            let _ = settings.cores.len();
+            ActiveRtBackend::sleep(period_duration, &mut sleep_deadline);
+        }
+    })?;
+
+    Ok((logic_tx, logic_state_rx))
+}

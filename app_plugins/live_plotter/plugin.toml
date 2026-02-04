@@ -1,0 +1,10 @@
+name = "Live Plotter"
+kind = "live_plotter"
+version = "0.1.0"
+description = "Live plotter for connection inputs."
+supports_start_stop = true
+supports_restart = false
+extendable_inputs = true
+auto_extend_inputs = true
+connection_dependent = true
+loads_started = false

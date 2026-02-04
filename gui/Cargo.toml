@@ -1,0 +1,23 @@
+[package]
+name = "gui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+eframe = "0.27"
+egui = "0.27"
+egui_plot = "0.27"
+serde_json = { workspace = true }
+plotters = { version = "0.3", default-features = false, features = ["bitmap_backend", "bitmap_encoder", "line_series", "ttf", "svg_backend"] }
+workspace = { path = "../workspace" }
+rtsyn-runtime = { path = "../rtsyn-runtime" }
+rtsyn_plugin = { workspace = true }
+serde = { workspace = true }
+toml = "0.8"
+rfd = "0.14"
+thiserror = { workspace = true }
+log = { workspace = true }
+csv_recorder_plugin = { path = "../app_plugins/csv_recorder" }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

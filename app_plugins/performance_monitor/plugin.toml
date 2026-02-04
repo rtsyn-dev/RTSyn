@@ -1,0 +1,23 @@
+name = "Performance Monitor"
+kind = "performance_monitor"
+
+[[outputs]]
+name = "period_us"
+description = "Measured period in microseconds"
+
+[[outputs]]
+name = "latency_us"
+description = "How late we are from expected timing"
+
+[[outputs]]
+name = "jitter_us"
+description = "Timing jitter in microseconds"
+
+[[outputs]]
+name = "realtime_violation"
+description = "1.0 if real-time constraint violated, 0.0 otherwise"
+
+[[variables]]
+name = "max_latency_us"
+description = "Maximum allowed period in microseconds"
+default = 1000.0

@@ -1,0 +1,29 @@
+[workspace]
+members = [
+  "connection",
+  # "rtsyn-plugin",
+  "workspace",
+  "gui",
+  "rtsyn",
+  "rtsyn-runtime",
+  "app_plugins/csv_recorder",
+  "app_plugins/live_plotter",
+  "app_plugins/performance_monitor",
+  "app_plugins/ni_daq",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+rtsyn_plugin = { git =  "https://github.com/rtsyn-dev/rtsyn-plugin" } 
+thiserror = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+
+[profile.release]
+codegen-units = 1
+lto = true
