@@ -89,24 +89,6 @@ cargo build --release --features preempt_rt
 sudo setcap cap_sys_nice=ep target/release/rtsyn
 ```
 
-### NI DAQ Plugin
-
-The NI DAQ plugin supports two compilation modes:
-
-**Mock mode (default)** - for development without hardware:
-
-```bash
-cargo build --release
-```
-
-**Hardware mode** - when NI-DAQmx drivers are installed:
-
-```bash
-cargo build --release --features ni_daq/hardware --no-default-features -p ni_daq
-```
-
-Note: Hardware mode requires NI-DAQmx runtime to be installed on the system.
-
 ## Plugin development
 
 Plugins can be developed either in-tree under `plugins/` or as independent repositories using the `rtsyn-plugin` crate. For external development:
