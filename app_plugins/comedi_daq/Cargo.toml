@@ -12,8 +12,6 @@ libc = "0.2"
 comedi = { version = "0.6", optional = true }
 
 [features]
-default = ["comedi"]
-mock = []
 comedi = ["comedi"]
 
 [lib]

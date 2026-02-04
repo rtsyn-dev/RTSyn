@@ -23,9 +23,11 @@ pkgdesc="Control and Measurement Device Interface (COMEDI)"
 arch=('x86_64')
 license=('GPL')
 depends=('glibc' 'libusb')
-makedepends=('git' 'linux-headers')
+makedepends=('git' 'linux-headers' 'autoconf' 'automake' 'libtool')
+options=('!lto')
 provides=('comedi' 'comedilib')
 conflicts=('comedi' 'comedilib')
+
 source=(
   'comedi::git+https://github.com/Linux-Comedi/comedi.git'
   'comedilib::git+https://github.com/Linux-Comedi/comedilib.git'
@@ -33,24 +35,49 @@ source=(
 sha256sums=('SKIP' 'SKIP')
 
 build() {
+  # Kernel + drivers
   cd "$srcdir/comedi"
+  ./autogen.sh
+  ./configure --prefix=/usr --sbindir=/usr/bin
   make
+
+  # Userspace library
   cd "$srcdir/comedilib"
   ./autogen.sh
-  ./configure --prefix=/usr
+  ./configure --prefix=/usr --sbindir=/usr/bin
   make
 }
 
 package() {
   cd "$srcdir/comedi"
   make DESTDIR="$pkgdir" install
+  # Move kernel modules to /usr/lib/modules to avoid /lib symlink conflicts on Arch
+  if [ -d "$pkgdir/lib/modules" ]; then
+    mkdir -p "$pkgdir/usr/lib"
+    if [ -d "$pkgdir/usr/lib/modules" ]; then
+      cp -a "$pkgdir/lib/modules/." "$pkgdir/usr/lib/modules/"
+      rm -rf "$pkgdir/lib/modules"
+    else
+      mv "$pkgdir/lib/modules" "$pkgdir/usr/lib/modules"
+    fi
+  fi
+  # Avoid packaging host-owned paths/symlinks and kernel metadata files
+  rm -rf "$pkgdir/lib"
+  if [ -d "$pkgdir/usr/sbin" ]; then
+    mkdir -p "$pkgdir/usr/bin"
+    cp -a "$pkgdir/usr/sbin/." "$pkgdir/usr/bin/" || true
+    rm -rf "$pkgdir/usr/sbin"
+  fi
+  find "$pkgdir/usr/lib/modules" -maxdepth 2 -type f -name 'modules.*' -delete 2>/dev/null || true
 
   cd "$srcdir/comedilib"
-  make DESTDIR="$pkgdir" install
+  # comedilib git tree can miss prebuilt HTML docs; ignore doc install errors
+  make -i DESTDIR="$pkgdir" install
 }
 EOF
 
-        makepkg -si --noconfirm
+        rm -f comedi-*.pkg.tar.* comedi-debug-*.pkg.tar.*
+        makepkg -si --noconfirm --cleanbuild
         sudo depmod -a
         sudo modprobe comedi
         cd ..

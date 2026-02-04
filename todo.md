@@ -24,6 +24,7 @@
 [ ] Python plugin development
 [ ] Performance tests
 [ ] Hover connections are shown on top of other windows
+[ ] Let the installed plugins be organized in folders
 [ ] When period is 100 us and window 10\*3500 plot isn't complete and the more I increment the window the less is shown (max points draw related, I think)
 [ ] max_latency_us should be max_latency and have a input similar of the settings (the value and the units)
 [ ] Problem on hindmarsh rose rust

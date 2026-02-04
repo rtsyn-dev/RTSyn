@@ -97,6 +97,12 @@ cargo build --release --features preempt_rt
 sudo setcap cap_sys_nice=ep target/release/rtsyn
 ```
 
+With comedi drivers:
+
+```bash
+cargo build --release --features "preempt_rt,comedi_daq/comedi"
+```
+
 ## Plugin development
 
 Plugins can be developed either in-tree under `plugins/` or as independent repositories using the `rtsyn-plugin` crate. For external development:
