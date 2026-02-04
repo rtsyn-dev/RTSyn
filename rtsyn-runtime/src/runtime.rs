@@ -464,6 +464,11 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                                 .get("scan_devices")
                                 .and_then(|v| v.as_bool())
                                 .unwrap_or(false);
+                            let scan_nonce = plugin
+                                .config
+                                .get("scan_nonce")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0);
                             
                             if scan_devices {
                                 // Trigger device discovery and update configuration
@@ -490,7 +495,29 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                                 ao_channels.clone(),
                                 di_channels.clone(),
                                 do_channels.clone(),
+                                scan_devices,
+                                scan_nonce,
                             );
+
+                            let mut active_inputs: HashSet<String> = HashSet::new();
+                            let mut active_outputs: HashSet<String> = HashSet::new();
+                            for conn in &ws.connections {
+                                if conn.to_plugin == plugin.id {
+                                    active_inputs.insert(conn.to_port.clone());
+                                }
+                                if conn.from_plugin == plugin.id {
+                                    active_outputs.insert(conn.from_port.clone());
+                                }
+                            }
+                            plugin_instance.set_active_ports(&active_inputs, &active_outputs);
+
+                            let has_active =
+                                !active_inputs.is_empty() || !active_outputs.is_empty();
+                            if has_active && !plugin_instance.is_open() {
+                                let _ = plugin_instance.open();
+                            } else if !has_active && plugin_instance.is_open() {
+                                let _ = plugin_instance.close();
+                            }
 
                             // Set input values for analog/digital outputs
                             for channel in &ao_channels {

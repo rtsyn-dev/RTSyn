@@ -26,6 +26,10 @@ pub struct NiDaqPlugin {
     
     // State
     is_open: bool,
+    last_scan_devices: bool,
+    last_scan_nonce: u64,
+    active_inputs: Vec<bool>,
+    active_outputs: Vec<bool>,
 }
 
 unsafe impl Send for NiDaqPlugin {}
@@ -46,6 +50,7 @@ impl NiDaqPlugin {
                     ("ai_channels".to_string(), Value::from("")),
                     ("ao_channels".to_string(), Value::from("")),
                     ("scan_devices".to_string(), Value::from(false)),
+                    ("scan_nonce".to_string(), Value::from(0_u64)),
                 ],
             },
             inputs: Vec::new(),
@@ -58,6 +63,10 @@ impl NiDaqPlugin {
             input_values: HashMap::new(),
             output_values: HashMap::new(),
             is_open: false,
+            last_scan_devices: false,
+            last_scan_nonce: 0,
+            active_inputs: Vec::new(),
+            active_outputs: Vec::new(),
         };
         
         // Auto-discover channels on creation
@@ -78,6 +87,8 @@ impl NiDaqPlugin {
         ao_channels: Vec<String>,
         _di_channels: Vec<String>,
         _do_channels: Vec<String>,
+        scan_devices: bool,
+        scan_nonce: u64,
     ) {
         self.device_name = device_name;
         self.sample_rate = sample_rate;
@@ -87,6 +98,12 @@ impl NiDaqPlugin {
 
         // Update ports
         self.update_ports();
+
+        if (scan_devices && !self.last_scan_devices) || (scan_nonce != self.last_scan_nonce) {
+            self.auto_configure();
+        }
+        self.last_scan_devices = scan_devices;
+        self.last_scan_nonce = scan_nonce;
     }
 
     pub fn handle_scan_trigger(&mut self) -> bool {
@@ -96,15 +113,10 @@ impl NiDaqPlugin {
             let (ai_channels, ao_channels) = Self::discover_channels(device);
             
             // Update configuration with discovered channels
-            self.set_config(
-                device.clone(),
-                self.sample_rate,
-                self.samples_per_channel,
-                ai_channels,
-                ao_channels,
-                Vec::new(),
-                Vec::new(),
-            );
+            self.device_name = device.clone();
+            self.analog_input_channels = ai_channels;
+            self.analog_output_channels = ao_channels;
+            self.update_ports();
             
             // Return true to indicate configuration changed
             return true;
@@ -115,12 +127,15 @@ impl NiDaqPlugin {
     fn update_ports(&mut self) {
         self.inputs.clear();
         self.outputs.clear();
+        self.active_inputs.clear();
+        self.active_outputs.clear();
 
         // Add analog output channels as inputs (values to write)
         for channel in &self.analog_output_channels {
             self.inputs.push(Port {
                 id: PortId(format!("ao_{}", channel)),
             });
+            self.active_inputs.push(false);
         }
 
         // Add analog input channels as outputs (values read)
@@ -128,6 +143,7 @@ impl NiDaqPlugin {
             self.outputs.push(Port {
                 id: PortId(format!("ai_{}", channel)),
             });
+            self.active_outputs.push(false);
         }
     }
 
@@ -167,15 +183,10 @@ impl NiDaqPlugin {
             println!("NI DAQ: Device '{}' has {} AI channels, {} AO channels", 
                     device, ai_channels.len(), ao_channels.len());
             
-            self.set_config(
-                device.clone(),
-                self.sample_rate,
-                self.samples_per_channel,
-                ai_channels,
-                ao_channels,
-                Vec::new(),
-                Vec::new(),
-            );
+            self.device_name = device.clone();
+            self.analog_input_channels = ai_channels;
+            self.analog_output_channels = ao_channels;
+            self.update_ports();
         } else {
             println!("NI DAQ: No devices discovered");
         }
@@ -187,6 +198,33 @@ impl NiDaqPlugin {
 
     pub fn get_output(&self, port_name: &str) -> f64 {
         self.output_values.get(port_name).copied().unwrap_or(0.0)
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.is_open
+    }
+
+    pub fn set_active_ports(
+        &mut self,
+        input_ports: &std::collections::HashSet<String>,
+        output_ports: &std::collections::HashSet<String>,
+    ) {
+        if self.active_inputs.len() != self.analog_output_channels.len() {
+            self.active_inputs
+                .resize(self.analog_output_channels.len(), false);
+        }
+        if self.active_outputs.len() != self.analog_input_channels.len() {
+            self.active_outputs
+                .resize(self.analog_input_channels.len(), false);
+        }
+        for (idx, channel) in self.analog_output_channels.iter().enumerate() {
+            let name = format!("ao_{}", channel);
+            self.active_inputs[idx] = input_ports.contains(&name);
+        }
+        for (idx, channel) in self.analog_input_channels.iter().enumerate() {
+            let name = format!("ai_{}", channel);
+            self.active_outputs[idx] = output_ports.contains(&name);
+        }
     }
 }
 
@@ -214,6 +252,9 @@ impl Plugin for NiDaqPlugin {
 
         // Mock: Generate simulated data for analog inputs
         for (i, channel) in self.analog_input_channels.iter().enumerate() {
+            if !self.active_outputs.get(i).copied().unwrap_or(false) {
+                continue;
+            }
             let port_name = format!("ai_{}", channel);
             // Simulate sine wave data with different frequencies per channel
             let value = (i as f64 * 0.5 + std::time::SystemTime::now()

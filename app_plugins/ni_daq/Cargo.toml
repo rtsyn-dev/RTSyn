@@ -11,7 +11,7 @@ serde_json = { workspace = true }
 libc = "0.2"
 
 [features]
-default = ["hardware"]
+default = ["mock"]
 mock = []
 hardware = []
 

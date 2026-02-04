@@ -232,6 +232,15 @@ impl GuiApp {
                                                         ui.label("Discovery:");
                                                         if ui.button("Scan Devices").clicked() {
                                                             println!("NI DAQ: Scan button clicked!");
+                                                            let next = map
+                                                                .get("scan_nonce")
+                                                                .and_then(|v| v.as_u64())
+                                                                .unwrap_or(0)
+                                                                .saturating_add(1);
+                                                            map.insert(
+                                                                "scan_nonce".to_string(),
+                                                                Value::from(next),
+                                                            );
                                                             
                                                             // Immediately discover devices and update the config
                                                             let devices = vec!["Dev1".to_string(), "PCI-6251".to_string(), "SimDev1".to_string()];
