@@ -1,0 +1,20 @@
+[package]
+name = "comedi_daq_plugin"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rtsyn_plugin = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+libc = "0.2"
+comedi = { version = "0.6", optional = true }
+
+[features]
+default = ["comedi"]
+mock = []
+comedi = ["comedi"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]

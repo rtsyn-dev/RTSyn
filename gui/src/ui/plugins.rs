@@ -330,6 +330,50 @@ impl GuiApp {
                                                             .interactive(false));
                                                         ui.end_row();
                                                     });
+                                            } else if plugin.kind == "comedi_daq" {
+                                                ui.label(RichText::new("Comedi Configuration").strong().size(13.0));
+                                                ui.add_space(4.0);
+
+                                                egui::Grid::new(("comedi_config_grid", plugin.id))
+                                                    .num_columns(2)
+                                                    .min_col_width(110.0)
+                                                    .spacing([10.0, 6.0])
+                                                    .show(ui, |ui| {
+                                                        ui.label("Scan:");
+                                                        if ui.button("Scan Channels").clicked() {
+                                                            let next = map
+                                                                .get("scan_nonce")
+                                                                .and_then(|v| v.as_u64())
+                                                                .unwrap_or(0)
+                                                                .saturating_add(1);
+                                                            map.insert(
+                                                                "scan_nonce".to_string(),
+                                                                Value::from(next),
+                                                            );
+                                                            plugin_changed = true;
+                                                        }
+                                                        ui.end_row();
+
+                                                        ui.label("Device:");
+                                                        let current_path = map
+                                                            .get("device_path")
+                                                            .and_then(|v| v.as_str())
+                                                            .unwrap_or("/dev/comedi0")
+                                                            .to_string();
+                                                        let mut path_buffer = current_path.clone();
+                                                        let resp = ui.add(
+                                                            egui::TextEdit::singleline(&mut path_buffer)
+                                                                .desired_width(180.0),
+                                                        );
+                                                        if resp.changed() && path_buffer != current_path {
+                                                            map.insert(
+                                                                "device_path".to_string(),
+                                                                Value::from(path_buffer),
+                                                            );
+                                                            plugin_changed = true;
+                                                        }
+                                                        ui.end_row();
+                                                    });
                                             } else {
                                                 let vars = manifest_by_kind
                                                     .get(&plugin.kind)

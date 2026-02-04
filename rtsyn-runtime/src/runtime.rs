@@ -1,4 +1,5 @@
 use csv_recorder_plugin::{normalize_path, CsvRecorderedPlugin};
+use comedi_daq_plugin::ComediDaqPlugin;
 use libloading::Library;
 use live_plotter_plugin::LivePlotterPlugin;
 use ni_daq_plugin::NiDaqPlugin;
@@ -43,6 +44,7 @@ enum RuntimePlugin {
     LivePlotter(LivePlotterPlugin),
     PerformanceMonitor(PerformanceMonitorPlugin),
     NiDaq(NiDaqPlugin),
+    ComediDaq(ComediDaqPlugin),
     Dynamic(DynamicPluginInstance),
 }
 
@@ -168,6 +170,10 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                                         println!("Runtime: Creating NI DAQ plugin instance");
                                         RuntimePlugin::NiDaq(NiDaqPlugin::new(plugin.id))
                                     },
+                                    "comedi_daq" => {
+                                        println!("Runtime: Creating Comedi DAQ plugin instance");
+                                        RuntimePlugin::ComediDaq(ComediDaqPlugin::new(plugin.id))
+                                    }
                                     _ => {
                                         let library_path = plugin
                                             .config
@@ -226,6 +232,9 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                             }
                             "ni_daq" => {
                                 RuntimePlugin::NiDaq(NiDaqPlugin::new(plugin.id))
+                            }
+                            "comedi_daq" => {
+                                RuntimePlugin::ComediDaq(ComediDaqPlugin::new(plugin.id))
                             }
                             _ => {
                                 let library_path =
@@ -508,6 +517,61 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                                 let port = format!("di_{}", channel);
                                 let value = plugin_instance.get_output(&port);
                                 outputs.insert((plugin.id, port), value);
+                            }
+                        }
+                        RuntimePlugin::ComediDaq(plugin_instance) => {
+                            let device_path = plugin
+                                .config
+                                .get("device_path")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("/dev/comedi0");
+                            let scan_devices = plugin
+                                .config
+                                .get("scan_devices")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
+                            let scan_nonce = plugin
+                                .config
+                                .get("scan_nonce")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0);
+
+                            let mut active_inputs: HashSet<String> = HashSet::new();
+                            let mut active_outputs: HashSet<String> = HashSet::new();
+                            for conn in &ws.connections {
+                                if conn.to_plugin == plugin.id {
+                                    active_inputs.insert(conn.to_port.clone());
+                                }
+                                if conn.from_plugin == plugin.id {
+                                    active_outputs.insert(conn.from_port.clone());
+                                }
+                            }
+
+                            plugin_instance.set_active_ports(&active_inputs, &active_outputs);
+                            plugin_instance.set_config(
+                                device_path.to_string(),
+                                scan_devices,
+                                scan_nonce,
+                            );
+
+                            let has_active =
+                                !active_inputs.is_empty() || !active_outputs.is_empty();
+                            if has_active && !plugin_instance.is_open() {
+                                let _ = plugin_instance.open();
+                            } else if !has_active && plugin_instance.is_open() {
+                                let _ = plugin_instance.close();
+                            }
+
+                            for port in plugin_instance.input_port_names() {
+                                let value = input_sum(&ws.connections, &outputs, plugin.id, port);
+                                plugin_instance.set_input(port, value);
+                            }
+
+                            let _ = plugin_instance.process(&mut plugin_ctx);
+
+                            for port in plugin_instance.output_port_names() {
+                                let value = plugin_instance.get_output(port);
+                                outputs.insert((plugin.id, port.clone()), value);
                             }
                         }
                         RuntimePlugin::LivePlotter(plugin_instance) => {

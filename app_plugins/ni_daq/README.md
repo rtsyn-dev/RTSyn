@@ -4,6 +4,20 @@
 
 This plugin provides a real-time interface to National Instruments DAQ devices using the `ni-daqmx-sys` crate for direct C API bindings.
 
+The NI DAQ plugin supports two compilation modes:
+
+**Mock mode (default)** - for development without hardware:
+
+```bash
+cargo build --release --features mock --no-default-features -p ni_daq
+```
+
+**Hardware mode** - when [NI-DAQmx drivers](https://www.ni.com/es/support/downloads/drivers/download.ni-daq-mx.html) are installed:
+
+```bash
+cargo build --release --features hardware # default feature
+```
+
 ### Key Real-Time Features
 
 1. **Pre-allocated Buffers**: All data buffers are allocated during configuration, not during real-time execution
@@ -17,7 +31,7 @@ This plugin provides a real-time interface to National Instruments DAQ devices u
 The plugin automatically discovers and configures channels based on the configuration:
 
 - **Analog Input (AI)**: Creates output ports `ai_<channel>` for reading values
-- **Analog Output (AO)**: Creates input ports `ao_<channel>` for writing values  
+- **Analog Output (AO)**: Creates input ports `ao_<channel>` for writing values
 - **Digital Input (DI)**: Creates output ports `di_<channel>` for reading digital states
 - **Digital Output (DO)**: Creates input ports `do_<channel>` for writing digital states
 

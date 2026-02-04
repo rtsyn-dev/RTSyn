@@ -1,0 +1,10 @@
+name = "Comedi DAQ Device Driver"
+kind = "comedi_daq"
+version = "0.1.0"
+description = "Real-time Comedi DAQ interface with automatic subdevice discovery"
+supports_start_stop = true
+supports_restart = true
+extendable_inputs = false
+auto_extend_inputs = false
+connection_dependent = true
+loads_started = false

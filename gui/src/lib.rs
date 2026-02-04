@@ -1021,6 +1021,10 @@ impl GuiApp {
             config_map.insert("ai_channels".to_string(), Value::from(""));
             config_map.insert("ao_channels".to_string(), Value::from(""));
             config_map.insert("scan_devices".to_string(), Value::from(false));
+        } else if installed.manifest.kind == "comedi_daq" {
+            config_map.insert("device_path".to_string(), Value::from("/dev/comedi0"));
+            config_map.insert("scan_devices".to_string(), Value::from(false));
+            config_map.insert("scan_nonce".to_string(), Value::from(0));
         }
         if let Some(library_path) = installed.library_path.as_ref() {
             config_map.insert(
