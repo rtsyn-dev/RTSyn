@@ -2,7 +2,6 @@ use csv_recorder_plugin::{normalize_path, CsvRecorderedPlugin};
 use comedi_daq_plugin::ComediDaqPlugin;
 use libloading::Library;
 use live_plotter_plugin::LivePlotterPlugin;
-use ni_daq_plugin::NiDaqPlugin;
 use performance_monitor_plugin::PerformanceMonitorPlugin;
 use rtsyn_plugin::{Plugin, PluginApi, PluginContext, PluginString, RTSYN_PLUGIN_API_SYMBOL};
 use serde_json::Value;
@@ -43,7 +42,6 @@ enum RuntimePlugin {
     CsvRecorder(CsvRecorderedPlugin),
     LivePlotter(LivePlotterPlugin),
     PerformanceMonitor(PerformanceMonitorPlugin),
-    NiDaq(NiDaqPlugin),
     ComediDaq(ComediDaqPlugin),
     Dynamic(DynamicPluginInstance),
 }
@@ -166,10 +164,6 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                                     "performance_monitor" => RuntimePlugin::PerformanceMonitor(
                                         PerformanceMonitorPlugin::new(plugin.id),
                                     ),
-                                    "ni_daq" => {
-                                        println!("Runtime: Creating NI DAQ plugin instance");
-                                        RuntimePlugin::NiDaq(NiDaqPlugin::new(plugin.id))
-                                    },
                                     "comedi_daq" => {
                                         println!("Runtime: Creating Comedi DAQ plugin instance");
                                         RuntimePlugin::ComediDaq(ComediDaqPlugin::new(plugin.id))
@@ -229,9 +223,6 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                         let instance = match plugin.kind.as_str() {
                             "csv_recorder" => {
                                 RuntimePlugin::CsvRecorder(CsvRecorderedPlugin::new(plugin.id))
-                            }
-                            "ni_daq" => {
-                                RuntimePlugin::NiDaq(NiDaqPlugin::new(plugin.id))
                             }
                             "comedi_daq" => {
                                 RuntimePlugin::ComediDaq(ComediDaqPlugin::new(plugin.id))
@@ -402,149 +393,6 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                             );
                             plugin_instance.set_inputs(inputs);
                             let _ = plugin_instance.process(&mut plugin_ctx);
-                        }
-                        RuntimePlugin::NiDaq(plugin_instance) => {
-                            let device_name = plugin
-                                .config
-                                .get("device_name")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("Dev1");
-                            let sample_rate = plugin
-                                .config
-                                .get("sample_rate")
-                                .and_then(|v| v.as_f64())
-                                .unwrap_or(10000.0);
-                            let samples_per_channel = plugin
-                                .config
-                                .get("samples_per_channel")
-                                .and_then(|v| v.as_u64())
-                                .unwrap_or(1000) as u32;
-                            
-                            // Parse channel lists
-                            let ai_channels: Vec<String> = plugin
-                                .config
-                                .get("ai_channels")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .split(',')
-                                .filter(|s| !s.trim().is_empty())
-                                .map(|s| s.trim().to_string())
-                                .collect();
-                            let ao_channels: Vec<String> = plugin
-                                .config
-                                .get("ao_channels")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .split(',')
-                                .filter(|s| !s.trim().is_empty())
-                                .map(|s| s.trim().to_string())
-                                .collect();
-                            let di_channels: Vec<String> = plugin
-                                .config
-                                .get("di_channels")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .split(',')
-                                .filter(|s| !s.trim().is_empty())
-                                .map(|s| s.trim().to_string())
-                                .collect();
-                            let do_channels: Vec<String> = plugin
-                                .config
-                                .get("do_channels")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .split(',')
-                                .filter(|s| !s.trim().is_empty())
-                                .map(|s| s.trim().to_string())
-                                .collect();
-
-                            // Check for scan trigger
-                            let scan_devices = plugin
-                                .config
-                                .get("scan_devices")
-                                .and_then(|v| v.as_bool())
-                                .unwrap_or(false);
-                            let scan_nonce = plugin
-                                .config
-                                .get("scan_nonce")
-                                .and_then(|v| v.as_u64())
-                                .unwrap_or(0);
-                            
-                            if scan_devices {
-                                // Trigger device discovery and update configuration
-                                if plugin_instance.handle_scan_trigger() {
-                                    // Update the plugin config with discovered devices and channels
-                                    let devices = NiDaqPlugin::discover_devices();
-                                    let discovered_devices = devices.join(",");
-                                    
-                                    // Update ai_channels and ao_channels with discovered values
-                                    if let Some(device) = devices.first() {
-                                        let (ai_channels, ao_channels) = NiDaqPlugin::discover_channels(device);
-                                        
-                                        // This would need to be communicated back to GUI somehow
-                                        // For now, the channels are updated in the plugin instance
-                                    }
-                                }
-                            }
-
-                            plugin_instance.set_config(
-                                device_name.to_string(),
-                                sample_rate,
-                                samples_per_channel,
-                                ai_channels.clone(),
-                                ao_channels.clone(),
-                                di_channels.clone(),
-                                do_channels.clone(),
-                                scan_devices,
-                                scan_nonce,
-                            );
-
-                            let mut active_inputs: HashSet<String> = HashSet::new();
-                            let mut active_outputs: HashSet<String> = HashSet::new();
-                            for conn in &ws.connections {
-                                if conn.to_plugin == plugin.id {
-                                    active_inputs.insert(conn.to_port.clone());
-                                }
-                                if conn.from_plugin == plugin.id {
-                                    active_outputs.insert(conn.from_port.clone());
-                                }
-                            }
-                            plugin_instance.set_active_ports(&active_inputs, &active_outputs);
-
-                            let has_active =
-                                !active_inputs.is_empty() || !active_outputs.is_empty();
-                            if has_active && !plugin_instance.is_open() {
-                                let _ = plugin_instance.open();
-                            } else if !has_active && plugin_instance.is_open() {
-                                let _ = plugin_instance.close();
-                            }
-
-                            // Set input values for analog/digital outputs
-                            for channel in &ao_channels {
-                                let port = format!("ao_{}", channel);
-                                let value = input_sum(&ws.connections, &outputs, plugin.id, &port);
-                                plugin_instance.set_input(&port, value);
-                            }
-                            for channel in &do_channels {
-                                let port = format!("do_{}", channel);
-                                let value = input_sum(&ws.connections, &outputs, plugin.id, &port);
-                                plugin_instance.set_input(&port, value);
-                            }
-
-                            // Process the plugin
-                            let _ = plugin_instance.process(&mut plugin_ctx);
-
-                            // Get output values from analog/digital inputs
-                            for channel in &ai_channels {
-                                let port = format!("ai_{}", channel);
-                                let value = plugin_instance.get_output(&port);
-                                outputs.insert((plugin.id, port), value);
-                            }
-                            for channel in &di_channels {
-                                let port = format!("di_{}", channel);
-                                let value = plugin_instance.get_output(&port);
-                                outputs.insert((plugin.id, port), value);
-                            }
                         }
                         RuntimePlugin::ComediDaq(plugin_instance) => {
                             let device_path = plugin

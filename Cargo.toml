@@ -9,7 +9,6 @@ members = [
   "app_plugins/csv_recorder",
   "app_plugins/live_plotter",
   "app_plugins/performance_monitor",
-  "app_plugins/ni_daq",
   "app_plugins/comedi_daq",
 ]
 resolver = "2"

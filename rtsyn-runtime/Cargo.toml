@@ -14,7 +14,6 @@ libc = "0.2"
 csv_recorder_plugin = { path = "../app_plugins/csv_recorder" }
 live_plotter_plugin = { path = "../app_plugins/live_plotter" }
 performance_monitor_plugin = { path = "../app_plugins/performance_monitor" }
-ni_daq_plugin = { path = "../app_plugins/ni_daq" }
 comedi_daq_plugin = { path = "../app_plugins/comedi_daq" }
 
 [dev-dependencies]
