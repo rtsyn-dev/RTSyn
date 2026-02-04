@@ -38,6 +38,14 @@ On Arch:
 sudo pacman -Syu fontconfig pkgconf
 ```
 
+### Comedi DAQ Plugin (optional)
+
+If you plan to use the Comedi DAQ plugin, follow the install steps in `app_plugins/comedi_daq/README.md` or run:
+
+```bash
+bash scripts/install_comedi.bash
+```
+
 ## Usage
 
 ### Build
