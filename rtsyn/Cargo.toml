@@ -14,3 +14,4 @@ log = { workspace = true }
 default = []
 preempt_rt = ["rtsyn-runtime/preempt_rt"]
 xenomai = ["rtsyn-runtime/xenomai"]
+comedi = ["rtsyn-runtime/comedi", "gui/comedi"]

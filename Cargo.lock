@@ -928,6 +928,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "comedi_daq_plugin"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "rtsyn_plugin",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "concurrent-queue"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2316,17 +2327,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ni_daq_plugin"
-version = "0.1.0"
-dependencies = [
- "libc",
- "rtsyn_plugin",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
-]
-
-[[package]]
 name = "nix"
 version = "0.26.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3019,12 +3019,12 @@ dependencies = [
 name = "rtsyn-runtime"
 version = "0.1.0"
 dependencies = [
+ "comedi_daq_plugin",
  "csv_recorder_plugin",
  "libc",
  "libloading 0.8.9",
  "live_plotter_plugin",
  "mock_out_5_rs_runtime",
- "ni_daq_plugin",
  "performance_monitor_plugin",
  "rtsyn_plugin",
  "serde",

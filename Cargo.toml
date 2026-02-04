@@ -11,6 +11,13 @@ members = [
   "app_plugins/performance_monitor",
   "app_plugins/comedi_daq",
 ]
+default-members = [
+  "connection",
+  "workspace",
+  "rtsyn-runtime",
+  "gui",
+  "rtsyn",
+]
 resolver = "2"
 
 [workspace.package]

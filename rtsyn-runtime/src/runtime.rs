@@ -1,8 +1,9 @@
 use csv_recorder_plugin::{normalize_path, CsvRecorderedPlugin};
-use comedi_daq_plugin::ComediDaqPlugin;
 use libloading::Library;
 use live_plotter_plugin::LivePlotterPlugin;
 use performance_monitor_plugin::PerformanceMonitorPlugin;
+#[cfg(feature = "comedi")]
+use rtsyn_plugin::DeviceDriver;
 use rtsyn_plugin::{Plugin, PluginApi, PluginContext, PluginString, RTSYN_PLUGIN_API_SYMBOL};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -42,7 +43,8 @@ enum RuntimePlugin {
     CsvRecorder(CsvRecorderedPlugin),
     LivePlotter(LivePlotterPlugin),
     PerformanceMonitor(PerformanceMonitorPlugin),
-    ComediDaq(ComediDaqPlugin),
+    #[cfg(feature = "comedi")]
+    ComediDaq(comedi_daq_plugin::ComediDaqPlugin),
     Dynamic(DynamicPluginInstance),
 }
 
@@ -164,10 +166,10 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                                     "performance_monitor" => RuntimePlugin::PerformanceMonitor(
                                         PerformanceMonitorPlugin::new(plugin.id),
                                     ),
-                                    "comedi_daq" => {
-                                        println!("Runtime: Creating Comedi DAQ plugin instance");
-                                        RuntimePlugin::ComediDaq(ComediDaqPlugin::new(plugin.id))
-                                    }
+                                    #[cfg(feature = "comedi")]
+                                    "comedi_daq" => RuntimePlugin::ComediDaq(
+                                        comedi_daq_plugin::ComediDaqPlugin::new(plugin.id),
+                                    ),
                                     _ => {
                                         let library_path = plugin
                                             .config
@@ -224,9 +226,10 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                             "csv_recorder" => {
                                 RuntimePlugin::CsvRecorder(CsvRecorderedPlugin::new(plugin.id))
                             }
-                            "comedi_daq" => {
-                                RuntimePlugin::ComediDaq(ComediDaqPlugin::new(plugin.id))
-                            }
+                            #[cfg(feature = "comedi")]
+                            "comedi_daq" => RuntimePlugin::ComediDaq(
+                                comedi_daq_plugin::ComediDaqPlugin::new(plugin.id),
+                            ),
                             _ => {
                                 let library_path =
                                     plugin.config.get("library_path").and_then(|v| v.as_str());
@@ -394,6 +397,7 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                             plugin_instance.set_inputs(inputs);
                             let _ = plugin_instance.process(&mut plugin_ctx);
                         }
+                        #[cfg(feature = "comedi")]
                         RuntimePlugin::ComediDaq(plugin_instance) => {
                             let device_path = plugin
                                 .config
@@ -437,16 +441,23 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                                 let _ = plugin_instance.close();
                             }
 
-                            for port in plugin_instance.input_port_names() {
-                                let value = input_sum(&ws.connections, &outputs, plugin.id, port);
-                                plugin_instance.set_input(port, value);
+                            let input_ports: Vec<String> =
+                                plugin_instance.input_port_names().iter().cloned().collect();
+                            for port in input_ports {
+                                let value = input_sum(&ws.connections, &outputs, plugin.id, &port);
+                                plugin_instance.set_input(&port, value);
                             }
 
                             let _ = plugin_instance.process(&mut plugin_ctx);
 
-                            for port in plugin_instance.output_port_names() {
-                                let value = plugin_instance.get_output(port);
-                                outputs.insert((plugin.id, port.clone()), value);
+                            let output_ports: Vec<String> = plugin_instance
+                                .output_port_names()
+                                .iter()
+                                .cloned()
+                                .collect();
+                            for port in output_ports {
+                                let value = plugin_instance.get_output(&port);
+                                outputs.insert((plugin.id, port), value);
                             }
                         }
                         RuntimePlugin::LivePlotter(plugin_instance) => {
@@ -484,13 +495,17 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                                 .get("max_latency_us")
                                 .and_then(|v| v.as_f64())
                                 .unwrap_or(1000.0);
-                            
+
                             let workspace_period_us = settings.period_seconds * 1_000_000.0;
                             plugin_instance.set_config(max_latency_us, workspace_period_us);
                             let _ = plugin_instance.process(&mut plugin_ctx);
-                            
+
                             // Output the performance values
-                            for (idx, output_name) in ["period_us", "latency_us", "jitter_us", "realtime_violation"].iter().enumerate() {
+                            for (idx, output_name) in
+                                ["period_us", "latency_us", "jitter_us", "realtime_violation"]
+                                    .iter()
+                                    .enumerate()
+                            {
                                 let value = plugin_instance.get_output_values()[idx];
                                 outputs.insert((plugin.id, output_name.to_string()), value);
                             }
@@ -514,7 +529,7 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                         }
                         limited_plotter_samples.insert(*plugin_id, limited_samples);
                     }
-                    
+
                     let _ = logic_state_tx.send(LogicState {
                         outputs: outputs.clone(),
                         viewer_values: viewer_values.clone(),

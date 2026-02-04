@@ -21,3 +21,7 @@ csv_recorder_plugin = { path = "../app_plugins/csv_recorder" }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[features]
+default = []
+comedi = []

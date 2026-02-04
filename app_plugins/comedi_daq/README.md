@@ -4,7 +4,7 @@
 
 This plugin provides a real-time interface to Comedi-supported DAQ devices. It discovers available analog input/output channels at plugin load and on explicit rescan requests.
 
-By default it builds with the `comedi` feature enabled. Disable it or enable `mock` to run without hardware.
+By default it builds in mock mode. Enable the `comedi` feature to link against `libcomedi` and talk to real hardware.
 
 ## Install Comedi
 

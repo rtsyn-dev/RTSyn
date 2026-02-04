@@ -100,7 +100,7 @@ sudo setcap cap_sys_nice=ep target/release/rtsyn
 With comedi drivers:
 
 ```bash
-cargo build --release --features "preempt_rt,comedi_daq/comedi"
+cargo build --release --features "preempt_rt,comedi"
 ```
 
 ## Plugin development

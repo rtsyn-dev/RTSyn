@@ -228,6 +228,7 @@ impl GuiApp {
                                                     .spacing([10.0, 6.0])
                                                     .show(ui, |ui| {
                                                         ui.label("Scan:");
+                                                        let mut rescan_devices = false;
                                                         if ui.button("Scan Channels").clicked() {
                                                             let next = map
                                                                 .get("scan_nonce")
@@ -239,6 +240,7 @@ impl GuiApp {
                                                                 Value::from(next),
                                                             );
                                                             plugin_changed = true;
+                                                            rescan_devices = true;
                                                         }
                                                         ui.end_row();
 
@@ -248,15 +250,60 @@ impl GuiApp {
                                                             .and_then(|v| v.as_str())
                                                             .unwrap_or("/dev/comedi0")
                                                             .to_string();
-                                                        let mut path_buffer = current_path.clone();
-                                                        let resp = ui.add(
-                                                            egui::TextEdit::singleline(&mut path_buffer)
-                                                                .desired_width(180.0),
-                                                        );
-                                                        if resp.changed() && path_buffer != current_path {
+                                                        let mut devices: Vec<String> = Vec::new();
+                                                        if let Ok(entries) = std::fs::read_dir("/dev") {
+                                                            for entry in entries.flatten() {
+                                                                if let Ok(name) = entry.file_name().into_string() {
+                                                                    if name.starts_with("comedi") {
+                                                                        devices.push(format!("/dev/{name}"));
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        devices.sort();
+                                                        devices.dedup();
+                                                        if devices.is_empty() {
+                                                            devices.push("(no devices found)".to_string());
+                                                        } else if !devices.contains(&current_path) {
+                                                            devices.insert(0, current_path.clone());
+                                                        }
+                                                        if rescan_devices
+                                                            && !devices.is_empty()
+                                                            && devices[0].starts_with("/dev/")
+                                                            && !devices.contains(&current_path)
+                                                        {
                                                             map.insert(
                                                                 "device_path".to_string(),
-                                                                Value::from(path_buffer),
+                                                                Value::from(devices[0].clone()),
+                                                            );
+                                                            plugin_changed = true;
+                                                        }
+                                                        let selected_text = if devices.len() == 1
+                                                            && devices[0] == "(no devices found)"
+                                                        {
+                                                            "(no devices found)".to_string()
+                                                        } else {
+                                                            current_path.clone()
+                                                        };
+                                                        let mut selected = selected_text.clone();
+                                                        let resp = egui::ComboBox::from_id_source(("comedi_device_combo", plugin.id))
+                                                            .selected_text(&selected_text)
+                                                            .show_ui(ui, |ui| {
+                                                                let mut changed = false;
+                                                                for dev in &devices {
+                                                                    if ui.selectable_value(&mut selected, dev.clone(), dev).changed() {
+                                                                        changed = true;
+                                                                    }
+                                                                }
+                                                                changed
+                                                            });
+                                                        if resp.inner.unwrap_or(false)
+                                                            && selected != current_path
+                                                            && selected.starts_with("/dev/")
+                                                        {
+                                                            map.insert(
+                                                                "device_path".to_string(),
+                                                                Value::from(selected),
                                                             );
                                                             plugin_changed = true;
                                                         }

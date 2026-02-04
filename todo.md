@@ -24,7 +24,9 @@
 [ ] Python plugin development
 [ ] Performance tests
 [ ] Hover connections are shown on top of other windows
-[ ] Let the installed plugins be organized in folders
+[ ] Let the installed plugins be organized in folders, there is one reserved for the System ones
 [ ] When period is 100 us and window 10\*3500 plot isn't complete and the more I increment the window the less is shown (max points draw related, I think)
 [ ] max_latency_us should be max_latency and have a input similar of the settings (the value and the units)
-[ ] Problem on hindmarsh rose rust
+[ ] When second plane/view of a window oclused (with plotter open or closed) app lose response (and Window Manager raises a Wait/Terminate dialog) until resurface again
+[ ] Eliminate dot for notifications
+[ ] Deleting a plugin closes the window and references from it. Reinstalling it closes them and reopens them (with same connections)

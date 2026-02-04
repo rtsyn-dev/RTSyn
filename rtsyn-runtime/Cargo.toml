@@ -14,7 +14,7 @@ libc = "0.2"
 csv_recorder_plugin = { path = "../app_plugins/csv_recorder" }
 live_plotter_plugin = { path = "../app_plugins/live_plotter" }
 performance_monitor_plugin = { path = "../app_plugins/performance_monitor" }
-comedi_daq_plugin = { path = "../app_plugins/comedi_daq" }
+comedi_daq_plugin = { path = "../app_plugins/comedi_daq", optional = true }
 
 [dev-dependencies]
 rtsyn_plugin = { workspace = true }
@@ -31,3 +31,4 @@ optional = true
 default = []
 preempt_rt = ["tokio"]
 xenomai = []
+comedi = ["comedi_daq_plugin"]

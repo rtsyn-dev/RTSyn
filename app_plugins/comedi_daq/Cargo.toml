@@ -9,10 +9,6 @@ thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 libc = "0.2"
-comedi = { version = "0.6", optional = true }
-
-[features]
-comedi = ["comedi"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]

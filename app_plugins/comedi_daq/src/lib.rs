@@ -4,8 +4,181 @@ use rtsyn_plugin::{
 use serde_json::Value;
 use std::collections::HashMap;
 
-#[cfg(feature = "comedi")]
-use comedi::{from_phys, get_maxdata, get_range, read, to_phys, write, Comedi, SubdeviceType};
+mod comedilib {
+    use libc::{c_char, c_double, c_int, c_uint};
+    use std::ffi::{CStr, CString};
+
+    #[repr(C)]
+    pub struct comedi_t {
+        _private: [u8; 0],
+    }
+
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub struct comedi_range {
+        pub min: c_double,
+        pub max: c_double,
+        pub unit: c_uint,
+    }
+
+    pub type LsamplT = c_uint;
+
+    pub const SUBD_AI: c_int = 1;
+    pub const SUBD_AO: c_int = 2;
+
+    #[link(name = "comedi")]
+    extern "C" {
+        pub fn comedi_open(fn_ptr: *const c_char) -> *mut comedi_t;
+        pub fn comedi_close(dev: *mut comedi_t) -> c_int;
+        pub fn comedi_errno() -> c_int;
+        pub fn comedi_strerror(errnum: c_int) -> *const c_char;
+
+        pub fn comedi_get_n_subdevices(dev: *mut comedi_t) -> c_int;
+        pub fn comedi_get_subdevice_type(dev: *mut comedi_t, subdevice: c_uint) -> c_int;
+        pub fn comedi_get_n_channels(dev: *mut comedi_t, subdevice: c_uint) -> c_int;
+
+        pub fn comedi_get_range(
+            dev: *mut comedi_t,
+            subdevice: c_uint,
+            chan: c_uint,
+            range: c_uint,
+        ) -> *mut comedi_range;
+        pub fn comedi_get_maxdata(dev: *mut comedi_t, subdevice: c_uint, chan: c_uint) -> LsamplT;
+
+        pub fn comedi_to_phys(data: LsamplT, rng: *const comedi_range, maxdata: LsamplT)
+            -> c_double;
+        pub fn comedi_from_phys(
+            data: c_double,
+            rng: *const comedi_range,
+            maxdata: LsamplT,
+        ) -> LsamplT;
+
+        pub fn comedi_data_read(
+            dev: *mut comedi_t,
+            subd: c_uint,
+            chan: c_uint,
+            range: c_uint,
+            aref: c_uint,
+            data: *mut LsamplT,
+        ) -> c_int;
+        pub fn comedi_data_write(
+            dev: *mut comedi_t,
+            subd: c_uint,
+            chan: c_uint,
+            range: c_uint,
+            aref: c_uint,
+            data: LsamplT,
+        ) -> c_int;
+    }
+
+    fn last_error() -> String {
+        unsafe {
+            let err = comedi_errno();
+            let msg = comedi_strerror(err);
+            if msg.is_null() {
+                format!("comedi error {err}")
+            } else {
+                CStr::from_ptr(msg).to_string_lossy().to_string()
+            }
+        }
+    }
+
+    pub unsafe fn open(path: &str) -> Result<*mut comedi_t, String> {
+        let cpath = CString::new(path).map_err(|_| "invalid device path".to_string())?;
+        let dev = comedi_open(cpath.as_ptr());
+        if dev.is_null() {
+            Err(last_error())
+        } else {
+            Ok(dev)
+        }
+    }
+
+    pub unsafe fn close(dev: *mut comedi_t) {
+        let _ = comedi_close(dev);
+    }
+
+    pub unsafe fn get_n_subdevices(dev: *mut comedi_t) -> Result<u32, String> {
+        let n = comedi_get_n_subdevices(dev);
+        if n < 0 {
+            Err(last_error())
+        } else {
+            Ok(n as u32)
+        }
+    }
+
+    pub unsafe fn get_subdevice_type(dev: *mut comedi_t, subd: u32) -> Result<i32, String> {
+        let t = comedi_get_subdevice_type(dev, subd as c_uint);
+        if t < 0 {
+            Err(last_error())
+        } else {
+            Ok(t)
+        }
+    }
+
+    pub unsafe fn get_n_channels(dev: *mut comedi_t, subd: u32) -> Result<u32, String> {
+        let n = comedi_get_n_channels(dev, subd as c_uint);
+        if n < 0 {
+            Err(last_error())
+        } else {
+            Ok(n as u32)
+        }
+    }
+
+    pub unsafe fn get_range(dev: *mut comedi_t, subd: u32, chan: u32) -> Result<comedi_range, String> {
+        let ptr = comedi_get_range(dev, subd as c_uint, chan as c_uint, 0);
+        if ptr.is_null() {
+            Err(last_error())
+        } else {
+            Ok(*ptr)
+        }
+    }
+
+    pub unsafe fn get_maxdata(dev: *mut comedi_t, subd: u32, chan: u32) -> Result<LsamplT, String> {
+        let val = comedi_get_maxdata(dev, subd as c_uint, chan as c_uint);
+        if val == 0 {
+            let err = comedi_errno();
+            if err != 0 {
+                Err(last_error())
+            } else {
+                Ok(val)
+            }
+        } else {
+            Ok(val)
+        }
+    }
+
+    pub unsafe fn to_phys(data: LsamplT, range: &comedi_range, maxdata: LsamplT) -> f64 {
+        comedi_to_phys(data, range as *const comedi_range, maxdata) as f64
+    }
+
+    pub unsafe fn from_phys(data: f64, range: &comedi_range, maxdata: LsamplT) -> LsamplT {
+        comedi_from_phys(data, range as *const comedi_range, maxdata)
+    }
+
+    pub unsafe fn read(dev: *mut comedi_t, subd: u32, chan: u32) -> Result<LsamplT, String> {
+        let mut data: LsamplT = 0;
+        let res = comedi_data_read(dev, subd as c_uint, chan as c_uint, 0, 0, &mut data);
+        if res < 0 {
+            Err(last_error())
+        } else {
+            Ok(data)
+        }
+    }
+
+    pub unsafe fn write(
+        dev: *mut comedi_t,
+        subd: u32,
+        chan: u32,
+        data: LsamplT,
+    ) -> Result<(), String> {
+        let res = comedi_data_write(dev, subd as c_uint, chan as c_uint, 0, 0, data);
+        if res < 0 {
+            Err(last_error())
+        } else {
+            Ok(())
+        }
+    }
+}
 
 pub struct ComediDaqPlugin {
     id: PluginId,
@@ -27,10 +200,7 @@ pub struct ComediDaqPlugin {
     last_scan_nonce: u64,
     active_inputs: Vec<bool>,
     active_outputs: Vec<bool>,
-    #[cfg(feature = "comedi")]
-    dev: Option<Comedi>,
-    #[cfg(not(feature = "comedi"))]
-    mock_phase: f64,
+    dev: Option<std::ptr::NonNull<comedilib::comedi_t>>,
 }
 
 unsafe impl Send for ComediDaqPlugin {}
@@ -62,10 +232,7 @@ impl ComediDaqPlugin {
             last_scan_nonce: 0,
             active_inputs: Vec::new(),
             active_outputs: Vec::new(),
-            #[cfg(feature = "comedi")]
             dev: None,
-            #[cfg(not(feature = "comedi"))]
-            mock_phase: 0.0,
         };
 
         plugin.auto_configure();
@@ -161,9 +328,8 @@ impl ComediDaqPlugin {
         }
     }
 
-    #[cfg(feature = "comedi")]
     fn auto_configure(&mut self) {
-        let Ok(dev) = Comedi::open(&self.device_path) else {
+        let Ok(dev) = (unsafe { comedilib::open(&self.device_path) }) else {
             self.mock_default_channels();
             self.update_ports();
             return;
@@ -171,17 +337,17 @@ impl ComediDaqPlugin {
 
         let mut ai = Vec::new();
         let mut ao = Vec::new();
-        let n = dev.get_n_subdevices().unwrap_or(0);
+        let n = unsafe { comedilib::get_n_subdevices(dev).unwrap_or(0) };
         for sd in 0..n {
-            match dev.get_subdevice_type(sd) {
-                Ok(SubdeviceType::AnalogInput) => {
-                    let ch = dev.get_n_channels(sd).unwrap_or(0);
+            match unsafe { comedilib::get_subdevice_type(dev, sd) } {
+                Ok(t) if t == comedilib::SUBD_AI => {
+                    let ch = unsafe { comedilib::get_n_channels(dev, sd).unwrap_or(0) };
                     for c in 0..ch {
                         ai.push((sd, c));
                     }
                 }
-                Ok(SubdeviceType::AnalogOutput) => {
-                    let ch = dev.get_n_channels(sd).unwrap_or(0);
+                Ok(t) if t == comedilib::SUBD_AO => {
+                    let ch = unsafe { comedilib::get_n_channels(dev, sd).unwrap_or(0) };
                     for c in 0..ch {
                         ao.push((sd, c));
                     }
@@ -196,16 +362,11 @@ impl ComediDaqPlugin {
             self.mock_default_channels();
         }
         self.update_ports();
+        unsafe { comedilib::close(dev) };
     }
 
-    #[cfg(not(feature = "comedi"))]
-    fn auto_configure(&mut self) {
-        self.mock_default_channels();
-        self.update_ports();
-    }
-
-    fn comedi_error<E: std::fmt::Display>(err: E) -> PluginError {
-        PluginError::Runtime(err.to_string())
+    fn comedi_error<E: std::fmt::Display>(_err: E) -> PluginError {
+        PluginError::ProcessingFailed
     }
 }
 
@@ -226,7 +387,6 @@ impl Plugin for ComediDaqPlugin {
         &self.outputs
     }
 
-    #[cfg(feature = "comedi")]
     fn process(&mut self, _ctx: &mut PluginContext) -> Result<(), PluginError> {
         if !self.is_open {
             return Ok(());
@@ -234,6 +394,7 @@ impl Plugin for ComediDaqPlugin {
         let Some(dev) = self.dev.as_ref() else {
             return Ok(());
         };
+        let dev = dev.as_ptr();
 
         for (idx, (sd, ch)) in self.ao_channels.iter().enumerate() {
             if !self.active_inputs.get(idx).copied().unwrap_or(false) {
@@ -241,10 +402,13 @@ impl Plugin for ComediDaqPlugin {
             }
             let port = format!("ao{sd}_{ch}");
             if let Some(v) = self.input_values.get(&port) {
-                let range = get_range(dev, *sd, *ch, 0).map_err(Self::comedi_error)?;
-                let max = get_maxdata(dev, *sd, *ch).map_err(Self::comedi_error)?;
-                let raw = from_phys(*v, range, max);
-                write(dev, *sd, *ch, 0, raw).map_err(Self::comedi_error)?;
+                let range = unsafe { comedilib::get_range(dev, *sd, *ch) }
+                    .map_err(Self::comedi_error)?;
+                let max = unsafe { comedilib::get_maxdata(dev, *sd, *ch) }
+                    .map_err(Self::comedi_error)?;
+                let raw = unsafe { comedilib::from_phys(*v, &range, max) };
+                unsafe { comedilib::write(dev, *sd, *ch, raw) }
+                    .map_err(Self::comedi_error)?;
             }
         }
 
@@ -252,10 +416,12 @@ impl Plugin for ComediDaqPlugin {
             if !self.active_outputs.get(idx).copied().unwrap_or(false) {
                 continue;
             }
-            let raw = read(dev, *sd, *ch, 0).map_err(Self::comedi_error)?;
-            let range = get_range(dev, *sd, *ch, 0).map_err(Self::comedi_error)?;
-            let max = get_maxdata(dev, *sd, *ch).map_err(Self::comedi_error)?;
-            let phys = to_phys(raw, range, max);
+            let raw = unsafe { comedilib::read(dev, *sd, *ch) }.map_err(Self::comedi_error)?;
+            let range = unsafe { comedilib::get_range(dev, *sd, *ch) }
+                .map_err(Self::comedi_error)?;
+            let max = unsafe { comedilib::get_maxdata(dev, *sd, *ch) }
+                .map_err(Self::comedi_error)?;
+            let phys = unsafe { comedilib::to_phys(raw, &range, max) };
 
             let port = format!("ai{sd}_{ch}");
             self.output_values.insert(port, phys);
@@ -264,52 +430,22 @@ impl Plugin for ComediDaqPlugin {
         Ok(())
     }
 
-    #[cfg(not(feature = "comedi"))]
-    fn process(&mut self, ctx: &mut PluginContext) -> Result<(), PluginError> {
-        if !self.is_open {
-            return Ok(());
-        }
-        let t = ctx.tick as f64 * ctx.period_seconds;
-        self.mock_phase = (self.mock_phase + t * 2.0).fract();
-
-        for (idx, (sd, ch)) in self.ai_channels.iter().enumerate() {
-            if !self.active_outputs.get(idx).copied().unwrap_or(false) {
-                continue;
-            }
-            let port = format!("ai{sd}_{ch}");
-            let value = (self.mock_phase * 6.28318 + idx as f64).sin() * 5.0;
-            self.output_values.insert(port, value);
-        }
-
-        Ok(())
-    }
 }
 
 impl DeviceDriver for ComediDaqPlugin {
-    #[cfg(feature = "comedi")]
     fn open(&mut self) -> Result<(), PluginError> {
-        let dev = Comedi::open(&self.device_path).map_err(Self::comedi_error)?;
-        self.dev = Some(dev);
+        let dev = unsafe { comedilib::open(&self.device_path) }.map_err(Self::comedi_error)?;
+        self.dev = std::ptr::NonNull::new(dev);
         self.is_open = true;
         Ok(())
     }
 
-    #[cfg(not(feature = "comedi"))]
-    fn open(&mut self) -> Result<(), PluginError> {
-        self.is_open = true;
-        Ok(())
-    }
-
-    #[cfg(feature = "comedi")]
     fn close(&mut self) -> Result<(), PluginError> {
-        self.dev = None;
+        if let Some(dev) = self.dev.take() {
+            unsafe { comedilib::close(dev.as_ptr()) };
+        }
         self.is_open = false;
         Ok(())
     }
 
-    #[cfg(not(feature = "comedi"))]
-    fn close(&mut self) -> Result<(), PluginError> {
-        self.is_open = false;
-        Ok(())
-    }
 }

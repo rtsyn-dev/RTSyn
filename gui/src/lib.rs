@@ -565,6 +565,9 @@ impl GuiApp {
                 return;
             }
         };
+        if manifest.kind == "comedi_daq" && !cfg!(feature = "comedi") {
+            return;
+        }
 
         let library_path = Self::resolve_library_path(&manifest, folder.as_ref());
         self.installed_plugins.push(InstalledPlugin {
@@ -650,13 +653,13 @@ impl GuiApp {
             return false;
         }
         let workspace_manifest = workspace_root.join("Cargo.toml");
-        Command::new("cargo")
-            .arg("build")
+        let mut cmd = Command::new("cargo");
+        cmd.arg("build")
             .arg("--release")
             .arg("--manifest-path")
             .arg(workspace_manifest)
-            .current_dir(workspace_root)
-            .status()
+            .current_dir(workspace_root);
+        cmd.status()
             .map(|status| status.success())
             .unwrap_or(false)
     }
@@ -960,6 +963,9 @@ impl GuiApp {
                         Ok(parsed) => parsed,
                         Err(_) => continue,
                     };
+                    if manifest.kind == "comedi_daq" && !cfg!(feature = "comedi") {
+                        continue;
+                    }
                     let library_path = Self::resolve_library_path(&manifest, &path);
                     detected.push(DetectedPlugin {
                         manifest,
