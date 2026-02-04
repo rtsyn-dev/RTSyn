@@ -1014,6 +1014,13 @@ impl GuiApp {
         } else if installed.manifest.kind == "performance_monitor" {
             config_map.insert("input_count".to_string(), Value::from(0));
             config_map.insert("max_latency_us".to_string(), Value::from(1000.0));
+        } else if installed.manifest.kind == "ni_daq" {
+            config_map.insert("device_name".to_string(), Value::from("Dev1"));
+            config_map.insert("sample_rate".to_string(), Value::from(10000.0));
+            config_map.insert("samples_per_channel".to_string(), Value::from(1000));
+            config_map.insert("ai_channels".to_string(), Value::from(""));
+            config_map.insert("ao_channels".to_string(), Value::from(""));
+            config_map.insert("scan_devices".to_string(), Value::from(false));
         }
         if let Some(library_path) = installed.library_path.as_ref() {
             config_map.insert(

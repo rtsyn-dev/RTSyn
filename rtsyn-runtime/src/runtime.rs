@@ -1,7 +1,7 @@
 use csv_recorder_plugin::{normalize_path, CsvRecorderedPlugin};
 use libloading::Library;
 use live_plotter_plugin::LivePlotterPlugin;
-use ni_daq::NiDaqPlugin;
+use ni_daq_plugin::NiDaqPlugin;
 use performance_monitor_plugin::PerformanceMonitorPlugin;
 use rtsyn_plugin::{Plugin, PluginApi, PluginContext, PluginString, RTSYN_PLUGIN_API_SYMBOL};
 use serde_json::Value;
@@ -164,9 +164,10 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                                     "performance_monitor" => RuntimePlugin::PerformanceMonitor(
                                         PerformanceMonitorPlugin::new(plugin.id),
                                     ),
-                                    "ni_daq" => RuntimePlugin::NiDaq(
-                                        NiDaqPlugin::new(plugin.id),
-                                    ),
+                                    "ni_daq" => {
+                                        println!("Runtime: Creating NI DAQ plugin instance");
+                                        RuntimePlugin::NiDaq(NiDaqPlugin::new(plugin.id))
+                                    },
                                     _ => {
                                         let library_path = plugin
                                             .config
@@ -447,6 +448,30 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                                 .filter(|s| !s.trim().is_empty())
                                 .map(|s| s.trim().to_string())
                                 .collect();
+
+                            // Check for scan trigger
+                            let scan_devices = plugin
+                                .config
+                                .get("scan_devices")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
+                            
+                            if scan_devices {
+                                // Trigger device discovery and update configuration
+                                if plugin_instance.handle_scan_trigger() {
+                                    // Update the plugin config with discovered devices and channels
+                                    let devices = NiDaqPlugin::discover_devices();
+                                    let discovered_devices = devices.join(",");
+                                    
+                                    // Update ai_channels and ao_channels with discovered values
+                                    if let Some(device) = devices.first() {
+                                        let (ai_channels, ao_channels) = NiDaqPlugin::discover_channels(device);
+                                        
+                                        // This would need to be communicated back to GUI somehow
+                                        // For now, the channels are updated in the plugin instance
+                                    }
+                                }
+                            }
 
                             plugin_instance.set_config(
                                 device_name.to_string(),

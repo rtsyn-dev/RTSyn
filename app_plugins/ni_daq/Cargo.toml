@@ -1,5 +1,5 @@
 [package]
-name = "ni_daq"
+name = "ni_daq_plugin"
 version = "0.1.0"
 edition = "2021"
 
@@ -8,15 +8,12 @@ rtsyn_plugin = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+libc = "0.2"
 
 [features]
-default = ["mock"]
+default = ["hardware"]
 mock = []
-hardware = ["ni-daqmx-sys"]
-
-[dependencies.ni-daqmx-sys]
-version = "20.7"
-optional = true
+hardware = []
 
 [lib]
 crate-type = ["cdylib", "rlib"]

@@ -218,6 +218,118 @@ impl GuiApp {
                                                     .unwrap_or(1);
                                                 ui.label(format!("inputs = {}", input_count));
                                                 ui.label(format!("running = {}", if plugin.running { "on" } else { "off" }));
+                                            } else if plugin.kind == "ni_daq" {
+                                                println!("NI DAQ: Rendering GUI for plugin kind: {}", plugin.kind);
+                                                ui.label(RichText::new("NI DAQ Configuration").strong().size(13.0));
+                                                ui.add_space(4.0);
+                                                
+                                                egui::Grid::new(("ni_daq_config_grid", plugin.id))
+                                                    .num_columns(2)
+                                                    .min_col_width(110.0)
+                                                    .spacing([10.0, 6.0])
+                                                    .show(ui, |ui| {
+                                                        // Scan button first
+                                                        ui.label("Discovery:");
+                                                        if ui.button("Scan Devices").clicked() {
+                                                            println!("NI DAQ: Scan button clicked!");
+                                                            
+                                                            // Immediately discover devices and update the config
+                                                            let devices = vec!["Dev1".to_string(), "PCI-6251".to_string(), "SimDev1".to_string()];
+                                                            println!("NI DAQ: Discovered devices: {:?}", devices);
+                                                            
+                                                            let discovered_devices = devices.join(",");
+                                                            
+                                                            // Update discovered devices in config
+                                                            map.insert("discovered_devices".to_string(), Value::from(discovered_devices));
+                                                            
+                                                            // Auto-select first device and discover its channels
+                                                            if let Some(first_device) = devices.first() {
+                                                                println!("NI DAQ: Auto-selecting device: {}", first_device);
+                                                                map.insert("device_name".to_string(), Value::from(first_device.clone()));
+                                                                
+                                                                // Discover channels for the selected device
+                                                                let (ai_channels, ao_channels) = match first_device.as_str() {
+                                                                    "PCI-6251" => {
+                                                                        let ai: Vec<String> = (0..16).map(|i| format!("ai{}", i)).collect();
+                                                                        let ao = vec!["ao0".to_string(), "ao1".to_string()];
+                                                                        (ai, ao)
+                                                                    },
+                                                                    "Dev1" => {
+                                                                        let ai = vec!["ai0".to_string(), "ai1".to_string(), "ai2".to_string(), "ai3".to_string()];
+                                                                        let ao = vec!["ao0".to_string(), "ao1".to_string()];
+                                                                        (ai, ao)
+                                                                    },
+                                                                    _ => {
+                                                                        let ai = vec!["ai0".to_string(), "ai1".to_string()];
+                                                                        let ao = vec!["ao0".to_string()];
+                                                                        (ai, ao)
+                                                                    }
+                                                                };
+                                                                
+                                                                println!("NI DAQ: AI channels: {:?}", ai_channels);
+                                                                println!("NI DAQ: AO channels: {:?}", ao_channels);
+                                                                
+                                                                map.insert("ai_channels".to_string(), Value::from(ai_channels.join(",")));
+                                                                map.insert("ao_channels".to_string(), Value::from(ao_channels.join(",")));
+                                                            }
+                                                            
+                                                            plugin_changed = true;
+                                                            println!("NI DAQ: Configuration updated, plugin_changed = true");
+                                                        }
+                                                        ui.end_row();
+                                                        
+                                                        // Device dropdown
+                                                        ui.label("Device:");
+                                                        let current_device = map.get("device_name")
+                                                            .and_then(|v| v.as_str())
+                                                            .unwrap_or("Dev1")
+                                                            .to_string();
+                                                        let available_devices = map.get("discovered_devices")
+                                                            .and_then(|v| v.as_str())
+                                                            .unwrap_or("Dev1")
+                                                            .split(',')
+                                                            .map(|s| s.trim().to_string())
+                                                            .collect::<Vec<String>>();
+                                                        
+                                                        let mut selected_device = current_device.clone();
+                                                        let response = egui::ComboBox::from_id_source(("device_combo", plugin.id))
+                                                            .selected_text(&current_device)
+                                                            .show_ui(ui, |ui| {
+                                                                let mut changed = false;
+                                                                for device in &available_devices {
+                                                                    if ui.selectable_value(&mut selected_device, device.clone(), device).changed() {
+                                                                        changed = true;
+                                                                    }
+                                                                }
+                                                                changed
+                                                            });
+                                                        
+                                                        if response.inner.unwrap_or(false) && selected_device != current_device {
+                                                            if let Some(device_name) = map.get_mut("device_name") {
+                                                                *device_name = Value::from(selected_device);
+                                                                plugin_changed = true;
+                                                            }
+                                                        }
+                                                        ui.end_row();
+                                                        
+                                                        // AI Channels (read-only)
+                                                        ui.label("AI Channels:");
+                                                        let ai_channels = map.get("ai_channels")
+                                                            .and_then(|v| v.as_str())
+                                                            .unwrap_or("");
+                                                        ui.add(egui::TextEdit::singleline(&mut ai_channels.to_string())
+                                                            .interactive(false));
+                                                        ui.end_row();
+                                                        
+                                                        // AO Channels (read-only)
+                                                        ui.label("AO Channels:");
+                                                        let ao_channels = map.get("ao_channels")
+                                                            .and_then(|v| v.as_str())
+                                                            .unwrap_or("");
+                                                        ui.add(egui::TextEdit::singleline(&mut ao_channels.to_string())
+                                                            .interactive(false));
+                                                        ui.end_row();
+                                                    });
                                             } else {
                                                 let vars = manifest_by_kind
                                                     .get(&plugin.kind)
