@@ -1045,6 +1045,7 @@ dependencies = [
 name = "csv_recorder_plugin"
 version = "0.1.0"
 dependencies = [
+ "live_plotter_plugin",
  "rtsyn_plugin",
  "serde_json",
 ]
@@ -3036,7 +3037,7 @@ dependencies = [
 
 [[package]]
 name = "rtsyn_plugin"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",

@@ -86,6 +86,11 @@ impl GuiApp {
                     .kind
                     .clone();
                 let to_kind = self.workspace.plugins[self.connection_to_idx].kind.clone();
+                
+                // Cache behaviors before using them
+                self.ensure_plugin_behavior_cached(&from_kind);
+                self.ensure_plugin_behavior_cached(&to_kind);
+                
                 let from_id = self.workspace.plugins[self.connection_from_idx].id;
                 let to_id = self.workspace.plugins[self.connection_to_idx].id;
                 let mut from_ports = self.ports_for_plugin(from_id, false);
@@ -93,10 +98,7 @@ impl GuiApp {
                 if from_ports.is_empty() {
                     from_ports.push("out".to_string());
                 }
-                let extendable = self
-                    .manifest_for_kind(&to_kind)
-                    .map(|manifest| manifest.extendable_inputs)
-                    .unwrap_or(false);
+                let extendable = self.is_extendable_inputs(&to_kind);
                 let auto_extend = self.auto_extend_inputs(&to_kind);
                 if to_ports.is_empty() {
                     if extendable && !auto_extend {
@@ -461,10 +463,7 @@ impl GuiApp {
                                         .plugins
                                         .iter()
                                         .find(|p| p.id == to_plugin)
-                                        .and_then(|plugin| {
-                                            self.manifest_for_kind(&plugin.kind)
-                                                .map(|manifest| manifest.extendable_inputs)
-                                        })
+                                        .map(|plugin| self.is_extendable_inputs(&plugin.kind))
                                         .unwrap_or(false);
                                     let pair_connection = self.workspace.connections.iter().find(
                                         |conn| {
@@ -472,11 +471,10 @@ impl GuiApp {
                                                 && conn.to_plugin == to_plugin
                                         },
                                     ).cloned();
-                                    let has_pair_connection = pair_connection.is_some();
                                     let display_to_ports = if extendable {
                                         self.extendable_input_display_ports(
                                             to_plugin,
-                                            !has_pair_connection,
+                                            true,  // Always show placeholder for extendable inputs
                                         )
                                     } else {
                                         to_ports.clone()

@@ -1,4 +1,4 @@
-use rtsyn_plugin::{Plugin, PluginContext, PluginError, PluginId, PluginMeta, Port, PortId};
+use rtsyn_plugin::prelude::*;
 use serde_json::Value;
 use std::time::Instant;
 
@@ -114,5 +114,18 @@ impl Plugin for PerformanceMonitorPlugin {
         self.last_trigger_time = Some(process_start);
         
         Ok(())
+    }
+
+    fn ui_schema(&self) -> Option<UISchema> {
+        Some(
+            UISchema::new()
+                .field(
+                    ConfigField::float("max_latency_us", "Max Latency (μs)")
+                        .min_f(0.0)
+                        .step_f(100.0)
+                        .default_value(Value::from(1000.0))
+                        .hint("Maximum allowed latency before violation"),
+                ),
+        )
     }
 }

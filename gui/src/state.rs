@@ -9,45 +9,8 @@ pub(crate) struct PluginManifest {
     pub(crate) version: Option<String>,
     pub(crate) description: Option<String>,
     pub(crate) library: Option<String>,
-    #[serde(default)]
-    pub(crate) supports_start_stop: bool,
-    #[serde(default)]
-    pub(crate) supports_restart: bool,
-    #[serde(default)]
-    pub(crate) extendable_inputs: bool,
-    #[serde(default = "default_auto_extend_inputs")]
-    pub(crate) auto_extend_inputs: bool,
-    #[serde(default)]
-    pub(crate) connection_dependent: bool,
-    #[serde(default = "default_loads_started")]
-    pub(crate) loads_started: bool,
-    #[serde(default)]
-    pub(crate) inputs: Vec<PortManifest>,
-    #[serde(default)]
-    pub(crate) outputs: Vec<PortManifest>,
-    #[serde(default)]
-    pub(crate) variables: Vec<VariableManifest>,
 }
 
-fn default_loads_started() -> bool {
-    true
-}
-
-fn default_auto_extend_inputs() -> bool {
-    true
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub(crate) struct PortManifest {
-    pub(crate) name: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub(crate) struct VariableManifest {
-    pub(crate) name: String,
-    pub(crate) default: f64,
-    pub(crate) description: Option<String>,
-}
 
 #[derive(Debug, Clone)]
 pub(crate) struct InstalledPlugin {
@@ -55,6 +18,10 @@ pub(crate) struct InstalledPlugin {
     pub(crate) path: PathBuf,
     pub(crate) library_path: Option<PathBuf>,
     pub(crate) removable: bool,
+    pub(crate) metadata_inputs: Vec<String>,
+    pub(crate) metadata_outputs: Vec<String>,
+    pub(crate) metadata_variables: Vec<(String, f64)>,
+    pub(crate) display_schema: Option<rtsyn_plugin::ui::DisplaySchema>,
 }
 
 #[derive(Debug, Clone)]

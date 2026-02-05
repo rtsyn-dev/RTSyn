@@ -1,6 +1,4 @@
-use rtsyn_plugin::{
-    DeviceDriver, Plugin, PluginContext, PluginError, PluginId, PluginMeta, Port, PortId,
-};
+use rtsyn_plugin::prelude::*;
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -430,6 +428,19 @@ impl Plugin for ComediDaqPlugin {
         Ok(())
     }
 
+    fn behavior(&self) -> PluginBehavior {
+        PluginBehavior {
+            supports_start_stop: true,
+            supports_restart: true,
+            extendable_inputs: ExtendableInputs::None,
+            loads_started: false,
+        }
+    }
+
+    fn connection_behavior(&self) -> ConnectionBehavior {
+        ConnectionBehavior { dependent: true }
+    }
+
 }
 
 impl DeviceDriver for ComediDaqPlugin {
@@ -447,5 +458,4 @@ impl DeviceDriver for ComediDaqPlugin {
         self.is_open = false;
         Ok(())
     }
-
 }

@@ -64,28 +64,20 @@ impl GuiApp {
             .iter()
             .map(|conn| conn.to_plugin)
             .collect();
-        let outputs_by_kind: HashMap<String, Vec<String>> = self
-            .installed_plugins
-            .iter()
-            .map(|plugin| {
-                let outputs = plugin
-                    .manifest
-                    .outputs
-                    .iter()
-                    .map(|port| port.name.clone())
-                    .collect::<Vec<_>>();
-                (plugin.manifest.kind.clone(), outputs)
-            })
-            .collect();
         let name_by_kind: HashMap<String, String> = self
             .installed_plugins
             .iter()
             .map(|plugin| (plugin.manifest.kind.clone(), plugin.manifest.name.clone()))
             .collect();
-        let manifest_by_kind: HashMap<String, PluginManifest> = self
+        let __manifest_by_kind: HashMap<String, PluginManifest> = self
             .installed_plugins
             .iter()
             .map(|plugin| (plugin.manifest.kind.clone(), plugin.manifest.clone()))
+            .collect();
+        let metadata_by_kind: HashMap<String, Vec<(String, f64)>> = self
+            .installed_plugins
+            .iter()
+            .map(|plugin| (plugin.manifest.kind.clone(), plugin.metadata_variables.clone()))
             .collect();
         let computed_outputs = self.computed_outputs.clone();
         let viewer_values = self.viewer_values.clone();
@@ -310,9 +302,9 @@ impl GuiApp {
                                                         ui.end_row();
                                                     });
                                             } else {
-                                                let vars = manifest_by_kind
+                                                let vars = metadata_by_kind
                                                     .get(&plugin.kind)
-                                                    .map(|manifest| manifest.variables.clone())
+                                                    .cloned()
                                                     .unwrap_or_default();
                                                 let title = if vars.len() == 1 {
                                                     "Variable"
@@ -326,8 +318,8 @@ impl GuiApp {
                                                     .min_col_width(110.0)
                                                     .spacing([10.0, 6.0])
                                                     .show(ui, |ui| {
-                                                        for var in vars {
-                                                            let key = &var.name;
+                                                        for (name, __default_value) in vars {
+                                                            let key = &name;
                                                         if let Some(value) = map.get_mut(key) {
                                                             ui.label(key);
                                                             let buffer_key = (plugin.id, key.clone());
@@ -380,38 +372,42 @@ impl GuiApp {
                                     ));
                                 }
 
-                                if let Some(outputs) = outputs_by_kind.get(&plugin.kind) {
-                                    if !outputs.is_empty() {
-                                        ui.add_space(6.0);
-                                        ui.separator();
-                                        let title = if outputs.len() == 1 {
-                                            "Output"
-                                        } else {
-                                            "Outputs"
-                                        };
-                                        ui.label(RichText::new(title).strong().size(13.0));
-                                        ui.add_space(4.0);
-                                        egui::Grid::new(("plugin_outputs_grid", plugin.id))
-                                            .num_columns(2)
-                                            .min_col_width(110.0)
-                                            .spacing([10.0, 6.0])
-                                            .show(ui, |ui| {
-                                                for output in outputs {
-                                                    let value = computed_outputs
-                                                        .get(&(plugin.id, output.clone()))
-                                                        .copied()
-                                                        .unwrap_or(0.0);
-                                                    ui.label(output);
-                                                    let mut value_text = format!("{value:.4}");
-                                                    ui.add_enabled(
-                                                        false,
-                                                        egui::TextEdit::singleline(&mut value_text)
-                                                            .desired_width(80.0),
-                                                    );
-                                                    ui.end_row();
-                                                }
-                                            });
-                                    }
+                                if let Some(installed) = self.installed_plugins.iter().find(|p| p.manifest.kind == plugin.kind) {
+                                    if let Some(schema) = &installed.display_schema {
+                                        if !schema.outputs.is_empty() {
+                                            ui.add_space(6.0);
+                                            ui.separator();
+                                            let title = if schema.outputs.len() == 1 {
+                                                "Output"
+                                            } else {
+                                                "Outputs"
+                                            };
+                                            ui.label(RichText::new(title).strong().size(13.0));
+                                            ui.add_space(4.0);
+                                            egui::Grid::new(("plugin_outputs_grid", plugin.id))
+                                                .num_columns(2)
+                                                .min_col_width(110.0)
+                                                .spacing([10.0, 6.0])
+                                                .show(ui, |ui| {
+                                                    for output_name in &schema.outputs {
+                                                        let value = computed_outputs
+                                                            .get(&(plugin.id, output_name.clone()))
+                                                            .copied()
+                                                            .unwrap_or(0.0);
+                                                        ui.label(output_name);
+                                                        let mut value_text = format!("{value:.4}");
+                                                        ui.add_enabled(
+                                                            false,
+                                                            egui::TextEdit::singleline(&mut value_text)
+                                                                .desired_width(80.0),
+                                                        );
+                                                        ui.end_row();
+                                                    }
+                                                });
+                                        }
+                                    
+                                    // Inputs display requires runtime support for per-port values
+                                }
                                 }
 
                                 if plugin.kind == "value_viewer" {
@@ -430,7 +426,6 @@ impl GuiApp {
                                 }
                             });
 
-                        if let Some(manifest) = manifest_by_kind.get(&plugin.kind) {
                             let mut controls_changed = false;
                             ui.add_space(6.0);
                             ui.separator();
@@ -439,10 +434,14 @@ impl GuiApp {
                                 .show(ui, |ui| {
                                     ui.horizontal(|ui| {
                                         let mut blocked_start = false;
-                                        if manifest.supports_start_stop {
+                                        let supports_start_stop = self.plugin_behaviors.get(&plugin.kind)
+                                            .map(|b| b.supports_start_stop)
+                                            .unwrap_or(true);  // Default to true
+                                        if supports_start_stop {
                                             let label = if plugin.running { "Stop" } else { "Start" };
                                             if ui.button(label).clicked() {
-                                                if manifest.connection_dependent
+                                                let is_connection_dependent = matches!(plugin.kind.as_str(), "csv_recorder" | "live_plotter" | "comedi_daq");
+                                                if is_connection_dependent
                                                     && !plugin.running
                                                     && !incoming_connections.contains(&plugin.id)
                                                 {
@@ -497,7 +496,10 @@ impl GuiApp {
                                                 }
                                             }
                                         }
-                                        if manifest.supports_restart {
+                                        let supports_restart = self.plugin_behaviors.get(&plugin.kind)
+                                            .map(|b| b.supports_restart)
+                                            .unwrap_or(false);  // Default to false
+                                        if supports_restart {
                                             if ui.button("Restart").clicked() {
                                                 pending_restart.push(plugin.id);
                                             }
@@ -508,10 +510,9 @@ impl GuiApp {
                             if controls_changed {
                                 workspace_changed = true;
                             }
-                        }
+                        });
                     });
                 });
-            });
 
             self.plugin_positions
                 .insert(plugin.id, response.response.rect.min);
@@ -603,6 +604,7 @@ impl GuiApp {
         plugin_kind: &str,
         plugin_config: &serde_json::Value,
         plugin_running: bool,
+        installed_plugins: &[InstalledPlugin],
     ) {
         egui::Frame::none()
             .inner_margin(egui::Margin::symmetric(8.0, 6.0))
@@ -621,26 +623,26 @@ impl GuiApp {
                 ui.add_space(6.0);
                 ui.label(RichText::new("Ports").strong());
                 let inputs = inputs_override.unwrap_or_else(|| {
-                    manifest
-                        .inputs
+                    installed_plugins
                         .iter()
-                        .map(|port| port.name.clone())
-                        .collect::<Vec<_>>()
+                        .find(|p| p.manifest.kind == manifest.kind)
+                        .map(|p| p.metadata_inputs.clone())
+                        .unwrap_or_default()
                 });
                 let mut inputs_label = inputs.join(", ");
-                if manifest.extendable_inputs {
+                let is_extendable = matches!(plugin_kind, "csv_recorder" | "live_plotter");
+                if is_extendable {
                     if inputs_label.is_empty() {
                         inputs_label = "in_n".to_string();
                     } else {
                         inputs_label = format!("{inputs_label}, in_n");
                     }
                 }
-                let outputs = manifest
-                    .outputs
+                let outputs = installed_plugins
                     .iter()
-                    .map(|port| port.name.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ");
+                    .find(|p| p.manifest.kind == manifest.kind)
+                    .map(|p| p.metadata_outputs.join(", "))
+                    .unwrap_or_default();
                 egui::Grid::new(("plugin_preview_ports", manifest.kind.as_str()))
                     .num_columns(2)
                     .spacing([8.0, 4.0])
@@ -668,15 +670,17 @@ impl GuiApp {
                         .unwrap_or(1);
                     ui.label(format!("inputs = {}", input_count));
                     ui.label(format!("running = {}", if plugin_running { "on" } else { "off" }));
-                } else if manifest.variables.is_empty() {
-                    ui.label(RichText::new("No variables.").color(egui::Color32::GRAY));
                 } else {
-                    for var in &manifest.variables {
-                        if let Some(desc) = &var.description {
-                            ui.label(format!("{} = {} ({})", var.name, var.default, desc));
+                    if let Some(plugin) = installed_plugins.iter().find(|p| p.manifest.kind == manifest.kind) {
+                        if plugin.metadata_variables.is_empty() {
+                            ui.label(RichText::new("No variables.").color(egui::Color32::GRAY));
                         } else {
-                            ui.label(format!("{} = {}", var.name, var.default));
+                            for (name, value) in &plugin.metadata_variables {
+                                ui.label(format!("{} = {}", name, value));
+                            }
                         }
+                    } else {
+                        ui.label(RichText::new("No variables.").color(egui::Color32::GRAY));
                     }
                 }
             });
@@ -743,10 +747,15 @@ impl GuiApp {
             .iter()
             .map(|plugin| (plugin.manifest.kind.clone(), plugin.manifest.name.clone()))
             .collect();
-        let manifest_by_kind: HashMap<String, PluginManifest> = self
+        let __manifest_by_kind: HashMap<String, PluginManifest> = self
             .installed_plugins
             .iter()
             .map(|plugin| (plugin.manifest.kind.clone(), plugin.manifest.clone()))
+            .collect();
+        let metadata_by_kind: HashMap<String, Vec<(String, f64)>> = self
+            .installed_plugins
+            .iter()
+            .map(|plugin| (plugin.manifest.kind.clone(), plugin.metadata_variables.clone()))
             .collect();
 
         let mut window_open = self.plugins_open;
@@ -820,6 +829,7 @@ impl GuiApp {
                                         &installed.manifest.kind,
                                         &serde_json::Value::Object(serde_json::Map::new()),
                                         false,
+                                        &self.installed_plugins,
                                     );
                                     if columns[1].button("Add to workspace").clicked() {
                                         self.add_installed_plugin(idx);
@@ -1089,9 +1099,9 @@ impl GuiApp {
                                         match plugin.config {
                                             Value::Object(ref mut map) => {
                                                 let col1 = &mut columns[1];
-                                                let vars = manifest_by_kind
+                                                let vars = metadata_by_kind
                                                     .get(&plugin.kind)
-                                                    .map(|manifest| manifest.variables.clone())
+                                                    .cloned()
                                                     .unwrap_or_default();
                                                 col1.push_id(("organize_config_grid", plugin.id), |ui| {
                                                     egui::Grid::new(("organize_config_grid_inner", plugin.id))
@@ -1099,8 +1109,8 @@ impl GuiApp {
                                                         .min_col_width(110.0)
                                                         .spacing([10.0, 6.0])
                                                         .show(ui, |ui| {
-                                                            for var in vars {
-                                                                let key = &var.name;
+                                                            for (name, _default_value) in &vars {
+                                                                let key = name;
                                                                 if let Some(value) = map.get_mut(key) {
                                                                     ui.label(key);
                                                                     let buffer_key =
@@ -1291,6 +1301,7 @@ impl GuiApp {
                                     &detected.manifest.kind,
                                     &serde_json::Value::Object(serde_json::Map::new()),
                                     false,
+                                        &self.installed_plugins,
                                 );
                                 let is_installed =
                                     installed_kinds.contains(&detected.manifest.kind);

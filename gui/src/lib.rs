@@ -66,6 +66,7 @@ use workspace::{
     WorkspaceSettings,
 };
 
+mod generic_renderer;
 mod notifications;
 mod plotter;
 mod state;
@@ -199,6 +200,7 @@ struct GuiApp {
     workspace_path: PathBuf,
     status: String,
     installed_plugins: Vec<InstalledPlugin>,
+    plugin_behaviors: HashMap<String, rtsyn_plugin::ui::PluginBehavior>,
     install_dialog_rx: Option<Receiver<Option<PathBuf>>>,
     import_dialog_rx: Option<Receiver<Option<PathBuf>>>,
     load_dialog_rx: Option<Receiver<Option<PathBuf>>>,
@@ -334,6 +336,7 @@ impl GuiApp {
             workspace_path: PathBuf::new(),
             status: String::new(),
             installed_plugins: Vec::new(),
+            plugin_behaviors: HashMap::new(),
             install_dialog_rx: None,
             import_dialog_rx: None,
             load_dialog_rx: None,
@@ -583,11 +586,26 @@ impl GuiApp {
         }
 
         let library_path = Self::resolve_library_path(&manifest, folder.as_ref());
+        let (metadata_inputs, metadata_outputs, metadata_variables, display_schema) = if let Some(ref lib_path) = library_path {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let _ = self.logic_tx.send(LogicMessage::QueryPluginMetadata(lib_path.to_string_lossy().to_string(), tx));
+            if let Ok(Some((inputs, outputs, vars, display_schema))) = rx.recv() {
+                (inputs, outputs, vars, display_schema)
+            } else {
+                (vec![], vec![], vec![], None)
+            }
+        } else {
+            (vec![], vec![], vec![], None)
+        };
         self.installed_plugins.push(InstalledPlugin {
             manifest,
             path: folder.as_ref().to_path_buf(),
             library_path,
             removable,
+            metadata_inputs,
+            metadata_outputs,
+            metadata_variables,
+            display_schema,
         });
         self.status = "Plugin installed".to_string();
         if persist {
@@ -1016,8 +1034,14 @@ impl GuiApp {
         };
 
         let mut config_map = serde_json::Map::new();
-        for var in &installed.manifest.variables {
-            config_map.insert(var.name.clone(), Value::from(var.default));
+        if let Some(library_path) = &installed.library_path {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let _ = self.logic_tx.send(LogicMessage::QueryPluginMetadata(library_path.to_string_lossy().to_string(), tx));
+            if let Ok(Some((_inputs, _outputs, variables, _display_schema))) = rx.recv() {
+                for (name, value) in variables {
+                    config_map.insert(name, Value::from(value));
+                }
+            }
         }
         if installed.manifest.kind == "csv_recorder" {
             config_map.insert("separator".to_string(), Value::from(","));
@@ -1045,20 +1069,30 @@ impl GuiApp {
             );
         }
 
+        // Cache plugin behavior first
+        self.ensure_plugin_behavior_cached_with_path(&installed.manifest.kind, installed.library_path.as_ref());
+        
+        // Determine if plugin should start based on behavior
+        let loads_started = self.plugin_behaviors
+            .get(&installed.manifest.kind)
+            .map(|b| b.loads_started)
+            .unwrap_or(false);
+        
+
         let plugin = PluginDefinition {
             id: self.next_plugin_id,
             kind: installed.manifest.kind.clone(),
             config: Value::Object(config_map),
             priority: 99,
-            running: installed.manifest.loads_started,
+            running: loads_started,
         };
 
         self.workspace.plugins.push(plugin);
         self.next_plugin_id += 1;
+        
         self.status = "Installed plugin added".to_string();
         self.mark_workspace_dirty();
     }
-
     fn duplicate_plugin(&mut self, plugin_id: u64) {
         let source = match self.workspace.plugins.iter().find(|p| p.id == plugin_id) {
             Some(plugin) => plugin.clone(),
@@ -1074,8 +1108,13 @@ impl GuiApp {
             priority: source.priority,
             running: source.running,
         };
+        let kind = plugin.kind.clone();
         self.workspace.plugins.push(plugin);
         self.next_plugin_id += 1;
+        
+        // Cache plugin behavior
+        self.ensure_plugin_behavior_cached(&kind);
+        
         self.status = "Plugin duplicated".to_string();
         self.mark_workspace_dirty();
     }
@@ -1125,14 +1164,39 @@ impl GuiApp {
             .find(|plugin| plugin.manifest.kind == kind)
         {
             installed.manifest = manifest;
+            let (tx, rx) = std::sync::mpsc::channel();
+            if let Some(ref lib_path) = library_path {
+                let _ = self.logic_tx.send(LogicMessage::QueryPluginMetadata(lib_path.to_string_lossy().to_string(), tx));
+                if let Ok(Some((inputs, outputs, vars, display_schema))) = rx.recv() {
+                    installed.metadata_inputs = inputs;
+                    installed.metadata_outputs = outputs;
+                    installed.metadata_variables = vars;
+                    installed.display_schema = display_schema;
+                }
+            }
             installed.path = path.to_path_buf();
             installed.library_path = library_path;
         } else {
+            let (metadata_inputs, metadata_outputs, metadata_variables, display_schema) = if let Some(ref lib_path) = library_path {
+                let (tx, rx) = std::sync::mpsc::channel();
+                let _ = self.logic_tx.send(LogicMessage::QueryPluginMetadata(lib_path.to_string_lossy().to_string(), tx));
+                if let Ok(Some((inputs, outputs, vars, display_schema))) = rx.recv() {
+                    (inputs, outputs, vars, display_schema)
+                } else {
+                    (vec![], vec![], vec![], None)
+                }
+            } else {
+                (vec![], vec![], vec![], None)
+            };
             self.installed_plugins.push(InstalledPlugin {
                 manifest,
                 path: path.to_path_buf(),
                 library_path,
                 removable: false,
+                metadata_inputs,
+                metadata_outputs,
+                metadata_variables,
+                display_schema,
             });
         }
         self.persist_installed_plugins();
@@ -1676,41 +1740,52 @@ impl GuiApp {
             .find(|plugin| plugin.manifest.kind == kind)
             .map(|plugin| {
                 if inputs {
-                    plugin
-                        .manifest
-                        .inputs
-                        .iter()
-                        .map(|port| port.name.clone())
-                        .collect()
+                    plugin.metadata_inputs.clone()
                 } else {
-                    plugin
-                        .manifest
-                        .outputs
-                        .iter()
-                        .map(|port| port.name.clone())
-                        .collect()
+                    plugin.metadata_outputs.clone()
                 }
             })
             .unwrap_or_default()
     }
 
-    fn manifest_for_kind(&self, kind: &str) -> Option<&PluginManifest> {
-        self.installed_plugins
-            .iter()
-            .find(|plugin| plugin.manifest.kind == kind)
-            .map(|plugin| &plugin.manifest)
-    }
-
     fn is_extendable_inputs(&self, kind: &str) -> bool {
-        self.manifest_for_kind(kind)
-            .map(|manifest| manifest.extendable_inputs)
-            .unwrap_or(false)
+        if let Some(cached) = self.plugin_behaviors.get(kind) {
+            return matches!(cached.extendable_inputs, rtsyn_plugin::ui::ExtendableInputs::Auto { .. } | rtsyn_plugin::ui::ExtendableInputs::Manual);
+        }
+        false
     }
 
     fn auto_extend_inputs(&self, kind: &str) -> bool {
-        self.manifest_for_kind(kind)
-            .map(|manifest| manifest.auto_extend_inputs)
-            .unwrap_or(true)
+        if let Some(cached) = self.plugin_behaviors.get(kind) {
+            return matches!(cached.extendable_inputs, rtsyn_plugin::ui::ExtendableInputs::Auto { .. });
+        }
+        false
+    }
+    
+
+    fn ensure_plugin_behavior_cached_with_path(&mut self, kind: &str, library_path: Option<&PathBuf>) {
+        if self.plugin_behaviors.contains_key(kind) {
+            return;
+        }
+        
+        let (tx, rx) = std::sync::mpsc::channel();
+        let path_str = library_path.map(|p| p.to_string_lossy().to_string());
+        let _ = self.logic_tx.send(LogicMessage::QueryPluginBehavior(kind.to_string(), path_str, tx));
+        if let Ok(Some(behavior)) = rx.recv_timeout(std::time::Duration::from_millis(100)) {
+            self.plugin_behaviors.insert(kind.to_string(), behavior);
+        }
+    }
+
+    fn ensure_plugin_behavior_cached(&mut self, kind: &str) {
+        if self.plugin_behaviors.contains_key(kind) {
+            return;
+        }
+        
+        let (tx, rx) = std::sync::mpsc::channel();
+        let _ = self.logic_tx.send(LogicMessage::QueryPluginBehavior(kind.to_string(), None, tx));
+        if let Ok(Some(behavior)) = rx.recv_timeout(std::time::Duration::from_millis(100)) {
+            self.plugin_behaviors.insert(kind.to_string(), behavior);
+        }
     }
 
     fn extendable_input_index(port: &str) -> Option<usize> {
@@ -1986,16 +2061,15 @@ impl GuiApp {
 
     fn enforce_connection_dependent(&mut self) {
         let mut stopped = Vec::new();
-        let dependent_by_kind: HashMap<String, bool> = self
-            .installed_plugins
-            .iter()
-            .map(|plugin| {
-                (
-                    plugin.manifest.kind.clone(),
-                    plugin.manifest.connection_dependent,
-                )
-            })
-            .collect();
+        
+        // Build map of connection-dependent plugins from cached behaviors
+        let mut dependent_by_kind: HashMap<String, bool> = HashMap::new();
+        
+        // Hardcoded for app plugins
+        dependent_by_kind.insert("csv_recorder".to_string(), true);
+        dependent_by_kind.insert("live_plotter".to_string(), true);
+        dependent_by_kind.insert("comedi_daq".to_string(), true);
+        
         let incoming: HashSet<u64> = self
             .workspace
             .connections
@@ -2157,10 +2231,7 @@ impl GuiApp {
         let Some(plugin) = self.workspace.plugins.iter().find(|p| p.id == plugin_id) else {
             return Vec::new();
         };
-        let extendable_inputs = self
-            .manifest_for_kind(&plugin.kind)
-            .map(|manifest| manifest.extendable_inputs)
-            .unwrap_or(false);
+        let extendable_inputs = self.is_extendable_inputs(&plugin.kind);
         if extendable_inputs && inputs {
             let columns_len = plugin
                 .config
@@ -2538,17 +2609,9 @@ impl GuiApp {
     }
 
     fn apply_loads_started_on_load(&mut self) {
-        let loads_started_by_kind: HashMap<String, bool> = self
-            .installed_plugins
-            .iter()
-            .map(|plugin| (plugin.manifest.kind.clone(), plugin.manifest.loads_started))
-            .collect();
+        // All plugins start stopped by default (behavior.loads_started is queried at runtime if needed)
         for plugin in &mut self.workspace.plugins {
-            if let Some(loads_started) = loads_started_by_kind.get(&plugin.kind) {
-                if !loads_started {
-                    plugin.running = false;
-                }
-            }
+            plugin.running = false;
         }
     }
 }

@@ -6,3 +6,6 @@ edition = "2021"
 [dependencies]
 rtsyn_plugin = { workspace = true }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+live_plotter_plugin = { path = "../live_plotter" }

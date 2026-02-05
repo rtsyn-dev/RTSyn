@@ -37,6 +37,8 @@ pub enum LogicMessage {
     UpdateWorkspace(WorkspaceDefinition),
     SetPluginRunning(u64, bool),
     RestartPlugin(u64),
+    QueryPluginBehavior(String, Option<String>, Sender<Option<rtsyn_plugin::ui::PluginBehavior>>),
+    QueryPluginMetadata(String, Sender<Option<(Vec<String>, Vec<String>, Vec<(String, f64)>, Option<rtsyn_plugin::ui::DisplaySchema>)>>),
 }
 
 enum RuntimePlugin {
@@ -216,6 +218,81 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                     }
                     LogicMessage::SetPluginRunning(plugin_id, running) => {
                         plugin_running.insert(plugin_id, running);
+                    }
+                    LogicMessage::QueryPluginBehavior(kind, library_path, response_tx) => {
+                        let behavior = match kind.as_str() {
+                            "csv_recorder" => Some(CsvRecorderedPlugin::new(0).behavior()),
+                            "live_plotter" => Some(LivePlotterPlugin::new(0).behavior()),
+                            "performance_monitor" => Some(PerformanceMonitorPlugin::new(0).behavior()),
+                            #[cfg(feature = "comedi")]
+                            "comedi_daq" => Some(comedi_daq_plugin::ComediDaqPlugin::new(0).behavior()),
+
+                            _ => {
+                                // Try to load behavior from dynamic plugin
+                                if let Some(path) = library_path.as_ref() {
+                                    if let Some(dynamic) = unsafe { DynamicPluginInstance::load(path, 0) } {
+                                        if let Some(behavior_json_fn) = unsafe { (*dynamic.api).behavior_json } {
+                                            let json_str = behavior_json_fn(dynamic.handle);
+                                            let json_slice = unsafe { std::slice::from_raw_parts(json_str.ptr, json_str.len) };
+                                            if let Ok(behavior) = serde_json::from_slice(json_slice) {
+                                                unsafe { ((*dynamic.api).destroy)(dynamic.handle); }
+                                                let _ = response_tx.send(Some(behavior));
+                                                continue;
+                                            }
+                                            unsafe { ((*dynamic.api).destroy)(dynamic.handle); }
+                                        }
+                                    }
+                                }
+                                None
+                            }
+                        };
+                        let _ = response_tx.send(behavior);
+                    }
+                    LogicMessage::QueryPluginMetadata(library_path, response_tx) => {
+                        let metadata = if let Some(dynamic) = unsafe { DynamicPluginInstance::load(&library_path, 0) } {
+                            let inputs_str = unsafe { ((*dynamic.api).inputs_json)(dynamic.handle) };
+                            let outputs_str = unsafe { ((*dynamic.api).outputs_json)(dynamic.handle) };
+                            let meta_str = unsafe { ((*dynamic.api).meta_json)(dynamic.handle) };
+                            let inputs: Vec<String> = unsafe {
+                                let slice = std::slice::from_raw_parts(inputs_str.ptr, inputs_str.len);
+                                serde_json::from_slice(slice).unwrap_or_default()
+                            };
+                            let outputs: Vec<String> = unsafe {
+                                let slice = std::slice::from_raw_parts(outputs_str.ptr, outputs_str.len);
+                                serde_json::from_slice(slice).unwrap_or_default()
+                            };
+                            let meta: serde_json::Value = unsafe {
+                                let slice = std::slice::from_raw_parts(meta_str.ptr, meta_str.len);
+                                serde_json::from_slice(slice).unwrap_or(serde_json::json!({}))
+                            };
+                            let variables: Vec<(String, f64)> = meta.get("default_vars")
+                                .and_then(|v| v.as_array())
+                                .map(|arr| {
+                                    arr.iter().filter_map(|item| {
+                                        if let Some(arr) = item.as_array() {
+                                            if arr.len() == 2 {
+                                                let name = arr[0].as_str()?.to_string();
+                                                let value = arr[1].as_f64()?;
+                                                return Some((name, value));
+                                            }
+                                        }
+                                        None
+                                    }).collect()
+                                })
+                                .unwrap_or_default();
+                            let display_schema = if let Some(ui_schema_fn) = unsafe { (*dynamic.api).ui_schema_json } {
+                                let schema_str = ui_schema_fn(dynamic.handle);
+                                let schema_slice = unsafe { std::slice::from_raw_parts(schema_str.ptr, schema_str.len) };
+                                serde_json::from_slice(schema_slice).ok()
+                            } else {
+                                None
+                            };
+                            unsafe { ((*dynamic.api).destroy)(dynamic.handle); }
+                            Some((inputs, outputs, variables, display_schema))
+                        } else {
+                            None
+                        };
+                        let _ = response_tx.send(metadata);
                     }
                     LogicMessage::RestartPlugin(plugin_id) => {
                         let Some(ws) = workspace.as_ref() else {
@@ -670,6 +747,81 @@ pub fn run_runtime_current(
                     }
                     LogicMessage::SetPluginRunning(plugin_id, running) => {
                         plugin_running.insert(plugin_id, running);
+                    }
+                    LogicMessage::QueryPluginBehavior(kind, library_path, response_tx) => {
+                        let behavior = match kind.as_str() {
+                            "csv_recorder" => Some(CsvRecorderedPlugin::new(0).behavior()),
+                            "live_plotter" => Some(LivePlotterPlugin::new(0).behavior()),
+                            "performance_monitor" => Some(PerformanceMonitorPlugin::new(0).behavior()),
+                            #[cfg(feature = "comedi")]
+                            "comedi_daq" => Some(comedi_daq_plugin::ComediDaqPlugin::new(0).behavior()),
+
+                            _ => {
+                                // Try to load behavior from dynamic plugin
+                                if let Some(path) = library_path.as_ref() {
+                                    if let Some(dynamic) = unsafe { DynamicPluginInstance::load(path, 0) } {
+                                        if let Some(behavior_json_fn) = unsafe { (*dynamic.api).behavior_json } {
+                                            let json_str = behavior_json_fn(dynamic.handle);
+                                            let json_slice = unsafe { std::slice::from_raw_parts(json_str.ptr, json_str.len) };
+                                            if let Ok(behavior) = serde_json::from_slice(json_slice) {
+                                                unsafe { ((*dynamic.api).destroy)(dynamic.handle); }
+                                                let _ = response_tx.send(Some(behavior));
+                                                continue;
+                                            }
+                                            unsafe { ((*dynamic.api).destroy)(dynamic.handle); }
+                                        }
+                                    }
+                                }
+                                None
+                            }
+                        };
+                        let _ = response_tx.send(behavior);
+                    }
+                    LogicMessage::QueryPluginMetadata(library_path, response_tx) => {
+                        let metadata = if let Some(dynamic) = unsafe { DynamicPluginInstance::load(&library_path, 0) } {
+                            let inputs_str = unsafe { ((*dynamic.api).inputs_json)(dynamic.handle) };
+                            let outputs_str = unsafe { ((*dynamic.api).outputs_json)(dynamic.handle) };
+                            let meta_str = unsafe { ((*dynamic.api).meta_json)(dynamic.handle) };
+                            let inputs: Vec<String> = unsafe {
+                                let slice = std::slice::from_raw_parts(inputs_str.ptr, inputs_str.len);
+                                serde_json::from_slice(slice).unwrap_or_default()
+                            };
+                            let outputs: Vec<String> = unsafe {
+                                let slice = std::slice::from_raw_parts(outputs_str.ptr, outputs_str.len);
+                                serde_json::from_slice(slice).unwrap_or_default()
+                            };
+                            let meta: serde_json::Value = unsafe {
+                                let slice = std::slice::from_raw_parts(meta_str.ptr, meta_str.len);
+                                serde_json::from_slice(slice).unwrap_or(serde_json::json!({}))
+                            };
+                            let variables: Vec<(String, f64)> = meta.get("default_vars")
+                                .and_then(|v| v.as_array())
+                                .map(|arr| {
+                                    arr.iter().filter_map(|item| {
+                                        if let Some(arr) = item.as_array() {
+                                            if arr.len() == 2 {
+                                                let name = arr[0].as_str()?.to_string();
+                                                let value = arr[1].as_f64()?;
+                                                return Some((name, value));
+                                            }
+                                        }
+                                        None
+                                    }).collect()
+                                })
+                                .unwrap_or_default();
+                            let display_schema = if let Some(ui_schema_fn) = unsafe { (*dynamic.api).ui_schema_json } {
+                                let schema_str = ui_schema_fn(dynamic.handle);
+                                let schema_slice = unsafe { std::slice::from_raw_parts(schema_str.ptr, schema_str.len) };
+                                serde_json::from_slice(schema_slice).ok()
+                            } else {
+                                None
+                            };
+                            unsafe { ((*dynamic.api).destroy)(dynamic.handle); }
+                            Some((inputs, outputs, variables, display_schema))
+                        } else {
+                            None
+                        };
+                        let _ = response_tx.send(metadata);
                     }
                     LogicMessage::RestartPlugin(plugin_id) => {
                         let Some(ws) = workspace.as_ref() else {

@@ -1,4 +1,4 @@
-use rtsyn_plugin::{Plugin, PluginContext, PluginError, PluginId, PluginMeta, Port, PortId};
+use rtsyn_plugin::prelude::*;
 use serde_json::Value;
 
 pub struct LivePlotterPlugin {
@@ -75,6 +75,81 @@ impl Plugin for LivePlotterPlugin {
     }
 
     fn process(&mut self, _ctx: &mut PluginContext) -> Result<(), PluginError> {
+        Ok(())
+    }
+
+    fn ui_schema(&self) -> Option<UISchema> {
+        Some(
+            UISchema::new()
+                .field(
+                    ConfigField::float("refresh_hz", "Refresh Hz")
+                        .min_f(1.0)
+                        .max_f(120.0)
+                        .default_value(Value::from(60.0))
+                        .hint("Plot refresh rate"),
+                )
+                .field(
+                    ConfigField::integer("window_multiplier", "Window multiplier")
+                        .min(1)
+                        .step(100)
+                        .default_value(Value::from(1000)),
+                )
+                .field(
+                    ConfigField::integer("window_value", "Window value")
+                        .min(1)
+                        .default_value(Value::from(10)),
+                )
+                .field(
+                    ConfigField::float("amplitude", "Amplitude")
+                        .min_f(0.0)
+                        .step_f(0.1)
+                        .default_value(Value::from(0.0))
+                        .hint("Y-axis amplitude (0 = auto)"),
+                ),
+        )
+    }
+
+    fn behavior(&self) -> PluginBehavior {
+        PluginBehavior {
+            supports_start_stop: true,
+            supports_restart: false,
+            extendable_inputs: ExtendableInputs::Auto {
+                pattern: "in_{}".to_string(),
+            },
+            loads_started: false,
+        }
+    }
+
+    fn connection_behavior(&self) -> ConnectionBehavior {
+        ConnectionBehavior { dependent: true }
+    }
+
+    fn on_input_added(&mut self, port: &str) -> Result<(), PluginError> {
+        if let Some(idx) = port.strip_prefix("in_").and_then(|s| s.parse::<usize>().ok()) {
+            while self.inputs.len() <= idx {
+                let i = self.inputs.len();
+                self.inputs.push(Port {
+                    id: PortId(format!("in_{}", i)),
+                });
+                self.input_values.push(0.0);
+            }
+        }
+        Ok(())
+    }
+
+    fn on_input_removed(&mut self, port: &str) -> Result<(), PluginError> {
+        if let Some(idx) = port.strip_prefix("in_").and_then(|s| s.parse::<usize>().ok()) {
+            if idx < self.inputs.len() {
+                self.inputs.remove(idx);
+                if idx < self.input_values.len() {
+                    self.input_values.remove(idx);
+                }
+                // Reindex remaining
+                for (i, input) in self.inputs.iter_mut().enumerate() {
+                    input.id = PortId(format!("in_{}", i));
+                }
+            }
+        }
         Ok(())
     }
 }

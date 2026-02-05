@@ -1,6 +1,4 @@
-use rtsyn_plugin::{
-    EventLogger, Plugin, PluginContext, PluginError, PluginId, PluginMeta, Port, PortId,
-};
+use rtsyn_plugin::prelude::*;
 use serde_json::Value;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -182,6 +180,84 @@ impl Plugin for CsvRecorderedPlugin {
         writeln!(file, "{values}").map_err(|_| PluginError::ProcessingFailed)?;
         if self.include_time {
             self.time_seconds += self.time_step.max(0.0);
+        }
+        Ok(())
+    }
+
+    fn ui_schema(&self) -> Option<UISchema> {
+        Some(
+            UISchema::new()
+                .field(
+                    ConfigField::text("separator", "Separator")
+                        .default_value(Value::String(",".to_string()))
+                        .max_length(5)
+                        .hint("CSV column separator"),
+                )
+                .field(
+                    ConfigField::boolean("include_time", "Include time column")
+                        .default_value(Value::Bool(true)),
+                )
+                .field(
+                    ConfigField::filepath("path", "Output file")
+                        .mode(FileMode::SaveFile)
+                        .filter("CSV files", "*.csv")
+                        .filter("All files", "*"),
+                )
+                .field(
+                    ConfigField::dynamic_list("columns", "Column names")
+                        .item_type(FieldType::Text {
+                            multiline: false,
+                            max_length: Some(100),
+                        })
+                        .add_label("Add column"),
+                ),
+        )
+    }
+
+    fn behavior(&self) -> PluginBehavior {
+        PluginBehavior {
+            supports_start_stop: true,
+            supports_restart: false,
+            extendable_inputs: ExtendableInputs::Auto {
+                pattern: "in_{}".to_string(),
+            },
+            loads_started: false,
+        }
+    }
+
+    fn connection_behavior(&self) -> ConnectionBehavior {
+        ConnectionBehavior { dependent: true }
+    }
+
+    fn on_input_added(&mut self, port: &str) -> Result<(), PluginError> {
+        if let Some(idx) = port.strip_prefix("in_").and_then(|s| s.parse::<usize>().ok()) {
+            while self.inputs.len() <= idx {
+                let i = self.inputs.len();
+                self.inputs.push(Port {
+                    id: PortId(format!("in_{}", i)),
+                });
+                self.input_values.push(0.0);
+                self.columns.push(String::new());
+            }
+        }
+        Ok(())
+    }
+
+    fn on_input_removed(&mut self, port: &str) -> Result<(), PluginError> {
+        if let Some(idx) = port.strip_prefix("in_").and_then(|s| s.parse::<usize>().ok()) {
+            if idx < self.inputs.len() {
+                self.inputs.remove(idx);
+                if idx < self.input_values.len() {
+                    self.input_values.remove(idx);
+                }
+                if idx < self.columns.len() {
+                    self.columns.remove(idx);
+                }
+                // Reindex remaining
+                for (i, input) in self.inputs.iter_mut().enumerate() {
+                    input.id = PortId(format!("in_{}", i));
+                }
+            }
         }
         Ok(())
     }
