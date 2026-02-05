@@ -149,15 +149,32 @@ pub(crate) struct WorkspaceSettingsDraft {
 }
 
 pub fn run_gui(config: GuiConfig) -> Result<(), GuiError> {
-    let options = eframe::NativeOptions {
+    let (logic_tx, logic_state_rx) = match spawn_runtime() {
+        Ok(tuple) => tuple,
+        Err(err) => {
+            eprintln!("Failed to start logic runtime: {err}");
+            process::exit(1);
+        }
+    };
+    run_gui_with_runtime(config, logic_tx, logic_state_rx)
+}
+
+pub fn run_gui_with_runtime(
+    config: GuiConfig,
+    logic_tx: Sender<LogicMessage>,
+    logic_state_rx: Receiver<LogicState>,
+) -> Result<(), GuiError> {
+    let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([config.width, config.height]),
         ..Default::default()
     };
+    // NOTE: Vsync generates hangs and lag on occluded windows.
+    options.vsync = false;
 
     eframe::run_native(
         &config.title,
         options,
-        Box::new(|cc| {
+        Box::new(move |cc| {
             let mut fonts = egui::FontDefinitions::default();
             fonts.font_data.insert(
                 "fa".to_string(),
@@ -171,7 +188,7 @@ pub fn run_gui(config: GuiConfig) -> Result<(), GuiError> {
                 family.push("fa".to_string());
             }
             cc.egui_ctx.set_fonts(fonts);
-            Box::new(GuiApp::new())
+            Box::new(GuiApp::new_with_runtime(logic_tx, logic_state_rx))
         }),
     )
     .map_err(|err| GuiError::Gui(err.to_string()))
@@ -293,7 +310,10 @@ struct GuiApp {
 }
 
 impl GuiApp {
-    fn new() -> Self {
+    fn new_with_runtime(
+        logic_tx: Sender<LogicMessage>,
+        logic_state_rx: Receiver<LogicState>,
+    ) -> Self {
         let install_db_path = PathBuf::from("app_plugins").join("installed_plugins.json");
         let workspace_dir = PathBuf::from("app_workspaces");
         let workspace = WorkspaceDefinition {
@@ -308,13 +328,6 @@ impl GuiApp {
         let available_cores = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(1);
-        let (logic_tx, logic_state_rx) = match spawn_runtime() {
-            Ok(tuple) => tuple,
-            Err(err) => {
-                eprintln!("Failed to start logic runtime: {err}");
-                process::exit(1);
-            }
-        };
 
         let mut app = Self {
             workspace,
@@ -2564,8 +2577,7 @@ impl eframe::App for GuiApp {
         if plotter_refresh > 0.0 {
             let hz = plotter_refresh.max(1.0);
             ctx.request_repaint_after(Duration::from_secs_f64(1.0 / hz));
-        }
-        if !ctx.input(|i| i.focused) {
+        } else if !ctx.input(|i| i.focused) {
             ctx.request_repaint_after(Duration::from_millis(250));
         }
         if self.workspace_dirty {

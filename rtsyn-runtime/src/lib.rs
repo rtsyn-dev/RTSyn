@@ -29,7 +29,7 @@ pub struct Runtime {
 pub mod daemon;
 pub mod runtime;
 
-pub use runtime::{spawn_runtime, LogicMessage, LogicSettings, LogicState};
+pub use runtime::{run_runtime_current, spawn_runtime, LogicMessage, LogicSettings, LogicState};
 
 #[cfg(test)]
 mod tests {
