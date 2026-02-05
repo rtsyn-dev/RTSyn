@@ -5,6 +5,7 @@ use performance_monitor_plugin::PerformanceMonitorPlugin;
 #[cfg(feature = "comedi")]
 use rtsyn_plugin::DeviceDriver;
 use rtsyn_plugin::{Plugin, PluginApi, PluginContext, PluginString, RTSYN_PLUGIN_API_SYMBOL};
+use rtsyn_plugin::ui::DisplaySchema;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
@@ -26,6 +27,8 @@ pub struct LogicSettings {
 #[derive(Debug, Clone)]
 pub struct LogicState {
     pub outputs: HashMap<(u64, String), f64>,
+    pub input_values: HashMap<(u64, String), f64>,
+    pub internal_variable_values: HashMap<(u64, String), f64>,
     pub viewer_values: HashMap<u64, f64>,
     pub tick: u64,
     pub plotter_samples: HashMap<u64, Vec<(u64, Vec<f64>)>>,
@@ -58,6 +61,8 @@ struct DynamicPluginInstance {
     outputs: Vec<String>,
     input_bytes: Vec<Vec<u8>>,
     output_bytes: Vec<Vec<u8>>,
+    internal_variables: Vec<String>,
+    internal_variable_bytes: Vec<Vec<u8>>,
     last_config: Option<String>,
     last_inputs: Vec<u64>,
 }
@@ -80,6 +85,23 @@ impl DynamicPluginInstance {
         let outputs = Self::read_ports(unsafe { &*api }, handle, unsafe { (*api).outputs_json });
         let input_bytes = inputs.iter().map(|v| v.as_bytes().to_vec()).collect();
         let output_bytes = outputs.iter().map(|v| v.as_bytes().to_vec()).collect();
+        let display_schema = unsafe { (*api).ui_schema_json }
+            .and_then(|schema_fn| {
+                let raw = schema_fn(handle);
+                if raw.ptr.is_null() || raw.len == 0 {
+                    return None;
+                }
+                let slice = unsafe { std::slice::from_raw_parts(raw.ptr, raw.len) };
+                serde_json::from_slice::<DisplaySchema>(slice).ok()
+            });
+        let internal_variables = display_schema
+            .as_ref()
+            .map(|schema| schema.variables.clone())
+            .unwrap_or_default();
+        let internal_variable_bytes = internal_variables
+            .iter()
+            .map(|v| v.as_bytes().to_vec())
+            .collect();
         let last_inputs = vec![f64::NAN.to_bits(); inputs.len()];
         Some(Self {
             _lib: lib,
@@ -89,6 +111,8 @@ impl DynamicPluginInstance {
             outputs,
             input_bytes,
             output_bytes,
+            internal_variables,
+            internal_variable_bytes,
             last_config: None,
             last_inputs,
         })
@@ -131,6 +155,8 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
             ..Default::default()
         };
         let mut outputs: HashMap<(u64, String), f64> = HashMap::new();
+        let mut input_values: HashMap<(u64, String), f64> = HashMap::new();
+        let mut internal_variable_values: HashMap<(u64, String), f64> = HashMap::new();
         let mut viewer_values: HashMap<u64, f64> = HashMap::new();
         let mut plotter_samples: HashMap<u64, Vec<(u64, Vec<f64>)>> = HashMap::new();
         let mut runtime = crate::Runtime::new(workspace::WorkspaceDefinition {
@@ -212,6 +238,8 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                             plugin_running.remove(&id);
                             viewer_values.remove(&id);
                             outputs.retain(|(pid, _), _| *pid != id);
+                            input_values.retain(|(pid, _), _| *pid != id);
+                            internal_variable_values.retain(|(pid, _), _| *pid != id);
                             plotter_samples.remove(&id);
                         }
                         workspace = Some(new_workspace);
@@ -330,6 +358,8 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                         plugin_instances.insert(plugin.id, instance);
                         viewer_values.remove(&plugin.id);
                         outputs.retain(|(pid, _), _| *pid != plugin.id);
+                        input_values.retain(|(pid, _), _| *pid != plugin.id);
+                        internal_variable_values.retain(|(pid, _), _| *pid != plugin.id);
                     }
                     },
                     Err(TryRecvError::Empty) => break,
@@ -387,6 +417,7 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                             for (idx, input_name) in plugin_instance.inputs.iter().enumerate() {
                                 let value =
                                     input_sum(&ws.connections, &outputs, plugin.id, input_name);
+                                input_values.insert((plugin.id, input_name.clone()), value);
                                 let bits = value.to_bits();
                                 if plugin_instance.last_inputs[idx] != bits {
                                     plugin_instance.last_inputs[idx] = bits;
@@ -415,6 +446,15 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                                     );
                                     outputs.insert((plugin.id, output_name.clone()), value);
                                 }
+                            }
+                            for (idx, var_name) in plugin_instance.internal_variables.iter().enumerate() {
+                                let bytes = &plugin_instance.internal_variable_bytes[idx];
+                                let value = (api.get_output)(
+                                    plugin_instance.handle,
+                                    bytes.as_ptr(),
+                                    bytes.len(),
+                                );
+                                internal_variable_values.insert((plugin.id, var_name.clone()), value);
                             }
                         }
                         RuntimePlugin::CsvRecorder(plugin_instance) => {
@@ -469,6 +509,7 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                                 } else {
                                     input_sum(&ws.connections, &outputs, plugin.id, &port)
                                 };
+                                input_values.insert((plugin.id, port), value);
                                 inputs.push(value);
                             }
                             plugin_instance.set_config(
@@ -533,6 +574,7 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                                 plugin_instance.input_port_names().iter().cloned().collect();
                             for port in input_ports {
                                 let value = input_sum(&ws.connections, &outputs, plugin.id, &port);
+                                input_values.insert((plugin.id, port.clone()), value);
                                 plugin_instance.set_input(&port, value);
                             }
 
@@ -567,6 +609,7 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                                 } else {
                                     input_sum(&ws.connections, &outputs, plugin.id, &port)
                                 };
+                                input_values.insert((plugin.id, port), value);
                                 inputs.push(value);
                             }
                             plugin_instance.set_inputs(inputs.clone());
@@ -620,6 +663,8 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
 
                     let _ = logic_state_tx.send(LogicState {
                         outputs: outputs.clone(),
+                        input_values: input_values.clone(),
+                        internal_variable_values: internal_variable_values.clone(),
                         viewer_values: viewer_values.clone(),
                         tick: plugin_ctx.tick,
                         plotter_samples: limited_plotter_samples,
@@ -660,6 +705,8 @@ pub fn run_runtime_current(
         ..Default::default()
     };
     let mut outputs: HashMap<(u64, String), f64> = HashMap::new();
+    let mut input_values: HashMap<(u64, String), f64> = HashMap::new();
+    let mut internal_variable_values: HashMap<(u64, String), f64> = HashMap::new();
     let mut viewer_values: HashMap<u64, f64> = HashMap::new();
     let mut plotter_samples: HashMap<u64, Vec<(u64, Vec<f64>)>> = HashMap::new();
     let mut runtime = crate::Runtime::new(workspace::WorkspaceDefinition {
@@ -741,6 +788,8 @@ pub fn run_runtime_current(
                             plugin_running.remove(&id);
                             viewer_values.remove(&id);
                             outputs.retain(|(pid, _), _| *pid != id);
+                            input_values.retain(|(pid, _), _| *pid != id);
+                            internal_variable_values.retain(|(pid, _), _| *pid != id);
                             plotter_samples.remove(&id);
                         }
                         workspace = Some(new_workspace);
@@ -859,6 +908,8 @@ pub fn run_runtime_current(
                         plugin_instances.insert(plugin.id, instance);
                         viewer_values.remove(&plugin.id);
                         outputs.retain(|(pid, _), _| *pid != plugin.id);
+                        input_values.retain(|(pid, _), _| *pid != plugin.id);
+                        internal_variable_values.retain(|(pid, _), _| *pid != plugin.id);
                     }
                 },
                 Err(TryRecvError::Empty) => break,
@@ -916,6 +967,7 @@ pub fn run_runtime_current(
                         for (idx, input_name) in plugin_instance.inputs.iter().enumerate() {
                             let value =
                                 input_sum(&ws.connections, &outputs, plugin.id, input_name);
+                            input_values.insert((plugin.id, input_name.clone()), value);
                             let bits = value.to_bits();
                             if plugin_instance.last_inputs[idx] != bits {
                                 plugin_instance.last_inputs[idx] = bits;
@@ -943,6 +995,15 @@ pub fn run_runtime_current(
                                 );
                                 outputs.insert((plugin.id, output_name.clone()), value);
                             }
+                        }
+                        for (idx, var_name) in plugin_instance.internal_variables.iter().enumerate() {
+                            let bytes = &plugin_instance.internal_variable_bytes[idx];
+                            let value = (api.get_output)(
+                                plugin_instance.handle,
+                                bytes.as_ptr(),
+                                bytes.len(),
+                            );
+                            internal_variable_values.insert((plugin.id, var_name.clone()), value);
                         }
                     }
                     RuntimePlugin::CsvRecorder(plugin_instance) => {
@@ -997,6 +1058,7 @@ pub fn run_runtime_current(
                             } else {
                                 input_sum(&ws.connections, &outputs, plugin.id, &port)
                             };
+                            input_values.insert((plugin.id, port), value);
                             inputs.push(value);
                         }
                         plugin_instance.set_config(
@@ -1060,6 +1122,7 @@ pub fn run_runtime_current(
                             plugin_instance.input_port_names().iter().cloned().collect();
                         for port in input_ports {
                             let value = input_sum(&ws.connections, &outputs, plugin.id, &port);
+                            input_values.insert((plugin.id, port.clone()), value);
                             plugin_instance.set_input(&port, value);
                         }
 
@@ -1094,6 +1157,7 @@ pub fn run_runtime_current(
                             } else {
                                 input_sum(&ws.connections, &outputs, plugin.id, &port)
                             };
+                            input_values.insert((plugin.id, port), value);
                             inputs.push(value);
                         }
                         plugin_instance.set_inputs(inputs.clone());
@@ -1147,6 +1211,8 @@ pub fn run_runtime_current(
 
                 let _ = logic_state_tx.send(LogicState {
                     outputs: outputs.clone(),
+                    input_values: input_values.clone(),
+                    internal_variable_values: internal_variable_values.clone(),
                     viewer_values: viewer_values.clone(),
                     tick: plugin_ctx.tick,
                     plotter_samples: limited_plotter_samples,

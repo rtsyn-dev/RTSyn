@@ -258,6 +258,8 @@ struct GuiApp {
     organize_search: String,
     organize_selected_index: Option<usize>,
     computed_outputs: HashMap<(u64, String), f64>,
+    input_values: HashMap<(u64, String), f64>,
+    internal_variable_values: HashMap<(u64, String), f64>,
     viewer_values: HashMap<u64, f64>,
     last_output_update: Instant,
     plotters: HashMap<u64, Arc<Mutex<LivePlotter>>>,
@@ -394,6 +396,8 @@ impl GuiApp {
             organize_search: String::new(),
             organize_selected_index: None,
             computed_outputs: HashMap::new(),
+            input_values: HashMap::new(),
+            internal_variable_values: HashMap::new(),
             viewer_values: HashMap::new(),
             last_output_update: Instant::now(),
             plotters: HashMap::new(),
@@ -1718,6 +1722,8 @@ impl GuiApp {
         }
         if let Some(state) = latest {
             let outputs = state.outputs;
+            let input_values = state.input_values;
+            let internal_variable_values = state.internal_variable_values;
             let viewer_values = state.viewer_values;
             let tick = state.tick;
             self.update_plotters(tick, &outputs, &merged_samples);
@@ -1728,6 +1734,8 @@ impl GuiApp {
             };
             if self.last_output_update.elapsed() >= output_interval {
                 self.computed_outputs = outputs;
+                self.input_values = input_values;
+                self.internal_variable_values = internal_variable_values;
                 self.viewer_values = viewer_values;
                 self.last_output_update = Instant::now();
             }

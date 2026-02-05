@@ -80,6 +80,8 @@ impl GuiApp {
             .map(|plugin| (plugin.manifest.kind.clone(), plugin.metadata_variables.clone()))
             .collect();
         let computed_outputs = self.computed_outputs.clone();
+        let input_values = self.input_values.clone();
+        let internal_variable_values = self.internal_variable_values.clone();
         let viewer_values = self.viewer_values.clone();
         let mut remove_id: Option<u64> = None;
         let mut pending_running: Vec<(u64, bool)> = Vec::new();
@@ -406,7 +408,69 @@ impl GuiApp {
                                                 });
                                         }
                                     
-                                    // Inputs display requires runtime support for per-port values
+                                        if !schema.inputs.is_empty() {
+                                            ui.add_space(6.0);
+                                            ui.separator();
+                                            let title = if schema.inputs.len() == 1 {
+                                                "Input"
+                                            } else {
+                                                "Inputs"
+                                            };
+                                            ui.label(RichText::new(title).strong().size(13.0));
+                                            ui.add_space(4.0);
+                                            egui::Grid::new(("plugin_inputs_grid", plugin.id))
+                                                .num_columns(2)
+                                                .min_col_width(110.0)
+                                                .spacing([10.0, 6.0])
+                                                .show(ui, |ui| {
+                                                    for input_name in &schema.inputs {
+                                                        let value = input_values
+                                                            .get(&(plugin.id, input_name.clone()))
+                                                            .copied()
+                                                            .unwrap_or(0.0);
+                                                        ui.label(input_name);
+                                                        let mut value_text = format!("{value:.4}");
+                                                        ui.add_enabled(
+                                                            false,
+                                                            egui::TextEdit::singleline(&mut value_text)
+                                                                .desired_width(80.0),
+                                                        );
+                                                        ui.end_row();
+                                                    }
+                                                });
+                                        }
+
+                                        if !schema.variables.is_empty() {
+                                            ui.add_space(6.0);
+                                            ui.separator();
+                                            let title = if schema.variables.len() == 1 {
+                                                "Internal Variable"
+                                            } else {
+                                                "Internal Variables"
+                                            };
+                                            ui.label(RichText::new(title).strong().size(13.0));
+                                            ui.add_space(4.0);
+                                            egui::Grid::new(("plugin_internal_vars_grid", plugin.id))
+                                                .num_columns(2)
+                                                .min_col_width(110.0)
+                                                .spacing([10.0, 6.0])
+                                                .show(ui, |ui| {
+                                                    for var_name in &schema.variables {
+                                                        let value = internal_variable_values
+                                                            .get(&(plugin.id, var_name.clone()))
+                                                            .copied()
+                                                            .unwrap_or(0.0);
+                                                        ui.label(var_name);
+                                                        let mut value_text = format!("{value:.4}");
+                                                        ui.add_enabled(
+                                                            false,
+                                                            egui::TextEdit::singleline(&mut value_text)
+                                                                .desired_width(80.0),
+                                                        );
+                                                        ui.end_row();
+                                                    }
+                                                });
+                                        }
                                 }
                                 }
 

@@ -35,3 +35,8 @@
 - [ ] Add runtime support for per-port input values and internal variables display in plugin view (extend LogicState with input_values and variable_values HashMaps)
 - [ ] Check if cached plugin is deleted when reinstalled (it should, plugin updates) and delete instances of same kind plugin that is open
 - [ ] dont allow plugins of same kind to be installed twice
+- [ ] fix reset button (should restart monitored variables)
+- [ ] Eliminate cross from plotter
+- [ ] Instead of none inputs in plugin preview, when extendable inputs, show "incremental"
+- [ ] Make the Variables, Input/s, Output/s and Internal Variable/s be plegable sections if clicked a down arrow as same level as the section name. Also make them follow this order: Variables, Internal Variable/s, Input/s and Output/s
+- [ ] Performance monitor doesn't show the variables and outputs
