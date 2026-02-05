@@ -25,7 +25,7 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
-rtsyn_plugin = { git =  "https://github.com/rtsyn-dev/rtsyn-plugin" } 
+rtsyn_plugin = { path =  "../rtsyn-plugin" } 
 thiserror = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
