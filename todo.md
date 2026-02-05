@@ -1,5 +1,6 @@
 [test] Comedi plugin
 
+- [ ] Create a plugin that can help creating plugins
 - [ ] Impove, change and refactor the plotter: It shall generate plots from different inputs, this should be the y value and the x the time (period of collection)
 - [ ] Allow changing the color of the plotter lines
 - [ ] When confirmation dialog is shown, the connections on background dissapear visually while is shown.
@@ -39,4 +40,5 @@
 - [ ] Eliminate cross from plotter
 - [ ] Instead of none inputs in plugin preview, when extendable inputs, show "incremental"
 - [ ] Make the Variables, Input/s, Output/s and Internal Variable/s be plegable sections if clicked a down arrow as same level as the section name. Also make them follow this order: Variables, Internal Variable/s, Input/s and Output/s
-- [ ] Performance monitor doesn't show the variables and outputs
+- [ ] For actual csv recorder and live plotter: make number of inputs and on/off internal variables instead of actual special view (which shall be removed)
+- [x] Performance monitor doesn't show the variables and outputs

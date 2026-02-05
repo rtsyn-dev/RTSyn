@@ -590,7 +590,7 @@ impl GuiApp {
         }
 
         let library_path = Self::resolve_library_path(&manifest, folder.as_ref());
-        let (metadata_inputs, metadata_outputs, metadata_variables, display_schema) = if let Some(ref lib_path) = library_path {
+        let (mut metadata_inputs, mut metadata_outputs, mut metadata_variables, mut display_schema) = if let Some(ref lib_path) = library_path {
             let (tx, rx) = std::sync::mpsc::channel();
             let _ = self.logic_tx.send(LogicMessage::QueryPluginMetadata(lib_path.to_string_lossy().to_string(), tx));
             if let Ok(Some((inputs, outputs, vars, display_schema))) = rx.recv() {
@@ -601,6 +601,21 @@ impl GuiApp {
         } else {
             (vec![], vec![], vec![], None)
         };
+        if manifest.kind == "performance_monitor" {
+            metadata_inputs = Vec::new();
+            metadata_outputs = vec![
+                "period_us".to_string(),
+                "latency_us".to_string(),
+                "jitter_us".to_string(),
+                "realtime_violation".to_string(),
+            ];
+            metadata_variables = vec![("max_latency_us".to_string(), 1000.0)];
+            display_schema = Some(rtsyn_plugin::ui::DisplaySchema {
+                outputs: metadata_outputs.clone(),
+                inputs: Vec::new(),
+                variables: Vec::new(),
+            });
+        }
         self.installed_plugins.push(InstalledPlugin {
             manifest,
             path: folder.as_ref().to_path_buf(),
@@ -1178,10 +1193,25 @@ impl GuiApp {
                     installed.display_schema = display_schema;
                 }
             }
+            if installed.manifest.kind == "performance_monitor" {
+                installed.metadata_inputs = Vec::new();
+                installed.metadata_outputs = vec![
+                    "period_us".to_string(),
+                    "latency_us".to_string(),
+                    "jitter_us".to_string(),
+                    "realtime_violation".to_string(),
+                ];
+                installed.metadata_variables = vec![("max_latency_us".to_string(), 1000.0)];
+                installed.display_schema = Some(rtsyn_plugin::ui::DisplaySchema {
+                    outputs: installed.metadata_outputs.clone(),
+                    inputs: Vec::new(),
+                    variables: Vec::new(),
+                });
+            }
             installed.path = path.to_path_buf();
             installed.library_path = library_path;
         } else {
-            let (metadata_inputs, metadata_outputs, metadata_variables, display_schema) = if let Some(ref lib_path) = library_path {
+            let (mut metadata_inputs, mut metadata_outputs, mut metadata_variables, mut display_schema) = if let Some(ref lib_path) = library_path {
                 let (tx, rx) = std::sync::mpsc::channel();
                 let _ = self.logic_tx.send(LogicMessage::QueryPluginMetadata(lib_path.to_string_lossy().to_string(), tx));
                 if let Ok(Some((inputs, outputs, vars, display_schema))) = rx.recv() {
@@ -1192,6 +1222,21 @@ impl GuiApp {
             } else {
                 (vec![], vec![], vec![], None)
             };
+            if manifest.kind == "performance_monitor" {
+                metadata_inputs = Vec::new();
+                metadata_outputs = vec![
+                    "period_us".to_string(),
+                    "latency_us".to_string(),
+                    "jitter_us".to_string(),
+                    "realtime_violation".to_string(),
+                ];
+                metadata_variables = vec![("max_latency_us".to_string(), 1000.0)];
+                display_schema = Some(rtsyn_plugin::ui::DisplaySchema {
+                    outputs: metadata_outputs.clone(),
+                    inputs: Vec::new(),
+                    variables: Vec::new(),
+                });
+            }
             self.installed_plugins.push(InstalledPlugin {
                 manifest,
                 path: path.to_path_buf(),
