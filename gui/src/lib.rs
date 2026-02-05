@@ -259,7 +259,7 @@ struct GuiApp {
     organize_selected_index: Option<usize>,
     computed_outputs: HashMap<(u64, String), f64>,
     input_values: HashMap<(u64, String), f64>,
-    internal_variable_values: HashMap<(u64, String), f64>,
+    internal_variable_values: HashMap<(u64, String), serde_json::Value>,
     viewer_values: HashMap<u64, f64>,
     last_output_update: Instant,
     plotters: HashMap<u64, Arc<Mutex<LivePlotter>>>,
@@ -614,6 +614,12 @@ impl GuiApp {
                 outputs: metadata_outputs.clone(),
                 inputs: Vec::new(),
                 variables: Vec::new(),
+            });
+        } else if matches!(manifest.kind.as_str(), "csv_recorder" | "live_plotter") {
+            display_schema = Some(rtsyn_plugin::ui::DisplaySchema {
+                outputs: Vec::new(),
+                inputs: Vec::new(),
+                variables: vec!["input_count".to_string(), "running".to_string()],
             });
         }
         self.installed_plugins.push(InstalledPlugin {
@@ -1207,6 +1213,12 @@ impl GuiApp {
                     inputs: Vec::new(),
                     variables: Vec::new(),
                 });
+            } else if matches!(installed.manifest.kind.as_str(), "csv_recorder" | "live_plotter") {
+                installed.display_schema = Some(rtsyn_plugin::ui::DisplaySchema {
+                    outputs: Vec::new(),
+                    inputs: Vec::new(),
+                    variables: vec!["input_count".to_string(), "running".to_string()],
+                });
             }
             installed.path = path.to_path_buf();
             installed.library_path = library_path;
@@ -1235,6 +1247,12 @@ impl GuiApp {
                     outputs: metadata_outputs.clone(),
                     inputs: Vec::new(),
                     variables: Vec::new(),
+                });
+            } else if matches!(manifest.kind.as_str(), "csv_recorder" | "live_plotter") {
+                display_schema = Some(rtsyn_plugin::ui::DisplaySchema {
+                    outputs: Vec::new(),
+                    inputs: Vec::new(),
+                    variables: vec!["input_count".to_string(), "running".to_string()],
                 });
             }
             self.installed_plugins.push(InstalledPlugin {

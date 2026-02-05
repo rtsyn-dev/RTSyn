@@ -202,17 +202,7 @@ impl GuiApp {
                                 if plugin.kind != "csv_recorder" {
                                     match plugin.config {
                                         Value::Object(ref mut map) => {
-                                            // Special handling for live_plotter
-                                            if plugin.kind == "live_plotter" {
-                                                ui.label(RichText::new("Variables").strong().size(13.0));
-                                                ui.add_space(4.0);
-                                                let input_count = map
-                                                    .get("input_count")
-                                                    .and_then(|v| v.as_u64())
-                                                    .unwrap_or(1);
-                                                ui.label(format!("inputs = {}", input_count));
-                                                ui.label(format!("running = {}", if plugin.running { "on" } else { "off" }));
-                                            } else if plugin.kind == "comedi_daq" {
+                                            if plugin.kind == "comedi_daq" {
                                                 ui.label(RichText::new("Comedi Configuration").strong().size(13.0));
                                                 ui.add_space(4.0);
 
@@ -308,70 +298,59 @@ impl GuiApp {
                                                     .get(&plugin.kind)
                                                     .cloned()
                                                     .unwrap_or_default();
-                                                let title = if vars.len() == 1 {
-                                                    "Variable"
-                                                } else {
-                                                    "Variables"
-                                                };
-                                                ui.label(RichText::new(title).strong().size(13.0));
-                                                ui.add_space(4.0);
-                                                egui::Grid::new(("plugin_config_grid", plugin.id))
-                                                    .num_columns(2)
-                                                    .min_col_width(110.0)
-                                                    .spacing([10.0, 6.0])
-                                                    .show(ui, |ui| {
-                                                        for (name, __default_value) in vars {
-                                                            let key = &name;
-                                                        if let Some(value) = map.get_mut(key) {
-                                                            ui.label(key);
-                                                            let buffer_key = (plugin.id, key.clone());
-                                                            let buffer = self
-                                                                .number_edit_buffers
-                                                                .entry(buffer_key)
-                                                                .or_insert_with(|| {
-                                                                    format_f64_6(
-                                                                        value.as_f64().unwrap_or(0.0),
-                                                                    )
-                                                                });
-                                                            let resp = ui.add(
-                                                                egui::TextEdit::singleline(buffer)
-                                                                    .desired_width(80.0),
-                                                            );
-                                                            if resp.changed() {
-                                                                let _ = normalize_numeric_input(buffer);
-                                                                if let Some(parsed) =
-                                                                    parse_f64_input(buffer)
-                                                                {
-                                                                    let truncated = truncate_f64(parsed);
-                                                                    *value = Value::from(truncated);
-                                                                    *buffer =
-                                                                        format_f64_with_input(buffer, truncated);
-                                                                    plugin_changed = true;
+                                                if !vars.is_empty() {
+                                                    let title = if vars.len() == 1 {
+                                                        "Variable"
+                                                    } else {
+                                                        "Variables"
+                                                    };
+                                                    ui.label(RichText::new(title).strong().size(13.0));
+                                                    ui.add_space(4.0);
+                                                    egui::Grid::new(("plugin_config_grid", plugin.id))
+                                                        .num_columns(2)
+                                                        .min_col_width(110.0)
+                                                        .spacing([10.0, 6.0])
+                                                        .show(ui, |ui| {
+                                                            for (name, __default_value) in vars {
+                                                                let key = &name;
+                                                            if let Some(value) = map.get_mut(key) {
+                                                                ui.label(key);
+                                                                let buffer_key = (plugin.id, key.clone());
+                                                                let buffer = self
+                                                                    .number_edit_buffers
+                                                                    .entry(buffer_key)
+                                                                    .or_insert_with(|| {
+                                                                        format_f64_6(
+                                                                            value.as_f64().unwrap_or(0.0),
+                                                                        )
+                                                                    });
+                                                                let resp = ui.add(
+                                                                    egui::TextEdit::singleline(buffer)
+                                                                        .desired_width(80.0),
+                                                                );
+                                                                if resp.changed() {
+                                                                    let _ = normalize_numeric_input(buffer);
+                                                                    if let Some(parsed) =
+                                                                        parse_f64_input(buffer)
+                                                                    {
+                                                                        let truncated = truncate_f64(parsed);
+                                                                        *value = Value::from(truncated);
+                                                                        *buffer =
+                                                                            format_f64_with_input(buffer, truncated);
+                                                                        plugin_changed = true;
+                                                                    }
                                                                 }
+                                                                ui.end_row();
                                                             }
-                                                            ui.end_row();
                                                         }
-                                                    }
-                                                });
+                                                    });
+                                                }
                                             }
                                         }
                                         _ => {
                                             ui.label("Config is not an object.");
                                         }
                                     }
-                                } else if let Value::Object(ref map) = plugin.config {
-                                    let input_count = map
-                                        .get("input_count")
-                                        .and_then(|v| v.as_u64())
-                                        .unwrap_or(0);
-                                    let input_label = if input_count == 1 { "Input" } else { "Inputs" };
-                                    ui.label(RichText::new(input_label).strong().size(13.0));
-                                    ui.add_space(4.0);
-                                    ui.label(input_count.to_string());
-                                    ui.label(format!(
-                                        "recording: {}",
-                                        if plugin.running { "on" } else { "off" }
-                                    ));
                                 }
 
                                 if let Some(installed) = self.installed_plugins.iter().find(|p| p.manifest.kind == plugin.kind) {
@@ -397,7 +376,11 @@ impl GuiApp {
                                                             .copied()
                                                             .unwrap_or(0.0);
                                                         ui.label(output_name);
-                                                        let mut value_text = format!("{value:.4}");
+                                                        let mut value_text = if (value.fract() - 0.0).abs() < f64::EPSILON {
+                                                            format!("{value:.0}")
+                                                        } else {
+                                                            format!("{value:.4}")
+                                                        };
                                                         ui.add_enabled(
                                                             false,
                                                             egui::TextEdit::singleline(&mut value_text)
@@ -441,8 +424,12 @@ impl GuiApp {
                                         }
 
                                         if !schema.variables.is_empty() {
-                                            ui.add_space(6.0);
-                                            ui.separator();
+                                            let has_prev_sections =
+                                                !schema.outputs.is_empty() || !schema.inputs.is_empty();
+                                            if has_prev_sections {
+                                                ui.add_space(6.0);
+                                                ui.separator();
+                                            }
                                             let title = if schema.variables.len() == 1 {
                                                 "Internal Variable"
                                             } else {
@@ -458,10 +445,33 @@ impl GuiApp {
                                                     for var_name in &schema.variables {
                                                         let value = internal_variable_values
                                                             .get(&(plugin.id, var_name.clone()))
-                                                            .copied()
-                                                            .unwrap_or(0.0);
+                                                            .cloned()
+                                                            .unwrap_or_else(|| {
+                                                                if matches!(plugin.kind.as_str(), "csv_recorder" | "live_plotter") {
+                                                                    match var_name.as_str() {
+                                                                        "input_count" => serde_json::Value::from(0),
+                                                                        "running" => serde_json::Value::from(false),
+                                                                        _ => serde_json::Value::from(0.0),
+                                                                    }
+                                                                } else {
+                                                                    serde_json::Value::from(0.0)
+                                                                }
+                                                            });
+                                                        let value_text = match value {
+                                                            serde_json::Value::Bool(v) => v.to_string(),
+                                                            serde_json::Value::Number(n) => {
+                                                                if let Some(int_value) = n.as_i64() {
+                                                                    int_value.to_string()
+                                                                } else if let Some(int_value) = n.as_u64() {
+                                                                    int_value.to_string()
+                                                                } else {
+                                                                    format!("{:.4}", n.as_f64().unwrap_or(0.0))
+                                                                }
+                                                            }
+                                                            _ => value.to_string(),
+                                                        };
                                                         ui.label(var_name);
-                                                        let mut value_text = format!("{value:.4}");
+                                                        let mut value_text = value_text;
                                                         ui.add_enabled(
                                                             false,
                                                             egui::TextEdit::singleline(&mut value_text)
@@ -666,8 +676,8 @@ impl GuiApp {
         manifest: &PluginManifest,
         inputs_override: Option<Vec<String>>,
         plugin_kind: &str,
-        plugin_config: &serde_json::Value,
-        plugin_running: bool,
+        _plugin_config: &serde_json::Value,
+        _plugin_running: bool,
         installed_plugins: &[InstalledPlugin],
     ) {
         egui::Frame::none()
@@ -697,9 +707,9 @@ impl GuiApp {
                 let is_extendable = matches!(plugin_kind, "csv_recorder" | "live_plotter");
                 if is_extendable {
                     if inputs_label.is_empty() {
-                        inputs_label = "in_n".to_string();
+                        inputs_label = "incremental".to_string();
                     } else {
-                        inputs_label = format!("{inputs_label}, in_n");
+                        inputs_label = format!("{inputs_label} (incremental)");
                     }
                 }
                 let outputs = installed_plugins
@@ -723,28 +733,13 @@ impl GuiApp {
                         ui.end_row();
                     });
 
-                ui.add_space(6.0);
-                ui.label(RichText::new("Variables").strong());
-                
-                // Special handling for live_plotter to show inputs and running status
-                if plugin_kind == "live_plotter" {
-                    let input_count = plugin_config
-                        .get("input_count")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(1);
-                    ui.label(format!("inputs = {}", input_count));
-                    ui.label(format!("running = {}", if plugin_running { "on" } else { "off" }));
-                } else {
-                    if let Some(plugin) = installed_plugins.iter().find(|p| p.manifest.kind == manifest.kind) {
-                        if plugin.metadata_variables.is_empty() {
-                            ui.label(RichText::new("No variables.").color(egui::Color32::GRAY));
-                        } else {
-                            for (name, value) in &plugin.metadata_variables {
-                                ui.label(format!("{} = {}", name, value));
-                            }
+                if let Some(plugin) = installed_plugins.iter().find(|p| p.manifest.kind == manifest.kind) {
+                    if !plugin.metadata_variables.is_empty() {
+                        ui.add_space(6.0);
+                        ui.label(RichText::new("Variables").strong());
+                        for (name, value) in &plugin.metadata_variables {
+                            ui.label(format!("{} = {}", name, value));
                         }
-                    } else {
-                        ui.label(RichText::new("No variables.").color(egui::Color32::GRAY));
                     }
                 }
             });

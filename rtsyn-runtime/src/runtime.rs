@@ -28,7 +28,7 @@ pub struct LogicSettings {
 pub struct LogicState {
     pub outputs: HashMap<(u64, String), f64>,
     pub input_values: HashMap<(u64, String), f64>,
-    pub internal_variable_values: HashMap<(u64, String), f64>,
+    pub internal_variable_values: HashMap<(u64, String), serde_json::Value>,
     pub viewer_values: HashMap<u64, f64>,
     pub tick: u64,
     pub plotter_samples: HashMap<u64, Vec<(u64, Vec<f64>)>>,
@@ -156,7 +156,7 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
         };
         let mut outputs: HashMap<(u64, String), f64> = HashMap::new();
         let mut input_values: HashMap<(u64, String), f64> = HashMap::new();
-        let mut internal_variable_values: HashMap<(u64, String), f64> = HashMap::new();
+        let mut internal_variable_values: HashMap<(u64, String), serde_json::Value> = HashMap::new();
         let mut viewer_values: HashMap<u64, f64> = HashMap::new();
         let mut plotter_samples: HashMap<u64, Vec<(u64, Vec<f64>)>> = HashMap::new();
         let mut runtime = crate::Runtime::new(workspace::WorkspaceDefinition {
@@ -454,7 +454,10 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                                     bytes.as_ptr(),
                                     bytes.len(),
                                 );
-                                internal_variable_values.insert((plugin.id, var_name.clone()), value);
+                                internal_variable_values.insert(
+                                    (plugin.id, var_name.clone()),
+                                    serde_json::Value::from(value),
+                                );
                             }
                         }
                         RuntimePlugin::CsvRecorder(plugin_instance) => {
@@ -522,6 +525,14 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                                 settings.time_scale,
                                 settings.time_label.clone(),
                                 settings.period_seconds,
+                            );
+                            internal_variable_values.insert(
+                                (plugin.id, "input_count".to_string()),
+                                serde_json::Value::from(input_count as i64),
+                            );
+                            internal_variable_values.insert(
+                                (plugin.id, "running".to_string()),
+                                serde_json::Value::from(is_running),
                             );
                             plugin_instance.set_inputs(inputs);
                             let _ = plugin_instance.process(&mut plugin_ctx);
@@ -599,6 +610,14 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                                 as usize;
                             let input_count = config_input_count;
                             plugin_instance.set_config(input_count, is_running);
+                            internal_variable_values.insert(
+                                (plugin.id, "input_count".to_string()),
+                                serde_json::Value::from(input_count as i64),
+                            );
+                            internal_variable_values.insert(
+                                (plugin.id, "running".to_string()),
+                                serde_json::Value::from(is_running),
+                            );
                             let mut inputs = Vec::with_capacity(input_count);
                             for idx in 0..input_count {
                                 let port = format!("in_{idx}");
@@ -706,7 +725,7 @@ pub fn run_runtime_current(
     };
     let mut outputs: HashMap<(u64, String), f64> = HashMap::new();
     let mut input_values: HashMap<(u64, String), f64> = HashMap::new();
-    let mut internal_variable_values: HashMap<(u64, String), f64> = HashMap::new();
+    let mut internal_variable_values: HashMap<(u64, String), serde_json::Value> = HashMap::new();
     let mut viewer_values: HashMap<u64, f64> = HashMap::new();
     let mut plotter_samples: HashMap<u64, Vec<(u64, Vec<f64>)>> = HashMap::new();
     let mut runtime = crate::Runtime::new(workspace::WorkspaceDefinition {
@@ -1003,7 +1022,10 @@ pub fn run_runtime_current(
                                 bytes.as_ptr(),
                                 bytes.len(),
                             );
-                            internal_variable_values.insert((plugin.id, var_name.clone()), value);
+                            internal_variable_values.insert(
+                                (plugin.id, var_name.clone()),
+                                serde_json::Value::from(value),
+                            );
                         }
                     }
                     RuntimePlugin::CsvRecorder(plugin_instance) => {
@@ -1071,6 +1093,14 @@ pub fn run_runtime_current(
                             settings.time_scale,
                             settings.time_label.clone(),
                             settings.period_seconds,
+                        );
+                        internal_variable_values.insert(
+                            (plugin.id, "input_count".to_string()),
+                            serde_json::Value::from(input_count as i64),
+                        );
+                        internal_variable_values.insert(
+                            (plugin.id, "running".to_string()),
+                            serde_json::Value::from(is_running),
                         );
                         plugin_instance.set_inputs(inputs);
                         let _ = plugin_instance.process(&mut plugin_ctx);
@@ -1147,6 +1177,14 @@ pub fn run_runtime_current(
                             as usize;
                         let input_count = config_input_count;
                         plugin_instance.set_config(input_count, is_running);
+                        internal_variable_values.insert(
+                            (plugin.id, "input_count".to_string()),
+                            serde_json::Value::from(input_count as i64),
+                        );
+                        internal_variable_values.insert(
+                            (plugin.id, "running".to_string()),
+                            serde_json::Value::from(is_running),
+                        );
                         let mut inputs = Vec::with_capacity(input_count);
                         for idx in 0..input_count {
                             let port = format!("in_{idx}");
