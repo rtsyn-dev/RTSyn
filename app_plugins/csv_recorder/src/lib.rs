@@ -229,6 +229,62 @@ impl Plugin for CsvRecorderedPlugin {
         ConnectionBehavior { dependent: true }
     }
 
+    fn display_schema(&self) -> Option<DisplaySchema> {
+        Some(DisplaySchema {
+            outputs: vec![],
+            inputs: self.inputs.iter().map(|p| p.id.0.clone()).collect(),
+            variables: vec![
+                "separator".to_string(),
+                "include_time".to_string(),
+                "path".to_string(),
+            ],
+        })
+    }
+
+    fn get_variable(&self, name: &str) -> Option<Value> {
+        match name {
+            "separator" => Some(Value::String(self.separator.clone())),
+            "include_time" => Some(Value::Bool(self.include_time)),
+            "path" => self
+                .path
+                .as_ref()
+                .map(|p| Value::String(p.to_string_lossy().to_string())),
+            _ => None,
+        }
+    }
+
+    fn set_variable(&mut self, name: &str, value: Value) -> Result<(), PluginError> {
+        match name {
+            "separator" => {
+                if let Value::String(s) = value {
+                    if self.separator != s {
+                        self.separator = s;
+                        self.reopen_file();
+                    }
+                }
+            }
+            "include_time" => {
+                if let Value::Bool(b) = value {
+                    if self.include_time != b {
+                        self.include_time = b;
+                        self.reopen_file();
+                    }
+                }
+            }
+            "path" => {
+                if let Value::String(p) = value {
+                    let new_path = Some(PathBuf::from(p));
+                    if self.path != new_path {
+                        self.path = new_path;
+                        self.reopen_file();
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     fn on_input_added(&mut self, port: &str) -> Result<(), PluginError> {
         if let Some(idx) = port.strip_prefix("in_").and_then(|s| s.parse::<usize>().ok()) {
             while self.inputs.len() <= idx {

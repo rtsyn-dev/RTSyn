@@ -124,6 +124,34 @@ impl Plugin for LivePlotterPlugin {
         ConnectionBehavior { dependent: true }
     }
 
+    fn display_schema(&self) -> Option<DisplaySchema> {
+        Some(DisplaySchema {
+            outputs: vec![],
+            inputs: self.inputs.iter().map(|p| p.id.0.clone()).collect(),
+            variables: vec![
+                "refresh_hz".to_string(),
+                "window_multiplier".to_string(),
+                "window_value".to_string(),
+                "amplitude".to_string(),
+            ],
+        })
+    }
+
+    fn get_variable(&self, name: &str) -> Option<Value> {
+        self.meta
+            .default_vars
+            .iter()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.clone())
+    }
+
+    fn set_variable(&mut self, name: &str, value: Value) -> Result<(), PluginError> {
+        if let Some(var) = self.meta.default_vars.iter_mut().find(|(k, _)| k == name) {
+            var.1 = value;
+        }
+        Ok(())
+    }
+
     fn on_input_added(&mut self, port: &str) -> Result<(), PluginError> {
         if let Some(idx) = port.strip_prefix("in_").and_then(|s| s.parse::<usize>().ok()) {
             while self.inputs.len() <= idx {

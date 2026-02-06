@@ -41,7 +41,9 @@ pub enum LogicMessage {
     SetPluginRunning(u64, bool),
     RestartPlugin(u64),
     QueryPluginBehavior(String, Option<String>, Sender<Option<rtsyn_plugin::ui::PluginBehavior>>),
-    QueryPluginMetadata(String, Sender<Option<(Vec<String>, Vec<String>, Vec<(String, f64)>, Option<rtsyn_plugin::ui::DisplaySchema>)>>),
+    QueryPluginMetadata(String, Sender<Option<(Vec<String>, Vec<String>, Vec<(String, f64)>, Option<rtsyn_plugin::ui::DisplaySchema>, Option<rtsyn_plugin::ui::UISchema>)>>),
+    GetPluginVariable(u64, String, Sender<Option<serde_json::Value>>),
+    SetPluginVariable(u64, String, serde_json::Value),
 }
 
 enum RuntimePlugin {
@@ -263,10 +265,24 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                                             let json_str = behavior_json_fn(dynamic.handle);
                                             let json_slice = unsafe { std::slice::from_raw_parts(json_str.ptr, json_str.len) };
                                             if let Ok(behavior) = serde_json::from_slice(json_slice) {
+                            let ui_schema: Option<rtsyn_plugin::ui::UISchema> = if let Some(ui_schema_fn) = unsafe { (*dynamic.api).ui_schema_json } {
+                                let schema_str = ui_schema_fn(dynamic.handle);
+                                let schema_slice = unsafe { std::slice::from_raw_parts(schema_str.ptr, schema_str.len) };
+                                serde_json::from_slice(schema_slice).ok()
+                            } else {
+                                None
+                            };
                                                 unsafe { ((*dynamic.api).destroy)(dynamic.handle); }
                                                 let _ = response_tx.send(Some(behavior));
                                                 continue;
                                             }
+                            let ui_schema: Option<rtsyn_plugin::ui::UISchema> = if let Some(ui_schema_fn) = unsafe { (*dynamic.api).ui_schema_json } {
+                                let schema_str = ui_schema_fn(dynamic.handle);
+                                let schema_slice = unsafe { std::slice::from_raw_parts(schema_str.ptr, schema_str.len) };
+                                serde_json::from_slice(schema_slice).ok()
+                            } else {
+                                None
+                            };
                                             unsafe { ((*dynamic.api).destroy)(dynamic.handle); }
                                         }
                                     }
@@ -315,8 +331,15 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                             } else {
                                 None
                             };
+                            let ui_schema: Option<rtsyn_plugin::ui::UISchema> = if let Some(ui_schema_fn) = unsafe { (*dynamic.api).ui_schema_json } {
+                                let schema_str = ui_schema_fn(dynamic.handle);
+                                let schema_slice = unsafe { std::slice::from_raw_parts(schema_str.ptr, schema_str.len) };
+                                serde_json::from_slice(schema_slice).ok()
+                            } else {
+                                None
+                            };
                             unsafe { ((*dynamic.api).destroy)(dynamic.handle); }
-                            Some((inputs, outputs, variables, display_schema))
+                            Some((inputs, outputs, variables, display_schema, ui_schema))
                         } else {
                             None
                         };
@@ -360,6 +383,31 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                         outputs.retain(|(pid, _), _| *pid != plugin.id);
                         input_values.retain(|(pid, _), _| *pid != plugin.id);
                         internal_variable_values.retain(|(pid, _), _| *pid != plugin.id);
+                    }
+                    LogicMessage::GetPluginVariable(plugin_id, var_name, response_tx) => {
+                        let value = plugin_instances.get(&plugin_id).and_then(|instance| {
+                            match instance {
+                                RuntimePlugin::CsvRecorder(p) => p.get_variable(&var_name),
+                                RuntimePlugin::LivePlotter(p) => p.get_variable(&var_name),
+                                RuntimePlugin::PerformanceMonitor(p) => p.get_variable(&var_name),
+                                #[cfg(feature = "comedi")]
+                                RuntimePlugin::ComediDaq(p) => p.get_variable(&var_name),
+                                RuntimePlugin::Dynamic(_) => None,
+                            }
+                        });
+                        let _ = response_tx.send(value);
+                    }
+                    LogicMessage::SetPluginVariable(plugin_id, var_name, value) => {
+                        if let Some(instance) = plugin_instances.get_mut(&plugin_id) {
+                            let _ = match instance {
+                                RuntimePlugin::CsvRecorder(p) => p.set_variable(&var_name, value),
+                                RuntimePlugin::LivePlotter(p) => p.set_variable(&var_name, value),
+                                RuntimePlugin::PerformanceMonitor(p) => p.set_variable(&var_name, value),
+                                #[cfg(feature = "comedi")]
+                                RuntimePlugin::ComediDaq(p) => p.set_variable(&var_name, value),
+                                RuntimePlugin::Dynamic(_) => Ok(()),
+                            };
+                        }
                     }
                     },
                     Err(TryRecvError::Empty) => break,
@@ -832,10 +880,24 @@ pub fn run_runtime_current(
                                             let json_str = behavior_json_fn(dynamic.handle);
                                             let json_slice = unsafe { std::slice::from_raw_parts(json_str.ptr, json_str.len) };
                                             if let Ok(behavior) = serde_json::from_slice(json_slice) {
+                            let ui_schema: Option<rtsyn_plugin::ui::UISchema> = if let Some(ui_schema_fn) = unsafe { (*dynamic.api).ui_schema_json } {
+                                let schema_str = ui_schema_fn(dynamic.handle);
+                                let schema_slice = unsafe { std::slice::from_raw_parts(schema_str.ptr, schema_str.len) };
+                                serde_json::from_slice(schema_slice).ok()
+                            } else {
+                                None
+                            };
                                                 unsafe { ((*dynamic.api).destroy)(dynamic.handle); }
                                                 let _ = response_tx.send(Some(behavior));
                                                 continue;
                                             }
+                            let ui_schema: Option<rtsyn_plugin::ui::UISchema> = if let Some(ui_schema_fn) = unsafe { (*dynamic.api).ui_schema_json } {
+                                let schema_str = ui_schema_fn(dynamic.handle);
+                                let schema_slice = unsafe { std::slice::from_raw_parts(schema_str.ptr, schema_str.len) };
+                                serde_json::from_slice(schema_slice).ok()
+                            } else {
+                                None
+                            };
                                             unsafe { ((*dynamic.api).destroy)(dynamic.handle); }
                                         }
                                     }
@@ -884,8 +946,15 @@ pub fn run_runtime_current(
                             } else {
                                 None
                             };
+                            let ui_schema: Option<rtsyn_plugin::ui::UISchema> = if let Some(ui_schema_fn) = unsafe { (*dynamic.api).ui_schema_json } {
+                                let schema_str = ui_schema_fn(dynamic.handle);
+                                let schema_slice = unsafe { std::slice::from_raw_parts(schema_str.ptr, schema_str.len) };
+                                serde_json::from_slice(schema_slice).ok()
+                            } else {
+                                None
+                            };
                             unsafe { ((*dynamic.api).destroy)(dynamic.handle); }
-                            Some((inputs, outputs, variables, display_schema))
+                            Some((inputs, outputs, variables, display_schema, ui_schema))
                         } else {
                             None
                         };
@@ -929,6 +998,31 @@ pub fn run_runtime_current(
                         outputs.retain(|(pid, _), _| *pid != plugin.id);
                         input_values.retain(|(pid, _), _| *pid != plugin.id);
                         internal_variable_values.retain(|(pid, _), _| *pid != plugin.id);
+                    }
+                    LogicMessage::GetPluginVariable(plugin_id, var_name, response_tx) => {
+                        let value = plugin_instances.get(&plugin_id).and_then(|instance| {
+                            match instance {
+                                RuntimePlugin::CsvRecorder(p) => p.get_variable(&var_name),
+                                RuntimePlugin::LivePlotter(p) => p.get_variable(&var_name),
+                                RuntimePlugin::PerformanceMonitor(p) => p.get_variable(&var_name),
+                                #[cfg(feature = "comedi")]
+                                RuntimePlugin::ComediDaq(p) => p.get_variable(&var_name),
+                                RuntimePlugin::Dynamic(_) => None,
+                            }
+                        });
+                        let _ = response_tx.send(value);
+                    }
+                    LogicMessage::SetPluginVariable(plugin_id, var_name, value) => {
+                        if let Some(instance) = plugin_instances.get_mut(&plugin_id) {
+                            let _ = match instance {
+                                RuntimePlugin::CsvRecorder(p) => p.set_variable(&var_name, value),
+                                RuntimePlugin::LivePlotter(p) => p.set_variable(&var_name, value),
+                                RuntimePlugin::PerformanceMonitor(p) => p.set_variable(&var_name, value),
+                                #[cfg(feature = "comedi")]
+                                RuntimePlugin::ComediDaq(p) => p.set_variable(&var_name, value),
+                                RuntimePlugin::Dynamic(_) => Ok(()),
+                            };
+                        }
                     }
                 },
                 Err(TryRecvError::Empty) => break,

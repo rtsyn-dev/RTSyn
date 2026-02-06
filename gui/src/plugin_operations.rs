@@ -73,7 +73,7 @@ impl GuiApp {
         if let Some(library_path) = &installed.library_path {
             let (tx, rx) = mpsc::channel();
             let _ = self.state_sync.logic_tx.send(LogicMessage::QueryPluginMetadata(library_path.to_string_lossy().to_string(), tx));
-            if let Ok(Some((_inputs, _outputs, variables, _display_schema))) = rx.recv() {
+            if let Ok(Some((_inputs, _outputs, variables, _display_schema, _ui_schema))) = rx.recv() {
                 for (name, value) in variables {
                     config_map.insert(name, Value::from(value));
                 }
@@ -236,16 +236,16 @@ impl GuiApp {
         }
 
         let library_path = PluginManager::resolve_library_path(&manifest, folder.as_ref());
-        let (mut metadata_inputs, mut metadata_outputs, mut metadata_variables, mut display_schema) = if let Some(ref lib_path) = library_path {
+        let (mut metadata_inputs, mut metadata_outputs, mut metadata_variables, mut display_schema, mut ui_schema) = if let Some(ref lib_path) = library_path {
             let (tx, rx) = mpsc::channel();
             let _ = self.state_sync.logic_tx.send(LogicMessage::QueryPluginMetadata(lib_path.to_string_lossy().to_string(), tx));
-            if let Ok(Some((inputs, outputs, vars, schema))) = rx.recv() {
-                (inputs, outputs, vars, schema)
+            if let Ok(Some((inputs, outputs, vars, schema, ui_sch))) = rx.recv() {
+                (inputs, outputs, vars, schema, ui_sch)
             } else {
-                (vec![], vec![], vec![], None)
+                (vec![], vec![], vec![], None, None)
             }
         } else {
-            (vec![], vec![], vec![], None)
+            (vec![], vec![], vec![], None, None)
         };
         if manifest.kind == "performance_monitor" {
             metadata_inputs = Vec::new();
@@ -284,6 +284,7 @@ impl GuiApp {
             metadata_outputs,
             metadata_variables,
             display_schema,
+            ui_schema,
         });
         self.status = "Plugin installed".to_string();
         if persist {
@@ -334,11 +335,12 @@ impl GuiApp {
             let (tx, rx) = mpsc::channel();
             if let Some(ref lib_path) = library_path {
                 let _ = self.state_sync.logic_tx.send(LogicMessage::QueryPluginMetadata(lib_path.to_string_lossy().to_string(), tx));
-                if let Ok(Some((inputs, outputs, vars, display_schema))) = rx.recv() {
+                if let Ok(Some((inputs, outputs, vars, display_schema, ui_schema))) = rx.recv() {
                     installed.metadata_inputs = inputs;
                     installed.metadata_outputs = outputs;
                     installed.metadata_variables = vars;
                     installed.display_schema = display_schema;
+                    installed.ui_schema = ui_schema;
                 }
             }
             if installed.manifest.kind == "performance_monitor" {
@@ -360,16 +362,16 @@ impl GuiApp {
             installed.path = path.to_path_buf();
             installed.library_path = library_path;
         } else {
-            let (mut metadata_inputs, mut metadata_outputs, mut metadata_variables, mut display_schema) = if let Some(ref lib_path) = library_path {
+            let (mut metadata_inputs, mut metadata_outputs, mut metadata_variables, mut display_schema, mut ui_schema) = if let Some(ref lib_path) = library_path {
                 let (tx, rx) = mpsc::channel();
                 let _ = self.state_sync.logic_tx.send(LogicMessage::QueryPluginMetadata(lib_path.to_string_lossy().to_string(), tx));
-                if let Ok(Some((inputs, outputs, vars, display_schema))) = rx.recv() {
-                    (inputs, outputs, vars, display_schema)
+                if let Ok(Some((inputs, outputs, vars, display_schema, ui_schema))) = rx.recv() {
+                    (inputs, outputs, vars, display_schema, ui_schema)
                 } else {
-                    (vec![], vec![], vec![], None)
+                    (vec![], vec![], vec![], None, None)
                 }
             } else {
-                (vec![], vec![], vec![], None)
+                (vec![], vec![], vec![], None, None)
             };
             if manifest.kind == "performance_monitor" {
                 metadata_inputs = Vec::new();
@@ -396,6 +398,7 @@ impl GuiApp {
                 metadata_outputs,
                 metadata_variables,
                 display_schema,
+                ui_schema,
             });
         }
         self.persist_installed_plugins();

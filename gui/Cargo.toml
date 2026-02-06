@@ -18,6 +18,7 @@ rfd = "0.14"
 thiserror = { workspace = true }
 log = { workspace = true }
 csv_recorder_plugin = { path = "../app_plugins/csv_recorder" }
+live_plotter_plugin = { path = "../app_plugins/live_plotter" }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

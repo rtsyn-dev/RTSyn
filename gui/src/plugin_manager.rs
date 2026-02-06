@@ -1,5 +1,8 @@
 use crate::state::{InstalledPlugin, PluginManifest, DetectedPlugin};
 use rtsyn_plugin::ui::PluginBehavior;
+use rtsyn_plugin::Plugin;
+use csv_recorder_plugin::CsvRecorderedPlugin;
+use live_plotter_plugin::LivePlotterPlugin;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -56,7 +59,7 @@ impl PluginManager {
         ];
 
         for (kind, name, desc) in bundled {
-            let (metadata_outputs, metadata_variables, display_schema) = match kind {
+            let (metadata_outputs, metadata_variables, display_schema, ui_schema) = match kind {
                 "performance_monitor" => (
                     vec![
                         "period_us".to_string(),
@@ -75,17 +78,17 @@ impl PluginManager {
                         inputs: Vec::new(),
                         variables: Vec::new(),
                     }),
+                    None,
                 ),
-                "csv_recorder" | "live_plotter" => (
-                    Vec::new(),
-                    Vec::new(),
-                    Some(rtsyn_plugin::ui::DisplaySchema {
-                        outputs: Vec::new(),
-                        inputs: Vec::new(),
-                        variables: vec!["input_count".to_string(), "running".to_string()],
-                    }),
-                ),
-                _ => (Vec::new(), Vec::new(), None),
+                "csv_recorder" => {
+                    let plugin = CsvRecorderedPlugin::new(0);
+                    (Vec::new(), Vec::new(), plugin.display_schema(), plugin.ui_schema())
+                }
+                "live_plotter" => {
+                    let plugin = LivePlotterPlugin::new(0);
+                    (Vec::new(), Vec::new(), plugin.display_schema(), plugin.ui_schema())
+                }
+                _ => (Vec::new(), Vec::new(), None, None),
             };
 
             self.installed_plugins.push(InstalledPlugin {
@@ -103,6 +106,7 @@ impl PluginManager {
                 metadata_outputs,
                 metadata_variables,
                 display_schema,
+                ui_schema,
             });
         }
     }

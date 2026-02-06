@@ -21,6 +21,7 @@ pub(crate) struct InstalledPlugin {
     pub(crate) metadata_outputs: Vec<String>,
     pub(crate) metadata_variables: Vec<(String, f64)>,
     pub(crate) display_schema: Option<rtsyn_plugin::ui::DisplaySchema>,
+    pub(crate) ui_schema: Option<rtsyn_plugin::ui::UISchema>,
 }
 
 #[derive(Debug, Clone)]

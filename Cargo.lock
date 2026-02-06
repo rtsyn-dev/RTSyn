@@ -1788,6 +1788,7 @@ dependencies = [
  "egui",
  "egui_plot",
  "libc",
+ "live_plotter_plugin",
  "log",
  "plotters",
  "rfd",

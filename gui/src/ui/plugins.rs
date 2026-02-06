@@ -1,8 +1,9 @@
 use super::*;
 use crate::utils::{format_f64_with_input, normalize_numeric_input, parse_f64_input};
 use crate::WindowFocus;
-use crate::{BuildAction, LivePlotter};
+use crate::{BuildAction, LivePlotter, has_rt_capabilities, spawn_file_dialog_thread, zenity_file_dialog};
 use std::sync::{Arc, Mutex};
+use std::sync::mpsc;
 
 fn kv_row_wrapped(
     ui: &mut egui::Ui,
@@ -108,7 +109,7 @@ impl GuiApp {
             .collect();
         let computed_outputs = self.state_sync.computed_outputs.clone();
         let input_values = self.state_sync.input_values.clone();
-        let internal_variable_values = self.state_sync.internal_variable_values.clone();
+        let _internal_variable_values = self.state_sync.internal_variable_values.clone();
         let viewer_values = self.state_sync.viewer_values.clone();
         let mut remove_id: Option<u64> = None;
         let mut pending_running: Vec<(u64, bool)> = Vec::new();
@@ -454,52 +455,113 @@ impl GuiApp {
 
                                         if let Some(installed) = self.plugin_manager.installed_plugins.iter().find(|p| p.manifest.kind == plugin.kind) {
                                             if let Some(schema) = &installed.display_schema {
-                                                // Internal Variables first
-                                                if !schema.variables.is_empty() {
+                                                // Variables section for app plugins
+                                                let is_app_plugin = matches!(plugin.kind.as_str(), "csv_recorder" | "live_plotter" | "performance_monitor");
+                                                if !schema.variables.is_empty() && is_app_plugin {
                                                     egui::CollapsingHeader::new(
-                                                        RichText::new("\u{f0ae}  Internal State").size(13.0).strong()  // tasks icon
+                                                        RichText::new("\u{f0ae}  Variables").size(13.0).strong()
                                                     )
                                                     .default_open(true)
                                                     .show(ui, |ui| {
                                                         ui.add_space(4.0);
+                                                        
                                                         for var_name in &schema.variables {
-                                                            let value = internal_variable_values
-                                                                .get(&(plugin.id, var_name.clone()))
-                                                                .cloned()
-                                                                .unwrap_or_else(|| {
-                                                                    if matches!(plugin.kind.as_str(), "csv_recorder" | "live_plotter") {
-                                                                        match var_name.as_str() {
-                                                                            "input_count" => serde_json::Value::from(0),
-                                                                            "running" => serde_json::Value::from(false),
-                                                                            _ => serde_json::Value::from(0.0),
+                                                            let (tx, rx) = mpsc::channel();
+                                                            let _ = self.state_sync.logic_tx.send(LogicMessage::GetPluginVariable(plugin.id, var_name.clone(), tx));
+                                                            
+                                                            if let Ok(Some(value)) = rx.recv() {
+                                                                // Check if this is a FilePath field from ui_schema
+                                                                let is_filepath = installed.ui_schema.as_ref()
+                                                                    .and_then(|schema| schema.fields.iter().find(|f| f.key == *var_name))
+                                                                    .map(|field| matches!(field.field_type, rtsyn_plugin::ui::FieldType::FilePath { .. }))
+                                                                    .unwrap_or(false);
+                                                                
+                                                                kv_row_wrapped(ui, var_name, 140.0, |ui| {
+                                                                    match &value {
+                                                                        Value::String(s) => {
+                                                                            let mut text = s.clone();
+                                                                            let width = if is_filepath { 80.0 } else { 80.0 };
+                                                                            if ui.add(egui::TextEdit::singleline(&mut text).desired_width(width)).changed() {
+                                                                                let _ = self.state_sync.logic_tx.send(LogicMessage::SetPluginVariable(plugin.id, var_name.clone(), Value::String(text)));
+                                                                            }
+                                                                            if is_filepath {
+                                                                                ui.add_space(2.0);
+                                                                                if ui.small_button("...").clicked() {
+                                                                                    self.csv_path_target_plugin_id = Some(plugin.id);
+                                                                                    let (tx, rx) = mpsc::channel();
+                                                                                    self.file_dialogs.csv_path_dialog_rx = Some(rx);
+                                                                                    spawn_file_dialog_thread(move || {
+                                                                                        let file = if has_rt_capabilities() {
+                                                                                            zenity_file_dialog("save", None)
+                                                                                        } else {
+                                                                                            rfd::FileDialog::new().save_file()
+                                                                                        };
+                                                                                        let _ = tx.send(file);
+                                                                                    });
+                                                                                }
+                                                                            }
                                                                         }
-                                                                    } else {
-                                                                        serde_json::Value::from(0.0)
+                                                                        Value::Bool(b) => {
+                                                                            let mut checked = *b;
+                                                                            if ui.checkbox(&mut checked, "").changed() {
+                                                                                let _ = self.state_sync.logic_tx.send(LogicMessage::SetPluginVariable(plugin.id, var_name.clone(), Value::Bool(checked)));
+                                                                            }
+                                                                        }
+                                                                        Value::Number(n) => {
+                                                                            // Get field type info from ui_schema
+                                                                            let field_info = installed.ui_schema.as_ref()
+                                                                                .and_then(|schema| schema.fields.iter().find(|f| f.key == *var_name));
+                                                                            
+                                                                            if let Some(f) = n.as_f64() {
+                                                                                let mut val = f;
+                                                                                let (speed, min, max) = if let Some(field) = field_info {
+                                                                                    if let rtsyn_plugin::ui::FieldType::Float { min, max, step } = &field.field_type {
+                                                                                        (*step, *min, *max)
+                                                                                    } else {
+                                                                                        (1.0, None, None)
+                                                                                    }
+                                                                                } else {
+                                                                                    (1.0, None, None)
+                                                                                };
+                                                                                let range = match (min, max) {
+                                                                                    (Some(mn), Some(mx)) => mn..=mx,
+                                                                                    (Some(mn), None) => mn..=f64::INFINITY,
+                                                                                    (None, Some(mx)) => f64::NEG_INFINITY..=mx,
+                                                                                    (None, None) => f64::NEG_INFINITY..=f64::INFINITY,
+                                                                                };
+                                                                                if ui.add(egui::DragValue::new(&mut val).speed(speed).clamp_range(range)).changed() {
+                                                                                    let _ = self.state_sync.logic_tx.send(LogicMessage::SetPluginVariable(plugin.id, var_name.clone(), Value::from(val)));
+                                                                                    if var_name == "refresh_hz" {
+                                                                                        recompute_plotter_needed = true;
+                                                                                    }
+                                                                                }
+                                                                            } else if let Some(i) = n.as_i64() {
+                                                                                let mut val = i;
+                                                                                let (speed, min, max) = if let Some(field) = field_info {
+                                                                                    if let rtsyn_plugin::ui::FieldType::Integer { min, max, step } = &field.field_type {
+                                                                                        (*step as f64, *min, *max)
+                                                                                    } else {
+                                                                                        (1.0, None, None)
+                                                                                    }
+                                                                                } else {
+                                                                                    (1.0, None, None)
+                                                                                };
+                                                                                let range = match (min, max) {
+                                                                                    (Some(mn), Some(mx)) => mn..=mx,
+                                                                                    (Some(mn), None) => mn..=i64::MAX,
+                                                                                    (None, Some(mx)) => i64::MIN..=mx,
+                                                                                    (None, None) => i64::MIN..=i64::MAX,
+                                                                                };
+                                                                                if ui.add(egui::DragValue::new(&mut val).speed(speed).clamp_range(range)).changed() {
+                                                                                    let _ = self.state_sync.logic_tx.send(LogicMessage::SetPluginVariable(plugin.id, var_name.clone(), Value::from(val)));
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                        _ => {}
                                                                     }
                                                                 });
-                                                            let value_text = match value {
-                                                                serde_json::Value::Bool(v) => v.to_string(),
-                                                                serde_json::Value::Number(n) => {
-                                                                    if let Some(int_value) = n.as_i64() {
-                                                                        int_value.to_string()
-                                                                    } else if let Some(int_value) = n.as_u64() {
-                                                                        int_value.to_string()
-                                                                    } else {
-                                                                        format!("{:.4}", n.as_f64().unwrap_or(0.0))
-                                                                    }
-                                                                }
-                                                                _ => value.to_string(),
-                                                            };
-                                                            let mut value_text = value_text;
-                                                            kv_row_wrapped(ui, var_name, 140.0, |ui| {
-                                                                ui.add_enabled_ui(false, |ui| {
-                                                                    ui.add_sized(
-                                                                        [80.0, 0.0],
-                                                                        egui::TextEdit::singleline(&mut value_text)
-                                                                    );
-                                                                });
-                                                            });
-                                                            ui.add_space(4.0);
+                                                                ui.add_space(4.0);
+                                                            }
                                                         }
                                                     });
                                                 }
@@ -1695,10 +1757,8 @@ impl GuiApp {
                         .cloned()
                         .unwrap_or_else(|| Self::display_kind(&plugin_kind));
                     let mut priority = self.workspace_manager.workspace.plugins[plugin_index].priority;
-                    let mut config = self.workspace_manager.workspace.plugins[plugin_index].config.clone();
+                    let config = self.workspace_manager.workspace.plugins[plugin_index].config.clone();
                     let mut config_changed = false;
-                    let mut open_path_dialog = false;
-                    let mut new_input_count = None;
                     let pending_start: Option<bool> = None;
 
                     ui.horizontal(|ui| {
@@ -1738,325 +1798,6 @@ impl GuiApp {
                         config_changed = true;
                     }
 
-                    if plugin_kind == "csv_recorder" {
-                        ui.separator();
-                        let map = match config {
-                            Value::Object(ref mut map) => map,
-                            _ => {
-                                config = Value::Object(serde_json::Map::new());
-                                match config {
-                                    Value::Object(ref mut map) => map,
-                                    _ => unreachable!(),
-                                }
-                            }
-                        };
-
-                        let mut separator = map
-                            .get("separator")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or(",")
-                            .to_string();
-                        let mut include_time = map
-                            .get("include_time")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(true);
-                        let mut path_autogen = map
-                            .get("path_autogen")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(true);
-                        let mut path = map
-                            .get("path")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        let mut columns: Vec<String> = map
-                            .get("columns")
-                            .and_then(|v| v.as_array())
-                            .map(|arr| {
-                                arr.iter()
-                                    .map(|v| v.as_str().unwrap_or("").to_string())
-                                    .collect()
-                            })
-                            .unwrap_or_default();
-                        let mut input_count = map
-                            .get("input_count")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(columns.len() as u64)
-                            as usize;
-                        if columns.len() < input_count {
-                            columns.resize(input_count, String::new());
-                        } else {
-                            input_count = columns.len();
-                        }
-
-                        ui.horizontal(|ui| {
-                            ui.label("Separator");
-                            if ui
-                                .add(egui::TextEdit::singleline(&mut separator).desired_width(40.0))
-                                .changed()
-                            {
-                                config_changed = true;
-                            }
-                        });
-                        let (_unit, _scale, time_label) = Self::time_settings_from_selection(
-                            self.workspace_settings.tab,
-                            self.frequency_unit,
-                            self.period_unit,
-                        );
-                        ui.horizontal(|ui| {
-                            if ui
-                                .checkbox(&mut include_time, "Include time column")
-                                .changed()
-                            {
-                                config_changed = true;
-                            }
-                            ui.label(RichText::new(time_label).color(egui::Color32::GRAY));
-                        });
-
-                        ui.horizontal(|ui| {
-                            ui.label("Path");
-                            if ui
-                                .add(egui::TextEdit::singleline(&mut path).desired_width(280.0))
-                                .changed()
-                            {
-                                config_changed = true;
-                                path_autogen = false;
-                            }
-                            if ui.button("Browse...").clicked() {
-                                open_path_dialog = true;
-                                path_autogen = false;
-                            }
-                        });
-
-                        ui.horizontal(|ui| {
-                            ui.label("Inputs");
-                            if ui.button("Add input").clicked() {
-                                columns.push(String::new());
-                                input_count = columns.len();
-                                config_changed = true;
-                            }
-                        });
-
-                        ui.separator();
-                        ui.label("Columns");
-                        let mut remove_idx: Option<usize> = None;
-                        egui::ScrollArea::vertical()
-                            .max_height(140.0)
-                            .show(ui, |ui| {
-                                let mut idx = 0usize;
-                                while idx < input_count {
-                                    let label = format!("in_{idx}");
-                                    let mut value = columns.get(idx).cloned().unwrap_or_default();
-                                    if value.is_empty()
-                                        && self.workspace_manager.workspace.connections.iter().any(|conn| {
-                                            conn.to_plugin == plugin_id && conn.to_port == label
-                                        })
-                                    {
-                                        let default_name = self.default_csv_column(plugin_id, idx);
-                                        value = default_name.clone();
-                                        if idx < columns.len() {
-                                            columns[idx] = default_name;
-                                        } else {
-                                            columns.push(default_name);
-                                        }
-                                        config_changed = true;
-                                    }
-                                    let display = if value.is_empty() {
-                                        "empty".to_string()
-                                    } else {
-                                        value.clone()
-                                    };
-                                    let mut remove_row = false;
-                                    ui.horizontal(|ui| {
-                                        ui.label(label);
-                                        if ui
-                                            .add(
-                                                egui::TextEdit::singleline(&mut value)
-                                                    .hint_text(display)
-                                                    .desired_width(160.0),
-                                            )
-                                            .changed()
-                                        {
-                                            if idx < columns.len() {
-                                                columns[idx] = value.clone();
-                                            }
-                                            config_changed = true;
-                                        }
-                                        if ui.button("X").clicked() {
-                                            remove_row = true;
-                                        }
-                                    });
-                                    if remove_row {
-                                        remove_idx = Some(idx);
-                                        break;
-                                    }
-                                    idx += 1;
-                                }
-                            });
-                        if let Some(idx) = remove_idx {
-                            if idx < columns.len() {
-                                columns.remove(idx);
-                                config_changed = true;
-                            }
-                            self.remove_extendable_input_at(plugin_id, idx);
-                        }
-
-                        input_count = columns.len();
-                        if map.get("input_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize
-                            != input_count
-                        {
-                            new_input_count = Some(input_count);
-                        }
-
-                        map.insert("separator".to_string(), Value::String(separator));
-                        map.insert("include_time".to_string(), Value::from(include_time));
-                        map.insert("input_count".to_string(), Value::from(input_count as u64));
-                        map.insert(
-                            "columns".to_string(),
-                            Value::Array(columns.into_iter().map(Value::from).collect()),
-                        );
-                        map.insert("path".to_string(), Value::String(path));
-                        map.insert("path_autogen".to_string(), Value::from(path_autogen));
-                    } else if plugin_kind == "live_plotter" {
-                        ui.separator();
-                        let map = match config {
-                            Value::Object(ref mut map) => map,
-                            _ => {
-                                config = Value::Object(serde_json::Map::new());
-                                match config {
-                                    Value::Object(ref mut map) => map,
-                                    _ => unreachable!(),
-                                }
-                            }
-                        };
-
-                        let mut refresh_hz = map
-                            .get("refresh_hz")
-                            .and_then(|v| v.as_f64())
-                            .unwrap_or(60.0);
-                        let mut window_multiplier =
-                            map.get("window_multiplier")
-                                .and_then(|v| v.as_u64())
-                                .unwrap_or(1000) as i64;
-                        let mut window_value = map
-                            .get("window_value")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(10) as i64;
-                        let mut amplitude =
-                            map.get("amplitude").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                        let mut input_count =
-                            map.get("input_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-
-                        ui.horizontal(|ui| {
-                            ui.label("Refresh Hz");
-                            if ui
-                                .add(egui::DragValue::new(&mut refresh_hz).speed(1.0))
-                                .changed()
-                            {
-                                config_changed = true;
-                            }
-                        });
-                        if refresh_hz < 1.0 {
-                            refresh_hz = 1.0;
-                            config_changed = true;
-                        }
-
-                        ui.horizontal(|ui| {
-                            ui.label("Window multiplier");
-                            if ui
-                                .add(egui::DragValue::new(&mut window_multiplier).speed(100.0))
-                                .changed()
-                            {
-                                config_changed = true;
-                            }
-                        });
-                        if window_multiplier < 1 {
-                            window_multiplier = 1;
-                            config_changed = true;
-                        }
-
-                        ui.horizontal(|ui| {
-                            ui.label("Window value");
-                            let mut text = window_value.to_string();
-                            let resp =
-                                ui.add(egui::TextEdit::singleline(&mut text).desired_width(60.0));
-                            if resp.changed() {
-                                if let Ok(parsed) = text.trim().parse::<i64>() {
-                                    window_value = parsed;
-                                    config_changed = true;
-                                }
-                            }
-                        });
-                        if window_value < 1 {
-                            window_value = 1;
-                            config_changed = true;
-                        }
-
-                        ui.horizontal(|ui| {
-                            ui.label("Amplitude");
-                            if ui
-                                .add(egui::DragValue::new(&mut amplitude).speed(0.1))
-                                .changed()
-                            {
-                                config_changed = true;
-                            }
-                        });
-                        if amplitude < 0.0 {
-                            amplitude = 0.0;
-                            config_changed = true;
-                        }
-
-                        ui.horizontal(|ui| {
-                            ui.label("Inputs");
-                            if ui.button("Add input").clicked() {
-                                input_count += 1;
-                                config_changed = true;
-                            }
-                        });
-                        let mut remove_idx: Option<usize> = None;
-                        egui::ScrollArea::vertical()
-                            .max_height(120.0)
-                            .show(ui, |ui| {
-                                let mut idx = 0usize;
-                                while idx < input_count {
-                                    let label = format!("in_{idx}");
-                                    let mut remove_row = false;
-                                    ui.horizontal(|ui| {
-                                        ui.label(label);
-                                        if ui.button("X").clicked() {
-                                            remove_row = true;
-                                        }
-                                    });
-                                    if remove_row {
-                                        remove_idx = Some(idx);
-                                        break;
-                                    }
-                                    idx += 1;
-                                }
-                            });
-                        if let Some(idx) = remove_idx {
-                            if input_count > 0 {
-                                input_count = input_count.saturating_sub(1);
-                                config_changed = true;
-                            }
-                            self.remove_extendable_input_at(plugin_id, idx);
-                        }
-
-                        map.insert("refresh_hz".to_string(), Value::from(refresh_hz));
-                        map.insert(
-                            "window_multiplier".to_string(),
-                            Value::from(window_multiplier as u64),
-                        );
-                        map.insert("window_value".to_string(), Value::from(window_value as u64));
-                        map.insert(
-                            "window_ms".to_string(),
-                            Value::from((window_multiplier * window_value) as f64),
-                        );
-                        map.insert("amplitude".to_string(), Value::from(amplitude));
-                        map.insert("input_count".to_string(), Value::from(input_count as u64));
-                        new_input_count = Some(input_count);
-                    }
-
                     if config_changed {
                         self.workspace_manager.workspace.plugins[plugin_index].priority = priority;
                         self.workspace_manager.workspace.plugins[plugin_index].config = config;
@@ -2067,22 +1808,6 @@ impl GuiApp {
             .state_sync.logic_tx
                             .send(LogicMessage::SetPluginRunning(plugin_id, running));
                         self.mark_workspace_dirty();
-                    }
-
-                    if let Some(new_count) = new_input_count {
-                        prune_extendable_inputs_plugin_connections(
-                            &mut self.workspace_manager.workspace.connections,
-                            plugin_id,
-                            new_count,
-                        );
-                        self.enforce_connection_dependent();
-                        if plugin_kind == "live_plotter" {
-                            self.recompute_plotter_ui_hz();
-                        }
-                    }
-
-                    if open_path_dialog {
-                        self.open_csv_path_dialog(plugin_id);
                     }
                 } else {
                     ui.label("Plugin not found.");
