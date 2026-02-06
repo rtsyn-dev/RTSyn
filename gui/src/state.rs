@@ -1,8 +1,7 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use workspace::WorkspaceDefinition;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct PluginManifest {
     pub(crate) name: String,
     pub(crate) kind: String,
@@ -12,7 +11,7 @@ pub(crate) struct PluginManifest {
 }
 
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct InstalledPlugin {
     pub(crate) manifest: PluginManifest,
     pub(crate) path: PathBuf,
@@ -45,7 +44,6 @@ pub(crate) enum ConfirmAction {
     RemovePlugin(u64),
     UninstallPlugin(usize),
     DeleteWorkspace(PathBuf),
-    OverwriteWorkspace(PathBuf, WorkspaceDefinition),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -93,8 +91,6 @@ pub(crate) enum ConnectionEditTab {
 pub(crate) struct DetectedPlugin {
     pub(crate) manifest: PluginManifest,
     pub(crate) path: PathBuf,
-    #[allow(dead_code)]
-    pub(crate) library_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy)]

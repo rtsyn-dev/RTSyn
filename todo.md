@@ -38,6 +38,8 @@
 - [x] For actual csv recorder and live plotter: make number of inputs and on/off internal variables instead of actual special view (which shall be removed)
 - [x] Performance monitor doesn't show the variables and outputs
 - [x] On stop button it iterates one more time on showing outputs
+- [ ] While stopped, some plugins (like live plotter) arn't showing correctly the info
+- [ ] Maybe replace the config characteristics on csv and plotter to part of the plugin and make plugin config only for general config
 - [x] Eliminate cross from plotter
 - [x] Check if cached plugin is deleted when reinstalled (it should, plugin updates) and delete instances of same kind plugin that is open
 - [x] Close "no hooked windows". This is basically that if I have a Plugin config window opened and I change workspaces, remove the plugin etc, it should dissapear

@@ -4,12 +4,12 @@ use rtsyn_runtime::LogicSettings;
 
 impl GuiApp {
     fn open_load_dialog(&mut self) {
-        if self.load_dialog_rx.is_some() {
+        if self.file_dialogs.load_dialog_rx.is_some() {
             self.show_info("Workspace", "Load dialog already open.");
             return;
         }
         let (tx, rx) = mpsc::channel();
-        self.load_dialog_rx = Some(rx);
+        self.file_dialogs.load_dialog_rx = Some(rx);
         crate::spawn_file_dialog_thread(move || {
             let file = if crate::has_rt_capabilities() {
                 crate::zenity_file_dialog("open", Some("*.json"))
@@ -21,12 +21,12 @@ impl GuiApp {
     }
 
     fn open_import_dialog(&mut self) {
-        if self.import_dialog_rx.is_some() {
+        if self.file_dialogs.import_dialog_rx.is_some() {
             self.show_info("Workspace", "Import dialog already open.");
             return;
         }
         let (tx, rx) = mpsc::channel();
-        self.import_dialog_rx = Some(rx);
+        self.file_dialogs.import_dialog_rx = Some(rx);
         crate::spawn_file_dialog_thread(move || {
             let file = if crate::has_rt_capabilities() {
                 crate::zenity_file_dialog("open", Some("*.json"))
@@ -38,46 +38,46 @@ impl GuiApp {
     }
 
     pub(crate) fn open_workspace_dialog(&mut self, mode: WorkspaceDialogMode) {
-        self.workspace_dialog_mode = mode;
+        self.workspace_dialog.mode = mode;
         match mode {
             WorkspaceDialogMode::New => {
-                self.workspace_name_input.clear();
-                self.workspace_description_input.clear();
-                self.workspace_edit_path = None;
+                self.workspace_dialog.name_input.clear();
+                self.workspace_dialog.description_input.clear();
+                self.workspace_dialog.edit_path = None;
             }
             WorkspaceDialogMode::Save => {
-                self.workspace_name_input = self.workspace.name.clone();
-                self.workspace_description_input = self.workspace.description.clone();
-                self.workspace_edit_path = None;
+                self.workspace_dialog.name_input = self.workspace_manager.workspace.name.clone();
+                self.workspace_dialog.description_input = self.workspace_manager.workspace.description.clone();
+                self.workspace_dialog.edit_path = None;
             }
             WorkspaceDialogMode::Edit => {}
         }
-        self.workspace_dialog_open = true;
+        self.workspace_dialog.open = true;
         self.pending_window_focus = Some(WindowFocus::WorkspaceDialog);
     }
 
     pub(crate) fn open_manage_workspaces(&mut self) {
-        self.manage_workspace_open = true;
-        self.manage_workspace_selected_index = None;
+        self.windows.manage_workspace_open = true;
+        self.windows.manage_workspace_selected_index = None;
         self.scan_workspaces();
         self.pending_window_focus = Some(WindowFocus::ManageWorkspaces);
     }
 
     pub(crate) fn open_load_workspaces(&mut self) {
-        self.load_workspace_open = true;
-        self.load_workspace_selected_index = None;
+        self.windows.load_workspace_open = true;
+        self.windows.load_workspace_selected_index = None;
         self.scan_workspaces();
         self.pending_window_focus = Some(WindowFocus::LoadWorkspaces);
     }
 
     pub(crate) fn render_workspace_dialog(&mut self, ctx: &egui::Context) {
-        if !self.workspace_dialog_open {
+        if !self.workspace_dialog.open {
             return;
         }
 
-        let path_preview = self.workspace_file_path(self.workspace_name_input.trim());
+        let path_preview = self.workspace_file_path(self.workspace_dialog.name_input.trim());
         let mut path_display = path_preview.display().to_string();
-        let mut open = self.workspace_dialog_open;
+        let mut open = self.workspace_dialog.open;
         let window_size = egui::vec2(420.0, 260.0);
         let default_pos = Self::center_window(ctx, window_size);
         let mut action = None;
@@ -88,9 +88,9 @@ impl GuiApp {
             .default_size(window_size)
             .show(ctx, |ui| {
                 ui.label("Name");
-                ui.text_edit_singleline(&mut self.workspace_name_input);
+                ui.text_edit_singleline(&mut self.workspace_dialog.name_input);
                 ui.label("Description");
-                ui.text_edit_multiline(&mut self.workspace_description_input);
+                ui.text_edit_multiline(&mut self.workspace_dialog.description_input);
                 ui.add_space(6.0);
                 ui.label("Path");
                 ui.add_enabled(false, egui::TextEdit::singleline(&mut path_display));
@@ -107,7 +107,7 @@ impl GuiApp {
             });
         if let Some(response) = response {
             self.window_rects.push(response.response.rect);
-            if !self.confirm_dialog_open
+            if !self.confirm_dialog.open
                 && (response.response.clicked() || response.response.dragged())
             {
                 ctx.move_to_top(response.response.layer_id);
@@ -118,17 +118,17 @@ impl GuiApp {
             }
         }
 
-        self.workspace_dialog_open = open;
+        self.workspace_dialog.open = open;
 
         if let Some(action) = action {
             match action {
-                "cancel" => self.workspace_dialog_open = false,
+                "cancel" => self.workspace_dialog.open = false,
                 "save" => {
-                    let saved = match self.workspace_dialog_mode {
+                    let saved = match self.workspace_dialog.mode {
                         WorkspaceDialogMode::New => self.create_workspace_from_dialog(),
                         WorkspaceDialogMode::Save => self.save_workspace_as(),
                         WorkspaceDialogMode::Edit => {
-                            if let Some(path) = self.workspace_edit_path.clone() {
+                            if let Some(path) = self.workspace_dialog.edit_path.clone() {
                                 self.update_workspace_metadata(&path)
                             } else {
                                 false
@@ -136,7 +136,7 @@ impl GuiApp {
                         }
                     };
                     if saved {
-                        self.workspace_dialog_open = false;
+                        self.workspace_dialog.open = false;
                     }
                 }
                 _ => {}
@@ -145,11 +145,11 @@ impl GuiApp {
     }
 
     pub(crate) fn render_manage_workspaces_window(&mut self, ctx: &egui::Context) {
-        if !self.manage_workspace_open {
+        if !self.windows.manage_workspace_open {
             return;
         }
 
-        let mut open = self.manage_workspace_open;
+        let mut open = self.windows.manage_workspace_open;
         let window_size = egui::vec2(360.0, 520.0);
         let default_pos = Self::center_window(ctx, window_size);
         let mut action_load: Option<PathBuf> = None;
@@ -178,10 +178,10 @@ impl GuiApp {
                                 .min_scrolled_height(list_height)
                                 .show(ui, |ui| {
                                     ui.style_mut().spacing.item_spacing.y = 4.0;
-                                    for (idx, entry) in self.workspace_entries.iter().enumerate() {
+                                    for (idx, entry) in self.workspace_manager.workspace_entries.iter().enumerate() {
                                         let label = format!("{} ({})", entry.name, entry.plugins);
                                         let response = ui.selectable_label(
-                                            self.manage_workspace_selected_index == Some(idx),
+                                            self.windows.manage_workspace_selected_index == Some(idx),
                                             egui::RichText::new(label).size(14.0),
                                         );
                                         if response.clicked() {
@@ -195,16 +195,16 @@ impl GuiApp {
                         },
                     );
                     if let Some(idx) = selected {
-                        self.manage_workspace_selected_index = Some(idx);
-                        if let Some(entry) = self.workspace_entries.get(idx) {
-                            self.workspace_name_input = entry.name.clone();
-                            self.workspace_description_input = entry.description.clone();
+                        self.windows.manage_workspace_selected_index = Some(idx);
+                        if let Some(entry) = self.workspace_manager.workspace_entries.get(idx) {
+                            self.workspace_dialog.name_input = entry.name.clone();
+                            self.workspace_dialog.description_input = entry.description.clone();
                         }
                     }
 
                     columns[1].add_space(4.0);
-                    if let Some(idx) = self.manage_workspace_selected_index {
-                        if let Some(entry) = self.workspace_entries.get(idx) {
+                    if let Some(idx) = self.windows.manage_workspace_selected_index {
+                        if let Some(entry) = self.workspace_manager.workspace_entries.get(idx) {
                             columns[1].vertical(|ui| {
                                 ui.add_space(4.0);
                                 if !entry.description.is_empty() {
@@ -254,7 +254,7 @@ impl GuiApp {
             });
         if let Some(response) = response {
             self.window_rects.push(response.response.rect);
-            if !self.confirm_dialog_open
+            if !self.confirm_dialog.open
                 && (response.response.clicked() || response.response.dragged())
             {
                 ctx.move_to_top(response.response.layer_id);
@@ -265,17 +265,17 @@ impl GuiApp {
             }
         }
 
-        self.manage_workspace_open = open;
+        self.windows.manage_workspace_open = open;
 
         if let Some(path) = action_load {
-            self.workspace_path = path;
+            self.workspace_manager.workspace_path = path;
             self.load_workspace();
-            self.manage_workspace_open = false;
+            self.windows.manage_workspace_open = false;
         }
         if let Some(path) = action_edit {
-            self.workspace_dialog_mode = WorkspaceDialogMode::Edit;
-            self.workspace_edit_path = Some(path);
-            self.workspace_dialog_open = true;
+            self.workspace_dialog.mode = WorkspaceDialogMode::Edit;
+            self.workspace_dialog.edit_path = Some(path);
+            self.workspace_dialog.open = true;
         }
         if let Some(path) = action_export {
             self.export_workspace_path(&path);
@@ -291,11 +291,11 @@ impl GuiApp {
     }
 
     pub(crate) fn render_load_workspaces_window(&mut self, ctx: &egui::Context) {
-        if !self.load_workspace_open {
+        if !self.windows.load_workspace_open {
             return;
         }
 
-        let mut open = self.load_workspace_open;
+        let mut open = self.windows.load_workspace_open;
         let window_size = egui::vec2(360.0, 520.0);
         let default_pos = Self::center_window(ctx, window_size);
         let mut action_load: Option<PathBuf> = None;
@@ -321,10 +321,10 @@ impl GuiApp {
                                 .min_scrolled_height(list_height)
                                 .show(ui, |ui| {
                                     ui.style_mut().spacing.item_spacing.y = 4.0;
-                                    for (idx, entry) in self.workspace_entries.iter().enumerate() {
+                                    for (idx, entry) in self.workspace_manager.workspace_entries.iter().enumerate() {
                                         let label = format!("{} ({})", entry.name, entry.plugins);
                                         let response = ui.selectable_label(
-                                            self.load_workspace_selected_index == Some(idx),
+                                            self.windows.load_workspace_selected_index == Some(idx),
                                             egui::RichText::new(label).size(14.0),
                                         );
                                         if response.clicked() {
@@ -335,16 +335,16 @@ impl GuiApp {
                         },
                     );
                     if let Some(idx) = selected {
-                        self.load_workspace_selected_index = Some(idx);
-                        if let Some(entry) = self.workspace_entries.get(idx) {
-                            self.workspace_name_input = entry.name.clone();
-                            self.workspace_description_input = entry.description.clone();
+                        self.windows.load_workspace_selected_index = Some(idx);
+                        if let Some(entry) = self.workspace_manager.workspace_entries.get(idx) {
+                            self.workspace_dialog.name_input = entry.name.clone();
+                            self.workspace_dialog.description_input = entry.description.clone();
                         }
                     }
 
                     columns[1].add_space(4.0);
-                    if let Some(idx) = self.load_workspace_selected_index {
-                        if let Some(entry) = self.workspace_entries.get(idx) {
+                    if let Some(idx) = self.windows.load_workspace_selected_index {
+                        if let Some(entry) = self.workspace_manager.workspace_entries.get(idx) {
                             columns[1].vertical(|ui| {
                                 ui.add_space(4.0);
                                 if !entry.description.is_empty() {
@@ -386,7 +386,7 @@ impl GuiApp {
             });
         if let Some(response) = response {
             self.window_rects.push(response.response.rect);
-            if !self.confirm_dialog_open
+            if !self.confirm_dialog.open
                 && (response.response.clicked() || response.response.dragged())
             {
                 ctx.move_to_top(response.response.layer_id);
@@ -397,31 +397,31 @@ impl GuiApp {
             }
         }
 
-        self.load_workspace_open = open;
+        self.windows.load_workspace_open = open;
 
         if let Some(path) = action_load {
-            self.workspace_path = path;
+            self.workspace_manager.workspace_path = path;
             self.load_workspace();
-            self.load_workspace_open = false;
+            self.windows.load_workspace_open = false;
         }
     }
 
     pub(crate) fn render_workspace_settings_window(&mut self, ctx: &egui::Context) {
-        if !self.workspace_settings_open {
+        if !self.workspace_settings.open {
             return;
         }
 
-        let mut open = self.workspace_settings_open;
+        let mut open = self.workspace_settings.open;
         let window_size = egui::vec2(420.0, 240.0);
         let default_pos = Self::center_window(ctx, window_size);
         let mut draft = self
-            .workspace_settings_draft
+            .workspace_settings.draft
             .unwrap_or(WorkspaceSettingsDraft {
                 frequency_value: self.frequency_value,
                 frequency_unit: self.frequency_unit,
                 period_value: self.period_value,
                 period_unit: self.period_unit,
-                tab: self.workspace_settings_tab,
+                tab: self.workspace_settings.tab,
                 max_integration_steps: 10, // Default reasonable limit
             });
         let mut apply_clicked = false;
@@ -645,7 +645,7 @@ impl GuiApp {
             });
         if let Some(response) = response {
             self.window_rects.push(response.response.rect);
-            if !self.confirm_dialog_open
+            if !self.confirm_dialog.open
                 && (response.response.clicked() || response.response.dragged())
             {
                 ctx.move_to_top(response.response.layer_id);
@@ -661,7 +661,7 @@ impl GuiApp {
             self.frequency_unit = draft.frequency_unit;
             self.period_value = draft.period_value;
             self.period_unit = draft.period_unit;
-            self.workspace_settings_tab = draft.tab;
+            self.workspace_settings.tab = draft.tab;
             
             // Update the logic settings with the new max integration steps
             let period_seconds = self.compute_period_seconds();
@@ -683,29 +683,29 @@ impl GuiApp {
             };
             
             let _ = self
-                .logic_tx
+            .state_sync.logic_tx
                 .send(LogicMessage::UpdateSettings(LogicSettings {
                     cores,
                     period_seconds,
                     time_scale,
                     time_label,
-                    ui_hz: self.logic_ui_hz,
+                    ui_hz: self.state_sync.logic_ui_hz,
                     max_integration_steps: draft.max_integration_steps,
                 }));
             
             self.show_info("Time scale", "Sampling rate updated");
         }
 
-        self.workspace_settings_open = open;
+        self.workspace_settings.open = open;
         if open {
-            self.workspace_settings_draft = Some(draft);
+            self.workspace_settings.draft = Some(draft);
         } else {
-            self.workspace_settings_draft = None;
+            self.workspace_settings.draft = None;
         }
     }
 
     pub(crate) fn render_confirm_remove_dialog(&mut self, ctx: &egui::Context) {
-        if !self.confirm_dialog_open {
+        if !self.confirm_dialog.open {
             return;
         }
 
@@ -728,19 +728,19 @@ impl GuiApp {
                 egui::Frame::window(ui.style())
                     .rounding(egui::Rounding::same(6.0))
                     .show(ui, |ui| {
-                        ui.heading(&self.confirm_dialog_title);
-                        ui.label(&self.confirm_dialog_message);
+                        ui.heading(&self.confirm_dialog.title);
+                        ui.label(&self.confirm_dialog.message);
                         ui.horizontal(|ui| {
                             if ui.button("Cancel").clicked() {
-                                self.confirm_dialog_open = false;
-                                self.confirm_action = None;
+                                self.confirm_dialog.open = false;
+                                self.confirm_dialog.action = None;
                             }
-                            if ui.button(&self.confirm_dialog_action_label).clicked() {
-                                if let Some(action) = self.confirm_action.clone() {
+                            if ui.button(&self.confirm_dialog.action_label).clicked() {
+                                if let Some(action) = self.confirm_dialog.action.clone() {
                                     self.perform_confirm_action(action);
                                 }
-                                self.confirm_dialog_open = false;
-                                self.confirm_action = None;
+                                self.confirm_dialog.open = false;
+                                self.confirm_dialog.action = None;
                             }
                         });
                     });
@@ -816,7 +816,7 @@ impl GuiApp {
     }
 
     pub(crate) fn render_build_dialog(&mut self, ctx: &egui::Context) {
-        if !self.build_dialog_open {
+        if !self.build_dialog.open {
             return;
         }
 
@@ -839,17 +839,17 @@ impl GuiApp {
                 egui::Frame::window(ui.style())
                     .rounding(egui::Rounding::same(6.0))
                     .show(ui, |ui| {
-                        ui.heading(&self.build_dialog_title);
-                        if self.build_dialog_in_progress {
+                        ui.heading(&self.build_dialog.title);
+                        if self.build_dialog.in_progress {
                             ui.horizontal(|ui| {
-                                ui.label(&self.build_dialog_message);
+                                ui.label(&self.build_dialog.message);
                                 ui.add(egui::Spinner::new());
                             });
                             return;
                         }
-                        ui.label(&self.build_dialog_message);
+                        ui.label(&self.build_dialog.message);
                         if ui.button("OK").clicked() {
-                            self.build_dialog_open = false;
+                            self.build_dialog.open = false;
                         }
                     });
             });

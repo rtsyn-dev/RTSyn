@@ -74,21 +74,30 @@ use workspace::{
     WorkspaceSettings,
 };
 
-mod generic_renderer;
+mod file_dialogs;
 mod notifications;
 mod plotter;
+mod plotter_manager;
+mod plugin_manager;
 mod state;
+mod state_sync;
 mod ui;
+mod ui_state;
 mod utils;
+mod workspace_manager;
 mod workspace_utils;
 
+use file_dialogs::FileDialogManager;
 use notifications::Notification;
 use plotter::LivePlotter;
-use workspace_utils::{scan_workspace_entries, workspace_file_path};
+use plotter_manager::PlotterManager;
+use plugin_manager::PluginManager;
+use state_sync::StateSync;
+use workspace_manager::WorkspaceManager;
 use state::{
-    PluginTab, WorkspaceTimingTab, ConfirmAction, ConnectionEditMode, ConnectionEditTab,
-    DetectedPlugin, FrequencyUnit, InstalledPlugin, ManageTab, PeriodUnit, PluginManifest,
-    TimeUnit, WorkspaceDialogMode, WorkspaceEntry,
+    WorkspaceTimingTab, ConfirmAction,
+    DetectedPlugin, FrequencyUnit, InstalledPlugin, PeriodUnit, PluginManifest,
+    TimeUnit, WorkspaceDialogMode,
 };
 
 #[derive(Debug, Clone)]
@@ -204,119 +213,41 @@ pub fn run_gui_with_runtime(
 }
 
 struct GuiApp {
-    workspace: WorkspaceDefinition,
-    workspace_path: PathBuf,
+    // Managers
+    plugin_manager: PluginManager,
+    workspace_manager: WorkspaceManager,
+    file_dialogs: FileDialogManager,
+    plotter_manager: PlotterManager,
+    state_sync: StateSync,
+    
+    // UI State Groups
+    plotter_preview: ui_state::PlotterPreviewState,
+    connection_editor: ui_state::ConnectionEditorState,
+    workspace_dialog: ui_state::WorkspaceDialogState,
+    build_dialog: ui_state::BuildDialogState,
+    confirm_dialog: ui_state::ConfirmDialogState,
+    workspace_settings: ui_state::WorkspaceSettingsState,
+    windows: ui_state::WindowState,
+    
+    // Remaining UI State
     status: String,
-    installed_plugins: Vec<InstalledPlugin>,
-    plugin_behaviors: HashMap<String, rtsyn_plugin::ui::PluginBehavior>,
-    install_dialog_rx: Option<Receiver<Option<PathBuf>>>,
-    import_dialog_rx: Option<Receiver<Option<PathBuf>>>,
-    load_dialog_rx: Option<Receiver<Option<PathBuf>>>,
-    export_dialog_rx: Option<Receiver<(PathBuf, Option<PathBuf>)>>,
-    csv_path_dialog_rx: Option<Receiver<Option<PathBuf>>>,
     csv_path_target_plugin_id: Option<u64>,
-    install_db_path: PathBuf,
-    workspace_dir: PathBuf,
-    workspace_dialog_open: bool,
-    workspace_dialog_mode: WorkspaceDialogMode,
-    workspace_name_input: String,
-    workspace_description_input: String,
-    workspace_edit_path: Option<PathBuf>,
     notifications: Vec<Notification>,
-    build_dialog_open: bool,
-    build_dialog_in_progress: bool,
-    build_dialog_message: String,
-    build_dialog_title: String,
-    build_dialog_rx: Option<Receiver<BuildResult>>,
-    confirm_dialog_open: bool,
-    confirm_dialog_title: String,
-    confirm_dialog_message: String,
-    confirm_dialog_action_label: String,
-    confirm_action: Option<ConfirmAction>,
     plugin_positions: HashMap<u64, egui::Pos2>,
     plugin_rects: HashMap<u64, egui::Rect>,
     connections_view_enabled: bool,
-    manage_connections_open: bool,
-    workspace_settings_open: bool,
-    workspace_settings_draft: Option<WorkspaceSettingsDraft>,
-    workspace_settings_tab: WorkspaceTimingTab,
     available_cores: usize,
     selected_cores: Vec<bool>,
     frequency_value: f64,
     frequency_unit: FrequencyUnit,
     period_value: f64,
     period_unit: PeriodUnit,
-    logic_tx: Sender<LogicMessage>,
-    logic_state_rx: Receiver<LogicState>,
-    workspace_dirty: bool,
-    manage_workspace_open: bool,
-    load_workspace_open: bool,
-    workspace_entries: Vec<WorkspaceEntry>,
-    manage_workspace_selected_index: Option<usize>,
-    load_workspace_selected_index: Option<usize>,
-    manage_plugins_open: bool,
-    manage_plugins_tab: ManageTab,
-    install_search: String,
-    detected_plugins: Vec<DetectedPlugin>,
-    manage_selected_index: Option<usize>,
-    plugins_open: bool,
-    plugin_tab: PluginTab,
-    plugin_search: String,
-    plugin_selected_index: Option<usize>,
-    organize_search: String,
-    organize_selected_index: Option<usize>,
-    computed_outputs: HashMap<(u64, String), f64>,
-    input_values: HashMap<(u64, String), f64>,
-    internal_variable_values: HashMap<(u64, String), serde_json::Value>,
-    viewer_values: HashMap<u64, f64>,
-    last_output_update: Instant,
-    plotters: HashMap<u64, Arc<Mutex<LivePlotter>>>,
-    logic_period_seconds: f64,
-    logic_time_scale: f64,
-    logic_time_label: String,
-    logic_ui_hz: f64,
     output_refresh_hz: f64,
-    plotter_screenshot_rx: Option<Receiver<Option<PathBuf>>>,
     plotter_screenshot_target: Option<u64>,
-    plotter_preview_open: bool,
-    plotter_preview_target: Option<u64>,
-    plotter_preview_show_axes: bool,
-    plotter_preview_show_legend: bool,
-    plotter_preview_show_grid: bool,
-    plotter_preview_series_names: Vec<String>,
-    plotter_preview_colors: Vec<egui::Color32>,
-    plotter_preview_title: String,
-    plotter_preview_dark_theme: bool,
-    plotter_preview_x_axis_name: String,
-    plotter_preview_y_axis_name: String,
-    plotter_preview_high_quality: bool,
-    plotter_preview_export_svg: bool,
-    plotter_preview_width: u32,
-    plotter_preview_height: u32,
-    plotter_preview_settings: HashMap<u64, (bool, bool, bool, Vec<String>, Vec<egui::Color32>, String, bool, String, String, bool, bool)>,
-    next_plugin_id: u64,
-    available_plugin_ids: Vec<u64>,
-    connection_from_idx: usize,
-    connection_to_idx: usize,
-    connection_from_port: String,
-    connection_to_port: String,
-    connection_kind: String,
-    connection_kind_options: Vec<String>,
-    connection_edit_open: bool,
-    connection_edit_mode: ConnectionEditMode,
-    connection_edit_tab: ConnectionEditTab,
-    connection_edit_plugin_id: Option<u64>,
-    connection_edit_selected_idx: Option<usize>,
-    connection_edit_from_port_idx: usize,
-    connection_edit_to_port_idx: usize,
-    connection_edit_last_selected: Option<u64>,
-    connection_edit_last_tab: Option<ConnectionEditTab>,
     connection_highlight_plugin_id: Option<u64>,
     selected_plugin_id: Option<u64>,
     plugin_context_menu: Option<(u64, egui::Pos2, u64)>,
     connection_context_menu: Option<(Vec<ConnectionDefinition>, egui::Pos2, u64)>,
-    plugin_config_open: bool,
-    plugin_config_id: Option<u64>,
     number_edit_buffers: HashMap<(u64, String), String>,
     window_rects: Vec<egui::Rect>,
     pending_window_focus: Option<WindowFocus>,
@@ -329,146 +260,66 @@ impl GuiApp {
     ) -> Self {
         let install_db_path = PathBuf::from("app_plugins").join("installed_plugins.json");
         let workspace_dir = PathBuf::from("app_workspaces");
-        let workspace = WorkspaceDefinition {
-            name: "default".to_string(),
-            description: String::new(),
-            target_hz: 1000,
-            plugins: Vec::new(),
-            connections: Vec::new(),
-            settings: WorkspaceSettings::default(),
-        };
 
         let available_cores = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(1);
 
-        let mut app = Self {
-            workspace,
-            workspace_path: PathBuf::new(),
+        let mut plugin_manager = PluginManager::new(install_db_path);
+        let mut workspace_manager = WorkspaceManager::new(workspace_dir);
+        let file_dialogs = FileDialogManager::new();
+        let plotter_manager = PlotterManager::new();
+        let state_sync = StateSync::new(logic_tx, logic_state_rx);
+
+        plugin_manager.refresh_library_paths();
+        workspace_manager.workspace.plugins.iter_mut().for_each(|p| {
+            if let Some(installed) = plugin_manager.installed_plugins.iter().find(|i| i.manifest.kind == p.kind) {
+                if let Some(lib_path) = &installed.library_path {
+                    if let Some(config) = p.config.as_object_mut() {
+                        config.insert(
+                            "library_path".to_string(),
+                            serde_json::Value::String(lib_path.to_string_lossy().to_string()),
+                        );
+                    }
+                }
+            }
+        });
+
+        Self {
+            plugin_manager,
+            workspace_manager,
+            file_dialogs,
+            plotter_manager,
+            state_sync,
+            plotter_preview: ui_state::PlotterPreviewState::default(),
+            connection_editor: ui_state::ConnectionEditorState::default(),
+            workspace_dialog: ui_state::WorkspaceDialogState::default(),
+            build_dialog: ui_state::BuildDialogState::default(),
+            confirm_dialog: ui_state::ConfirmDialogState::default(),
+            workspace_settings: ui_state::WorkspaceSettingsState::default(),
+            windows: ui_state::WindowState::default(),
             status: String::new(),
-            installed_plugins: Vec::new(),
-            plugin_behaviors: HashMap::new(),
-            install_dialog_rx: None,
-            import_dialog_rx: None,
-            load_dialog_rx: None,
-            export_dialog_rx: None,
-            csv_path_dialog_rx: None,
             csv_path_target_plugin_id: None,
-            install_db_path,
-            workspace_dir,
-            workspace_dialog_open: false,
-            workspace_dialog_mode: WorkspaceDialogMode::New,
-            workspace_name_input: String::new(),
-            workspace_description_input: String::new(),
-            workspace_edit_path: None,
             notifications: Vec::new(),
-            build_dialog_open: false,
-            build_dialog_in_progress: false,
-            build_dialog_message: String::new(),
-            build_dialog_title: String::new(),
-            build_dialog_rx: None,
-            confirm_dialog_open: false,
-            confirm_dialog_title: String::new(),
-            confirm_dialog_message: String::new(),
-            confirm_dialog_action_label: "Remove".to_string(),
-            confirm_action: None,
             plugin_positions: HashMap::new(),
             plugin_rects: HashMap::new(),
             connections_view_enabled: true,
-            manage_connections_open: false,
-            workspace_settings_open: false,
-            workspace_settings_draft: None,
-            workspace_settings_tab: WorkspaceTimingTab::Period,
             available_cores,
             selected_cores: (0..available_cores).map(|i| i == 0).collect(),
             frequency_value: 1000.0,
             frequency_unit: FrequencyUnit::Hz,
             period_value: 1.0,
             period_unit: PeriodUnit::Ms,
-            logic_tx,
-            logic_state_rx,
-            workspace_dirty: true,
-            manage_workspace_open: false,
-            load_workspace_open: false,
-            workspace_entries: Vec::new(),
-            manage_workspace_selected_index: None,
-            load_workspace_selected_index: None,
-            manage_plugins_open: false,
-            manage_plugins_tab: ManageTab::default(),
-            install_search: String::new(),
-            detected_plugins: Vec::new(),
-            manage_selected_index: None,
-            plugins_open: false,
-            plugin_tab: PluginTab::default(),
-            plugin_search: String::new(),
-            plugin_selected_index: None,
-            organize_search: String::new(),
-            organize_selected_index: None,
-            computed_outputs: HashMap::new(),
-            input_values: HashMap::new(),
-            internal_variable_values: HashMap::new(),
-            viewer_values: HashMap::new(),
-            last_output_update: Instant::now(),
-            plotters: HashMap::new(),
-            logic_period_seconds: 0.001,
-            logic_time_scale: 1000.0,
-            logic_time_label: "time_ms".to_string(),
-            logic_ui_hz: 60.0,
             output_refresh_hz: 1.0,
-            plotter_screenshot_rx: None,
             plotter_screenshot_target: None,
-            plotter_preview_open: false,
-            plotter_preview_target: None,
-            plotter_preview_show_axes: true,
-            plotter_preview_show_legend: true,
-            plotter_preview_show_grid: true,
-            plotter_preview_series_names: Vec::new(),
-            plotter_preview_colors: Vec::new(),
-            plotter_preview_title: String::new(),
-            plotter_preview_dark_theme: true,
-            plotter_preview_x_axis_name: String::new(),
-            plotter_preview_y_axis_name: String::new(),
-            plotter_preview_high_quality: false,
-            plotter_preview_export_svg: false,
-            plotter_preview_width: 1200,
-            plotter_preview_height: 700,
-            plotter_preview_settings: HashMap::new(),
-            next_plugin_id: 1,
-            available_plugin_ids: Vec::new(),
-            connection_from_idx: 0,
-            connection_to_idx: 0,
-            connection_from_port: "out".to_string(),
-            connection_to_port: "in".to_string(),
-            connection_kind: "shared_memory".to_string(),
-            connection_kind_options: vec![
-                "shared_memory".to_string(),
-                "pipe".to_string(),
-                "in_process".to_string(),
-            ],
-            connection_edit_open: false,
-            connection_edit_mode: ConnectionEditMode::Add,
-            connection_edit_tab: ConnectionEditTab::Outputs,
-            connection_edit_plugin_id: None,
-            connection_edit_selected_idx: None,
-            connection_edit_from_port_idx: 0,
-            connection_edit_to_port_idx: 0,
-            connection_edit_last_selected: None,
-            connection_edit_last_tab: None,
             connection_highlight_plugin_id: None,
             selected_plugin_id: None,
             plugin_context_menu: None,
             connection_context_menu: None,
-            plugin_config_open: false,
-            plugin_config_id: None,
             number_edit_buffers: HashMap::new(),
             window_rects: Vec::new(),
             pending_window_focus: None,
-        };
-
-        app.load_installed_plugins();
-        app.refresh_installed_library_paths();
-        app.inject_library_paths_into_workspace();
-        app
+        }
     }
 
     fn center_window(ctx: &egui::Context, size: egui::Vec2) -> egui::Pos2 {
@@ -478,19 +329,16 @@ impl GuiApp {
     }
 
     fn sync_next_plugin_id(&mut self) {
-        if let Some(max_id) = self.workspace.plugins.iter().map(|p| p.id).max() {
-            self.next_plugin_id = max_id + 1;
-        } else {
-            self.next_plugin_id = 1;
-        }
+        let max_id = self.workspace_manager.workspace.plugins.iter().map(|p| p.id).max();
+        self.plugin_manager.sync_next_plugin_id(max_id);
     }
 
     fn mark_workspace_dirty(&mut self) {
-        self.workspace_dirty = true;
+        self.workspace_manager.mark_dirty();
     }
 
     fn start_plugin_build(&mut self, action: BuildAction, label: String) {
-        if self.build_dialog_rx.is_some() {
+        if self.build_dialog.rx.is_some() {
             self.status = "Plugin build already running".to_string();
             return;
         }
@@ -498,6 +346,16 @@ impl GuiApp {
             BuildAction::Install { path, .. } => path.clone(),
             BuildAction::Reinstall { path, .. } => path.clone(),
         };
+        
+        // Handle bundled plugins (empty path) - no build needed
+        if path.as_os_str().is_empty() {
+            if let BuildAction::Reinstall { kind, path } = action {
+                self.refresh_installed_plugin(kind, &path);
+                self.show_info("Plugin", "Plugin refreshed");
+            }
+            return;
+        }
+        
         if !path.join("Cargo.toml").is_file() {
             match action {
                 BuildAction::Install {
@@ -506,47 +364,37 @@ impl GuiApp {
                     persist,
                 } => {
                     self.install_plugin_from_folder(path, removable, persist);
-                    self.scan_detected_plugins();
+                    self.plugin_manager.scan_detected_plugins();
                     return;
                 }
-                BuildAction::Reinstall { .. } => {
-                    let (tx, rx) = mpsc::channel();
-                    self.build_dialog_rx = Some(rx);
-                    self.build_dialog_open = true;
-                    self.build_dialog_in_progress = true;
-                    self.build_dialog_title = "Building plugin".to_string();
-                    self.build_dialog_message = format!("Building {label}...");
-                    std::thread::spawn(move || {
-                        std::thread::sleep(Duration::from_millis(150));
-                        let _ = tx.send(BuildResult {
-                            success: true,
-                            action,
-                        });
-                    });
+                BuildAction::Reinstall { kind, path } => {
+                    // No Cargo.toml but has path - might be pre-built
+                    self.refresh_installed_plugin(kind, &path);
+                    self.show_info("Plugin", "Plugin refreshed");
                     return;
                 }
             }
         }
         let (tx, rx) = mpsc::channel();
-        self.build_dialog_rx = Some(rx);
-        self.build_dialog_open = true;
-        self.build_dialog_in_progress = true;
-        self.build_dialog_title = "Building plugin".to_string();
-        self.build_dialog_message = format!("Building {label}...");
+        self.build_dialog.rx = Some(rx);
+        self.build_dialog.open = true;
+        self.build_dialog.in_progress = true;
+        self.build_dialog.title = "Building plugin".to_string();
+        self.build_dialog.message = format!("Building {label}...");
         std::thread::spawn(move || {
-            let success = GuiApp::build_plugin(&path);
+            let success = PluginManager::build_plugin(&path);
             let _ = tx.send(BuildResult { success, action });
         });
     }
 
     fn poll_build_dialog(&mut self) {
-        let result = match &self.build_dialog_rx {
+        let result = match &self.build_dialog.rx {
             Some(rx) => rx.try_recv().ok(),
             None => None,
         };
         if let Some(result) = result {
-            self.build_dialog_rx = None;
-            self.build_dialog_in_progress = false;
+            self.build_dialog.rx = None;
+            self.build_dialog.in_progress = false;
             if result.success {
                 match result.action {
                     BuildAction::Install {
@@ -554,9 +402,9 @@ impl GuiApp {
                         removable,
                         persist,
                     } => {
-                        let prev_count = self.installed_plugins.len();
+                        let prev_count = self.plugin_manager.installed_plugins.len();
                         self.install_plugin_from_folder(path, removable, persist);
-                        let was_installed = self.installed_plugins.len() > prev_count;
+                        let was_installed = self.plugin_manager.installed_plugins.len() > prev_count;
                         if was_installed {
                             self.show_info("Plugin", "Plugin built and installed");
                         } else {
@@ -566,17 +414,22 @@ impl GuiApp {
                         self.scan_detected_plugins();
                     }
                     BuildAction::Reinstall { kind, path } => {
-                        self.refresh_installed_plugin(kind, &path);
+                        self.refresh_installed_plugin(kind.clone(), &path);
                         self.scan_detected_plugins();
-                        self.status = "Plugin rebuilt".to_string();
-                        self.show_info("Plugin", "Plugin rebuilt");
+                        let msg = if path.as_os_str().is_empty() {
+                            "Plugin refreshed"
+                        } else {
+                            "Plugin rebuilt"
+                        };
+                        self.status = msg.to_string();
+                        self.show_info("Plugin", msg);
                     }
                 }
             } else {
                 self.status = "Plugin build failed".to_string();
                 self.show_info("Plugin", "Plugin build failed");
             }
-            self.build_dialog_open = false;
+            self.build_dialog.open = false;
         }
     }
 
@@ -606,12 +459,12 @@ impl GuiApp {
             return;
         }
 
-        let library_path = Self::resolve_library_path(&manifest, folder.as_ref());
+        let library_path = PluginManager::resolve_library_path(&manifest, folder.as_ref());
         let (mut metadata_inputs, mut metadata_outputs, mut metadata_variables, mut display_schema) = if let Some(ref lib_path) = library_path {
             let (tx, rx) = std::sync::mpsc::channel();
-            let _ = self.logic_tx.send(LogicMessage::QueryPluginMetadata(lib_path.to_string_lossy().to_string(), tx));
-            if let Ok(Some((inputs, outputs, vars, display_schema))) = rx.recv() {
-                (inputs, outputs, vars, display_schema)
+            let _ = self.state_sync.logic_tx.send(LogicMessage::QueryPluginMetadata(lib_path.to_string_lossy().to_string(), tx));
+            if let Ok(Some((inputs, outputs, vars, schema))) = rx.recv() {
+                (inputs, outputs, vars, schema)
             } else {
                 (vec![], vec![], vec![], None)
             }
@@ -638,15 +491,22 @@ impl GuiApp {
                 inputs: Vec::new(),
                 variables: vec!["input_count".to_string(), "running".to_string()],
             });
+        } else if display_schema.is_none() && (!metadata_outputs.is_empty() || !metadata_variables.is_empty()) {
+            // Create display_schema from metadata for dynamic plugins
+            display_schema = Some(rtsyn_plugin::ui::DisplaySchema {
+                outputs: metadata_outputs.clone(),
+                inputs: Vec::new(),
+                variables: metadata_variables.iter().map(|(name, _)| name.clone()).collect(),
+            });
         }
         
         // Check if plugin of this kind is already installed
-        if self.installed_plugins.iter().any(|p| p.manifest.kind == manifest.kind) {
+        if self.plugin_manager.installed_plugins.iter().any(|p| p.manifest.kind == manifest.kind) {
             self.status = format!("Plugin '{}' is already installed", manifest.kind);
             return;
         }
         
-        self.installed_plugins.push(InstalledPlugin {
+        self.plugin_manager.installed_plugins.push(InstalledPlugin {
             manifest,
             path: folder.as_ref().to_path_buf(),
             library_path,
@@ -662,91 +522,9 @@ impl GuiApp {
         }
     }
 
-    fn resolve_library_path(manifest: &PluginManifest, folder: &Path) -> Option<PathBuf> {
-        if let Some(library) = manifest.library.as_ref() {
-            let direct = folder.join(library);
-            if direct.is_file() {
-                return Some(direct);
-            }
-            let cwd_direct = PathBuf::from(library);
-            if cwd_direct.is_file() {
-                return Some(cwd_direct);
-            }
-        }
-        let kind = &manifest.kind;
-        let candidates = [
-            format!("lib{kind}.so"),
-            format!("lib{kind}.dylib"),
-            format!("{kind}.dll"),
-        ];
-        let search_dirs = [
-            folder.to_path_buf(),
-            folder.join("target").join("release"),
-            folder.join("target").join("debug"),
-            PathBuf::from("target").join("release"),
-            PathBuf::from("target").join("debug"),
-        ];
-        if let Some(library) = manifest.library.as_ref() {
-            for dir in &search_dirs {
-                let path = dir.join(library);
-                if path.is_file() {
-                    return Some(path);
-                }
-            }
-        }
-        for dir in search_dirs {
-            for candidate in &candidates {
-                let path = dir.join(candidate);
-                if path.is_file() {
-                    return Some(path);
-                }
-            }
-        }
-        None
-    }
-
-    fn workspace_root() -> Option<PathBuf> {
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .map(|path| path.to_path_buf())
-    }
-
-    fn build_plugin(folder: &Path) -> bool {
-        let cargo_toml = folder.join("Cargo.toml");
-        if !cargo_toml.is_file() {
-            return false;
-        }
-        let local_ok = Command::new("cargo")
-            .arg("build")
-            .arg("--release")
-            .current_dir(folder)
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false);
-        if local_ok {
-            return true;
-        }
-        let Some(workspace_root) = Self::workspace_root() else {
-            return false;
-        };
-        if !folder.starts_with(&workspace_root) {
-            return false;
-        }
-        let workspace_manifest = workspace_root.join("Cargo.toml");
-        let mut cmd = Command::new("cargo");
-        cmd.arg("build")
-            .arg("--release")
-            .arg("--manifest-path")
-            .arg(workspace_manifest)
-            .current_dir(workspace_root);
-        cmd.status()
-            .map(|status| status.success())
-            .unwrap_or(false)
-    }
-
     fn refresh_installed_library_paths(&mut self) {
         let mut changed = false;
-        for installed in &mut self.installed_plugins {
+        for installed in &mut self.plugin_manager.installed_plugins {
             let needs_update = installed
                 .library_path
                 .as_ref()
@@ -754,7 +532,7 @@ impl GuiApp {
                 .unwrap_or(true);
             if needs_update {
                 installed.library_path =
-                    Self::resolve_library_path(&installed.manifest, &installed.path);
+                    PluginManager::resolve_library_path(&installed.manifest, &installed.path);
                 changed = true;
             }
         }
@@ -765,7 +543,7 @@ impl GuiApp {
 
     fn inject_library_paths_into_workspace(&mut self) {
         let mut paths_by_kind: HashMap<String, String> = HashMap::new();
-        for installed in &self.installed_plugins {
+        for installed in &self.plugin_manager.installed_plugins {
             if let Some(path) = installed.library_path.as_ref() {
                 if path.is_file() {
                     paths_by_kind.insert(
@@ -778,7 +556,7 @@ impl GuiApp {
         if paths_by_kind.is_empty() {
             return;
         }
-        for plugin in &mut self.workspace.plugins {
+        for plugin in &mut self.workspace_manager.workspace.plugins {
             if let Some(path) = paths_by_kind.get(&plugin.kind) {
                 if let Value::Object(ref mut map) = plugin.config {
                     let needs_update = match map.get("library_path") {
@@ -796,12 +574,12 @@ impl GuiApp {
     }
 
     fn poll_import_dialog(&mut self) {
-        let result = match &self.import_dialog_rx {
+        let result = match &self.file_dialogs.import_dialog_rx {
             Some(rx) => rx.try_recv().ok(),
             None => None,
         };
         if let Some(selection) = result {
-            self.import_dialog_rx = None;
+            self.file_dialogs.import_dialog_rx = None;
             if let Some(path) = selection {
                 self.import_workspace_from_path(&path);
             }
@@ -809,29 +587,29 @@ impl GuiApp {
     }
 
     fn poll_load_dialog(&mut self) {
-        let result = match &self.load_dialog_rx {
+        let result = match &self.file_dialogs.load_dialog_rx {
             Some(rx) => rx.try_recv().ok(),
             None => None,
         };
         if let Some(selection) = result {
-            self.load_dialog_rx = None;
+            self.file_dialogs.load_dialog_rx = None;
             if let Some(path) = selection {
-                self.workspace_path = path;
+                self.workspace_manager.workspace_path = path;
                 self.load_workspace();
             }
         }
     }
 
     fn poll_csv_path_dialog(&mut self) {
-        let result = match &self.csv_path_dialog_rx {
+        let result = match &self.file_dialogs.csv_path_dialog_rx {
             Some(rx) => rx.try_recv().ok(),
             None => None,
         };
         if let Some(selection) = result {
-            self.csv_path_dialog_rx = None;
+            self.file_dialogs.csv_path_dialog_rx = None;
             let plugin_id = self.csv_path_target_plugin_id.take();
             if let (Some(path), Some(id)) = (selection, plugin_id) {
-                if let Some(plugin) = self.workspace.plugins.iter_mut().find(|p| p.id == id) {
+                if let Some(plugin) = self.workspace_manager.workspace.plugins.iter_mut().find(|p| p.id == id) {
                     if let Value::Object(ref mut map) = plugin.config {
                         map.insert(
                             "path".to_string(),
@@ -846,18 +624,18 @@ impl GuiApp {
     }
 
     fn poll_plotter_screenshot_dialog(&mut self) {
-        let result = match &self.plotter_screenshot_rx {
+        let result = match &self.file_dialogs.plotter_screenshot_rx {
             Some(rx) => rx.try_recv().ok(),
             None => None,
         };
         if let Some(selection) = result {
-            self.plotter_screenshot_rx = None;
+            self.file_dialogs.plotter_screenshot_rx = None;
             let target = self.plotter_screenshot_target.take();
             if let (Some(path), Some(plugin_id)) = (selection, target) {
                 // Get preview settings for this plugin
-                let settings = self.plotter_preview_settings.get(&plugin_id).cloned();
+                let settings = self.plotter_manager.plotter_preview_settings.get(&plugin_id).cloned();
                 let export_result = self
-                    .plotters
+            .plotter_manager.plotters
                     .get(&plugin_id)
                     .and_then(|plotter| plotter.lock().ok())
                     .and_then(|mut plotter| {
@@ -865,7 +643,7 @@ impl GuiApp {
                             if export_svg {
                                 plotter.export_svg_with_settings(
                                     &path,
-                                    &self.logic_time_label,
+                                    &self.state_sync.logic_time_label,
                                     show_axes,
                                     show_legend,
                                     show_grid,
@@ -875,13 +653,13 @@ impl GuiApp {
                                     dark_theme,
                                     &x_axis,
                                     &y_axis,
-                                    self.plotter_preview_width,
-                                    self.plotter_preview_height,
+                                    self.plotter_preview.width,
+                                    self.plotter_preview.height,
                                 ).err()
                             } else if high_quality {
                                 plotter.export_png_hq_with_settings(
                                     &path,
-                                    &self.logic_time_label,
+                                    &self.state_sync.logic_time_label,
                                     show_axes,
                                     show_legend,
                                     show_grid,
@@ -895,7 +673,7 @@ impl GuiApp {
                             } else {
                                 plotter.export_png_with_settings(
                                     &path,
-                                    &self.logic_time_label,
+                                    &self.state_sync.logic_time_label,
                                     show_axes,
                                     show_legend,
                                     show_grid,
@@ -905,12 +683,12 @@ impl GuiApp {
                                     dark_theme,
                                     &x_axis,
                                     &y_axis,
-                                    self.plotter_preview_width,
-                                    self.plotter_preview_height,
+                                    self.plotter_preview.width,
+                                    self.plotter_preview.height,
                                 ).err()
                             }
                         } else {
-                            plotter.export_png(&path, &self.logic_time_label).err()
+                            plotter.export_png(&path, &self.state_sync.logic_time_label).err()
                         }
                     });
                 if let Some(err) = export_result {
@@ -921,12 +699,12 @@ impl GuiApp {
     }
 
     fn request_plotter_screenshot(&mut self, plugin_id: u64) {
-        if self.plotter_screenshot_rx.is_some() {
+        if self.file_dialogs.plotter_screenshot_rx.is_some() {
             return;
         }
         
         // Use title from preview settings, or default to "live_plotter"
-        let base_name = self.plotter_preview_settings
+        let base_name = self.plotter_manager.plotter_preview_settings
             .get(&plugin_id)
             .and_then(|(_, _, _, _, _, title, _, _, _, _, _)| {
                 if title.trim().is_empty() {
@@ -948,10 +726,10 @@ impl GuiApp {
         let default_name = format!("{}-{day}-{hour:02}-{minute:02}-{second:02}.png", base_name);
         
         let (tx, rx) = mpsc::channel();
-        self.plotter_screenshot_rx = Some(rx);
+        self.file_dialogs.plotter_screenshot_rx = Some(rx);
         self.plotter_screenshot_target = Some(plugin_id);
         
-        let is_svg = self.plotter_preview_settings
+        let is_svg = self.plotter_manager.plotter_preview_settings
             .get(&plugin_id)
             .map(|(_, _, _, _, _, _, _, _, _, _, svg)| *svg)
             .unwrap_or(false);
@@ -973,12 +751,12 @@ impl GuiApp {
     }
 
     fn poll_export_dialog(&mut self) {
-        let result = match &self.export_dialog_rx {
+        let result = match &self.file_dialogs.export_dialog_rx {
             Some(rx) => rx.try_recv().ok(),
             None => None,
         };
         if let Some((source, dest)) = result {
-            self.export_dialog_rx = None;
+            self.file_dialogs.export_dialog_rx = None;
             if let Some(dest) = dest {
                 let _ = fs::copy(source, dest);
                 self.show_info("Workspace", "Workspace exported");
@@ -987,13 +765,13 @@ impl GuiApp {
     }
 
     fn poll_install_dialog(&mut self) {
-        let result = match &self.install_dialog_rx {
+        let result = match &self.file_dialogs.install_dialog_rx {
             Some(rx) => rx.try_recv().ok(),
             None => None,
         };
 
         if let Some(selection) = result {
-            self.install_dialog_rx = None;
+            self.file_dialogs.install_dialog_rx = None;
             if let Some(folder) = selection {
                 let label = folder
                     .file_name()
@@ -1046,11 +824,10 @@ impl GuiApp {
                     if manifest.kind == "comedi_daq" && !cfg!(feature = "comedi") {
                         continue;
                     }
-                    let library_path = Self::resolve_library_path(&manifest, &path);
+                    let _library_path = PluginManager::resolve_library_path(&manifest, &path);
                     detected.push(DetectedPlugin {
                         manifest,
                         path,
-                        library_path,
                     });
                 }
             }
@@ -1059,22 +836,21 @@ impl GuiApp {
             .iter()
             .map(|plugin| plugin.manifest.kind.clone())
             .collect();
-        for installed in &self.installed_plugins {
+        for installed in &self.plugin_manager.installed_plugins {
             if detected_kinds.contains(&installed.manifest.kind) {
                 continue;
             }
             detected.push(DetectedPlugin {
                 manifest: installed.manifest.clone(),
                 path: installed.path.clone(),
-                library_path: installed.library_path.clone(),
             });
             detected_kinds.insert(installed.manifest.kind.clone());
         }
-        self.detected_plugins = detected;
+        self.plugin_manager.detected_plugins = detected;
     }
 
     fn add_installed_plugin(&mut self, installed_index: usize) {
-        let installed = match self.installed_plugins.get(installed_index) {
+        let installed = match self.plugin_manager.installed_plugins.get(installed_index) {
             Some(plugin) => plugin.clone(),
             None => {
                 self.status = "Invalid installed plugin".to_string();
@@ -1083,15 +859,23 @@ impl GuiApp {
         };
 
         let mut config_map = serde_json::Map::new();
+        
+        // Add metadata variables to config
+        for (name, value) in &installed.metadata_variables {
+            config_map.insert(name.clone(), Value::from(*value));
+        }
+        
+        // Query dynamic plugin metadata if library path exists
         if let Some(library_path) = &installed.library_path {
             let (tx, rx) = std::sync::mpsc::channel();
-            let _ = self.logic_tx.send(LogicMessage::QueryPluginMetadata(library_path.to_string_lossy().to_string(), tx));
+            let _ = self.state_sync.logic_tx.send(LogicMessage::QueryPluginMetadata(library_path.to_string_lossy().to_string(), tx));
             if let Ok(Some((_inputs, _outputs, variables, _display_schema))) = rx.recv() {
                 for (name, value) in variables {
                     config_map.insert(name, Value::from(value));
                 }
             }
         }
+        
         if installed.manifest.kind == "csv_recorder" {
             config_map.insert("separator".to_string(), Value::from(","));
             config_map.insert("path".to_string(), Value::from(Self::default_csv_path()));
@@ -1105,7 +889,6 @@ impl GuiApp {
             config_map.insert("window_ms".to_string(), Value::from(10000.0));
         } else if installed.manifest.kind == "performance_monitor" {
             config_map.insert("input_count".to_string(), Value::from(0));
-            config_map.insert("max_latency_us".to_string(), Value::from(1000.0));
         } else if installed.manifest.kind == "comedi_daq" {
             config_map.insert("device_path".to_string(), Value::from("/dev/comedi0"));
             config_map.insert("scan_devices".to_string(), Value::from(false));
@@ -1122,16 +905,16 @@ impl GuiApp {
         self.ensure_plugin_behavior_cached_with_path(&installed.manifest.kind, installed.library_path.as_ref());
         
         // Determine if plugin should start based on behavior
-        let loads_started = self.plugin_behaviors
+        let loads_started = self.plugin_manager.plugin_behaviors
             .get(&installed.manifest.kind)
             .map(|b| b.loads_started)
             .unwrap_or(false);
         
 
         let plugin = PluginDefinition {
-            id: self.available_plugin_ids.pop().unwrap_or_else(|| {
-                let id = self.next_plugin_id;
-                self.next_plugin_id += 1;
+            id: self.plugin_manager.available_plugin_ids.pop().unwrap_or_else(|| {
+                let id = self.plugin_manager.next_plugin_id;
+                self.plugin_manager.next_plugin_id += 1;
                 id
             }),
             kind: installed.manifest.kind.clone(),
@@ -1140,13 +923,13 @@ impl GuiApp {
             running: loads_started,
         };
 
-        self.workspace.plugins.push(plugin);
+        self.workspace_manager.workspace.plugins.push(plugin);
         
         self.status = "Installed plugin added".to_string();
         self.mark_workspace_dirty();
     }
     fn duplicate_plugin(&mut self, plugin_id: u64) {
-        let source = match self.workspace.plugins.iter().find(|p| p.id == plugin_id) {
+        let source = match self.workspace_manager.workspace.plugins.iter().find(|p| p.id == plugin_id) {
             Some(plugin) => plugin.clone(),
             None => {
                 self.show_info("Plugin", "Invalid plugin");
@@ -1154,9 +937,9 @@ impl GuiApp {
             }
         };
         let plugin = PluginDefinition {
-            id: self.available_plugin_ids.pop().unwrap_or_else(|| {
-                let id = self.next_plugin_id;
-                self.next_plugin_id += 1;
+            id: self.plugin_manager.available_plugin_ids.pop().unwrap_or_else(|| {
+                let id = self.plugin_manager.next_plugin_id;
+                self.plugin_manager.next_plugin_id += 1;
                 id
             }),
             kind: source.kind,
@@ -1165,7 +948,7 @@ impl GuiApp {
             running: source.running,
         };
         let kind = plugin.kind.clone();
-        self.workspace.plugins.push(plugin);
+        self.workspace_manager.workspace.plugins.push(plugin);
         
         // Cache plugin behavior
         self.ensure_plugin_behavior_cached(&kind);
@@ -1175,7 +958,7 @@ impl GuiApp {
     }
 
     fn uninstall_plugin(&mut self, installed_index: usize) {
-        let plugin = match self.installed_plugins.get(installed_index) {
+        let plugin = match self.plugin_manager.installed_plugins.get(installed_index) {
             Some(plugin) => plugin.clone(),
             None => {
                 self.show_info("Plugin", "Invalid installed plugin");
@@ -1191,7 +974,7 @@ impl GuiApp {
         let kind = plugin.manifest.kind.clone();
         
         // Close windows for plugins of this kind
-        let plugin_ids: Vec<u64> = self.workspace.plugins
+        let plugin_ids: Vec<u64> = self.workspace_manager.workspace.plugins
             .iter()
             .filter(|p| p.kind == kind)
             .map(|p| p.id)
@@ -1201,20 +984,20 @@ impl GuiApp {
             if self.selected_plugin_id == Some(*id) {
                 self.selected_plugin_id = None;
             }
-            if self.plugin_config_id == Some(*id) {
-                self.plugin_config_id = None;
-                self.plugin_config_open = false;
+            if self.windows.plugin_config_id == Some(*id) {
+                self.windows.plugin_config_id = None;
+                self.windows.plugin_config_open = false;
             }
-            self.plotters.remove(id);
+            self.plotter_manager.plotters.remove(id);
         }
         
         // Remove all workspace plugin instances of this kind
-        self.workspace.plugins.retain(|p| p.kind != kind);
+        self.workspace_manager.workspace.plugins.retain(|p| p.kind != kind);
         
         // Remove connections involving these plugins
-        self.workspace.connections.retain(|conn| !plugin_ids.contains(&conn.from_plugin) && !plugin_ids.contains(&conn.to_plugin));
+        self.workspace_manager.workspace.connections.retain(|conn| !plugin_ids.contains(&conn.from_plugin) && !plugin_ids.contains(&conn.to_plugin));
         
-        self.installed_plugins.remove(installed_index);
+        self.plugin_manager.installed_plugins.remove(installed_index);
         self.scan_detected_plugins();
         self.show_info("Plugin", "Plugin uninstalled");
         self.persist_installed_plugins();
@@ -1222,10 +1005,10 @@ impl GuiApp {
 
     fn refresh_installed_plugin(&mut self, kind: String, path: &Path) {
         // Clear cached plugin behavior for this kind so new version is loaded
-        self.plugin_behaviors.remove(&kind);
+        self.plugin_manager.plugin_behaviors.remove(&kind);
         
         // Close windows for plugins of this kind (they'll need to be reopened with new version)
-        let plugin_ids: Vec<u64> = self.workspace.plugins
+        let plugin_ids: Vec<u64> = self.workspace_manager.workspace.plugins
             .iter()
             .filter(|p| p.kind == kind)
             .map(|p| p.id)
@@ -1235,11 +1018,17 @@ impl GuiApp {
             if self.selected_plugin_id == Some(*id) {
                 self.selected_plugin_id = None;
             }
-            if self.plugin_config_id == Some(*id) {
-                self.plugin_config_id = None;
-                self.plugin_config_open = false;
+            if self.windows.plugin_config_id == Some(*id) {
+                self.windows.plugin_config_id = None;
+                self.windows.plugin_config_open = false;
             }
-            self.plotters.remove(id);
+            self.plotter_manager.plotters.remove(id);
+        }
+        
+        // For bundled plugins (empty path), just refresh is enough
+        if path.as_os_str().is_empty() {
+            self.status = "Plugin refreshed".to_string();
+            return;
         }
         
         // Keep workspace plugins - just update the installed plugin metadata
@@ -1260,16 +1049,16 @@ impl GuiApp {
             }
         };
 
-        let library_path = Self::resolve_library_path(&manifest, path);
+        let library_path = PluginManager::resolve_library_path(&manifest, path);
         if let Some(installed) = self
-            .installed_plugins
+            .plugin_manager.installed_plugins
             .iter_mut()
             .find(|plugin| plugin.manifest.kind == kind)
         {
             installed.manifest = manifest;
             let (tx, rx) = std::sync::mpsc::channel();
             if let Some(ref lib_path) = library_path {
-                let _ = self.logic_tx.send(LogicMessage::QueryPluginMetadata(lib_path.to_string_lossy().to_string(), tx));
+                let _ = self.state_sync.logic_tx.send(LogicMessage::QueryPluginMetadata(lib_path.to_string_lossy().to_string(), tx));
                 if let Ok(Some((inputs, outputs, vars, display_schema))) = rx.recv() {
                     installed.metadata_inputs = inputs;
                     installed.metadata_outputs = outputs;
@@ -1303,7 +1092,7 @@ impl GuiApp {
         } else {
             let (mut metadata_inputs, mut metadata_outputs, mut metadata_variables, mut display_schema) = if let Some(ref lib_path) = library_path {
                 let (tx, rx) = std::sync::mpsc::channel();
-                let _ = self.logic_tx.send(LogicMessage::QueryPluginMetadata(lib_path.to_string_lossy().to_string(), tx));
+                let _ = self.state_sync.logic_tx.send(LogicMessage::QueryPluginMetadata(lib_path.to_string_lossy().to_string(), tx));
                 if let Ok(Some((inputs, outputs, vars, display_schema))) = rx.recv() {
                     (inputs, outputs, vars, display_schema)
                 } else {
@@ -1333,7 +1122,7 @@ impl GuiApp {
                     variables: vec!["input_count".to_string(), "running".to_string()],
                 });
             }
-            self.installed_plugins.push(InstalledPlugin {
+            self.plugin_manager.installed_plugins.push(InstalledPlugin {
                 manifest,
                 path: path.to_path_buf(),
                 library_path,
@@ -1348,29 +1137,29 @@ impl GuiApp {
     }
 
     fn remove_plugin(&mut self, plugin_index: usize) {
-        if plugin_index >= self.workspace.plugins.len() {
+        if plugin_index >= self.workspace_manager.workspace.plugins.len() {
             self.status = "Invalid plugin selection".to_string();
             return;
         }
 
-        let removed_id = self.workspace.plugins[plugin_index].id;
-        self.available_plugin_ids.push(removed_id);
+        let removed_id = self.workspace_manager.workspace.plugins[plugin_index].id;
+        self.plugin_manager.available_plugin_ids.push(removed_id);
         
         // Close associated windows
         if self.selected_plugin_id == Some(removed_id) {
             self.selected_plugin_id = None;
         }
-        if self.plugin_config_id == Some(removed_id) {
-            self.plugin_config_id = None;
-            self.plugin_config_open = false;
+        if self.windows.plugin_config_id == Some(removed_id) {
+            self.windows.plugin_config_id = None;
+            self.windows.plugin_config_open = false;
         }
-        self.plotters.remove(&removed_id);
+        self.plotter_manager.plotters.remove(&removed_id);
         
-        self.workspace.plugins.remove(plugin_index);
-        self.workspace
+        self.workspace_manager.workspace.plugins.remove(plugin_index);
+        self.workspace_manager.workspace
             .connections
             .retain(|conn| conn.from_plugin != removed_id && conn.to_plugin != removed_id);
-        let ids: Vec<u64> = self.workspace.plugins.iter().map(|p| p.id).collect();
+        let ids: Vec<u64> = self.workspace_manager.workspace.plugins.iter().map(|p| p.id).collect();
         for id in ids {
             self.sync_extendable_input_count(id);
         }
@@ -1381,20 +1170,20 @@ impl GuiApp {
     }
 
     fn restart_plugin(&mut self, plugin_id: u64) {
-        let _ = self.logic_tx.send(LogicMessage::RestartPlugin(plugin_id));
+        let _ = self.state_sync.logic_tx.send(LogicMessage::RestartPlugin(plugin_id));
     }
 
     fn add_connection(&mut self) {
-        if self.connection_from_idx == self.connection_to_idx {
+        if self.connection_editor.from_idx == self.connection_editor.to_idx {
             self.show_info("Connections", "Cannot connect a plugin to itself");
             return;
         }
-        if self.workspace.plugins.len() < 2 {
+        if self.workspace_manager.workspace.plugins.len() < 2 {
             self.status = "Add at least two plugins before connecting".to_string();
             return;
         }
 
-        let from_plugin = match self.workspace.plugins.get(self.connection_from_idx) {
+        let from_plugin = match self.workspace_manager.workspace.plugins.get(self.connection_editor.from_idx) {
             Some(plugin) => plugin.id,
             None => {
                 self.status = "Invalid source plugin".to_string();
@@ -1402,7 +1191,7 @@ impl GuiApp {
             }
         };
 
-        let to_plugin = match self.workspace.plugins.get(self.connection_to_idx) {
+        let to_plugin = match self.workspace_manager.workspace.plugins.get(self.connection_editor.to_idx) {
             Some(plugin) => plugin.id,
             None => {
                 self.status = "Invalid target plugin".to_string();
@@ -1410,16 +1199,16 @@ impl GuiApp {
             }
         };
 
-        let from_port = self.connection_from_port.trim();
-        let to_port = self.connection_to_port.trim();
-        let kind = self.connection_kind.trim();
+        let from_port = self.connection_editor.from_port.trim();
+        let to_port = self.connection_editor.to_port.trim();
+        let kind = self.connection_editor.kind.trim();
 
         if from_port.is_empty() || to_port.is_empty() || kind.is_empty() {
             self.status = "Connection fields cannot be empty".to_string();
             return;
         }
         let mut to_port_string = to_port.to_string();
-        if let Some(target) = self.workspace.plugins.iter().find(|p| p.id == to_plugin) {
+        if let Some(target) = self.workspace_manager.workspace.plugins.iter().find(|p| p.id == to_plugin) {
             if self.is_extendable_inputs(&target.kind) && to_port_string == "in" {
                 let next_idx = self.next_available_extendable_input_index(to_plugin);
                 to_port_string = format!("in_{next_idx}");
@@ -1437,7 +1226,7 @@ impl GuiApp {
             to_port: to_port_string,
             kind: kind.to_string(),
         };
-        if let Err(err) = workspace_add_connection(&mut self.workspace.connections, connection, 1) {
+        if let Err(err) = workspace_add_connection(&mut self.workspace_manager.workspace.connections, connection, 1) {
             let message = match err {
                 ConnectionRuleError::SelfConnection => "Cannot connect a plugin to itself.",
                 ConnectionRuleError::InputLimitExceeded => "Input already has a connection.",
@@ -1449,7 +1238,7 @@ impl GuiApp {
             return;
         }
         if let Some(idx) = input_idx {
-            if let Some(target) = self.workspace.plugins.iter().find(|p| p.id == to_plugin) {
+            if let Some(target) = self.workspace_manager.workspace.plugins.iter().find(|p| p.id == to_plugin) {
                 if self.is_extendable_inputs(&target.kind) {
                     self.ensure_extendable_input_count(to_plugin, idx + 1);
                 }
@@ -1457,7 +1246,7 @@ impl GuiApp {
         }
         if let (Some(idx), Some(default_name)) = (input_idx, default_column) {
             if let Some(plugin) = self
-                .workspace
+            .workspace_manager.workspace
                 .plugins
                 .iter_mut()
                 .find(|p| p.id == to_plugin)
@@ -1513,7 +1302,7 @@ impl GuiApp {
             return;
         }
         let mut to_port_string = to_port.clone();
-        if let Some(target) = self.workspace.plugins.iter().find(|p| p.id == to_plugin) {
+        if let Some(target) = self.workspace_manager.workspace.plugins.iter().find(|p| p.id == to_plugin) {
             if self.is_extendable_inputs(&target.kind) && to_port_string == "in" {
                 let next_idx = self.next_available_extendable_input_index(to_plugin);
                 to_port_string = format!("in_{next_idx}");
@@ -1530,7 +1319,7 @@ impl GuiApp {
             to_port: to_port_string,
             kind,
         };
-        if let Err(err) = workspace_add_connection(&mut self.workspace.connections, connection, 1) {
+        if let Err(err) = workspace_add_connection(&mut self.workspace_manager.workspace.connections, connection, 1) {
             let message = match err {
                 ConnectionRuleError::SelfConnection => "Cannot connect a plugin to itself.",
                 ConnectionRuleError::InputLimitExceeded => "Input already has a connection.",
@@ -1542,13 +1331,13 @@ impl GuiApp {
             return;
         }
         if let (Some(idx), Some(default_name)) = (input_idx, default_column) {
-            if let Some(plugin) = self.workspace.plugins.iter().find(|p| p.id == to_plugin) {
+            if let Some(plugin) = self.workspace_manager.workspace.plugins.iter().find(|p| p.id == to_plugin) {
                 if self.is_extendable_inputs(&plugin.kind) {
                     self.ensure_extendable_input_count(to_plugin, idx + 1);
                 }
             }
             if let Some(plugin) = self
-                .workspace
+            .workspace_manager.workspace
                 .plugins
                 .iter_mut()
                 .find(|p| p.id == to_plugin)
@@ -1587,23 +1376,21 @@ impl GuiApp {
     }
 
     fn load_workspace(&mut self) {
-        if self.workspace_path.as_os_str().is_empty() {
+        if self.workspace_manager.workspace_path.as_os_str().is_empty() {
             self.show_info("Workspace", "Workspace path is required");
             return;
         }
 
-        match WorkspaceDefinition::load_from_file(&self.workspace_path) {
-            Ok(workspace) => {
-                let name = workspace.name.clone();
-                self.workspace = workspace;
+        match self.workspace_manager.load_workspace(&self.workspace_manager.workspace_path.clone()) {
+            Ok(()) => {
+                let name = self.workspace_manager.workspace.name.clone();
                 self.refresh_installed_library_paths();
                 self.inject_library_paths_into_workspace();
                 self.apply_loads_started_on_load();
                 self.enforce_connection_dependent();
                 self.apply_workspace_settings();
                 self.sync_next_plugin_id();
-                self.available_plugin_ids.clear();
-                self.mark_workspace_dirty();
+                self.plugin_manager.available_plugin_ids.clear();
                 self.show_info("Workspace", &format!("Workspace '{}' loaded", name));
             }
             Err(err) => {
@@ -1613,93 +1400,65 @@ impl GuiApp {
     }
 
     fn scan_workspaces(&mut self) {
-        self.workspace_entries = scan_workspace_entries(&self.workspace_dir);
+        self.workspace_manager.scan_workspaces();
     }
 
     fn workspace_file_path(&self, name: &str) -> PathBuf {
-        workspace_file_path(&self.workspace_dir, name)
+        self.workspace_manager.workspace_file_path(name)
     }
 
     fn create_workspace_from_dialog(&mut self) -> bool {
-        let name = self.workspace_name_input.trim();
+        let name = self.workspace_dialog.name_input.trim();
         if name.is_empty() {
             self.show_info("Workspace", "Workspace name is required");
             return false;
         }
-        let path = self.workspace_file_path(name);
-        let _ = fs::create_dir_all(&self.workspace_dir);
-        if path.exists() {
-            let workspace = WorkspaceDefinition {
-                name: name.to_string(),
-                description: self.workspace_description_input.trim().to_string(),
-                target_hz: 1000,
-                plugins: Vec::new(),
-                connections: Vec::new(),
-                settings: self.current_workspace_settings(),
-            };
-            self.show_confirm(
-                "Overwrite workspace",
-                "Workspace already exists. Override it?",
-                "Overwrite",
-                ConfirmAction::OverwriteWorkspace(path, workspace),
-            );
+        
+        if let Err(e) = self.workspace_manager.create_workspace(name, self.workspace_dialog.description_input.trim()) {
+            self.show_info("Workspace Error", &e);
             return false;
         }
-        let workspace = WorkspaceDefinition {
-            name: name.to_string(),
-            description: self.workspace_description_input.trim().to_string(),
-            target_hz: 1000,
-            plugins: Vec::new(),
-            connections: Vec::new(),
-            settings: self.current_workspace_settings(),
-        };
-        self.workspace_path = path.clone();
-        self.workspace = workspace;
-        self.next_plugin_id = 1;
-        self.available_plugin_ids.clear();
-        let _ = self.workspace.save_to_file(&path);
+        
+        self.plugin_manager.next_plugin_id = 1;
+        self.plugin_manager.available_plugin_ids.clear();
         self.show_info("Workspace", "Workspace created");
         self.scan_workspaces();
-        self.mark_workspace_dirty();
         true
     }
 
     fn save_workspace_as(&mut self) -> bool {
-        let name = self.workspace_name_input.trim();
+        let name = self.workspace_dialog.name_input.trim();
         if name.is_empty() {
             self.show_info("Workspace", "Workspace name is required");
             return false;
         }
-        let path = self.workspace_file_path(name);
-        let _ = fs::create_dir_all(&self.workspace_dir);
-        let existed = path.is_file();
-        self.workspace.name = name.to_string();
-        self.workspace.description = self.workspace_description_input.trim().to_string();
-        self.workspace.settings = self.current_workspace_settings();
-        self.workspace_path = path.clone();
-        let _ = self.workspace.save_to_file(&path);
-        if existed {
-            self.show_info("Workspace", "Workspace updated");
-        } else {
-            self.show_info("Workspace", "Workspace created");
+        
+        if let Err(e) = self.workspace_manager.save_workspace_as(name, self.workspace_dialog.description_input.trim()) {
+            self.show_info("Workspace Error", &e);
+            return false;
         }
+        
+        self.show_info("Workspace", "Workspace saved");
         self.scan_workspaces();
         true
     }
 
     fn save_workspace_overwrite_current(&mut self) {
-        if self.workspace_path.as_os_str().is_empty() {
+        if self.workspace_manager.workspace_path.as_os_str().is_empty() {
             self.open_workspace_dialog(WorkspaceDialogMode::Save);
             return;
         }
-        self.workspace.settings = self.current_workspace_settings();
-        let _ = self.workspace.save_to_file(&self.workspace_path);
+        self.workspace_manager.workspace.settings = self.current_workspace_settings();
+        if let Err(e) = self.workspace_manager.save_workspace_overwrite_current() {
+            self.show_info("Workspace Error", &e);
+            return;
+        }
         self.show_info("Workspace", "Workspace updated");
         self.scan_workspaces();
     }
 
     fn update_workspace_metadata(&mut self, path: &Path) -> bool {
-        let name = self.workspace_name_input.trim();
+        let name = self.workspace_dialog.name_input.trim();
         if name.is_empty() {
             self.show_info("Workspace", "Workspace name is required");
             return false;
@@ -1709,7 +1468,7 @@ impl GuiApp {
         if let Ok(data) = fs::read(path) {
             if let Ok(mut workspace) = serde_json::from_slice::<WorkspaceDefinition>(&data) {
                 workspace.name = name.to_string();
-                workspace.description = self.workspace_description_input.trim().to_string();
+                workspace.description = self.workspace_dialog.description_input.trim().to_string();
                 let _ = workspace.save_to_file(&new_path);
                 if new_path != path {
                     let _ = fs::remove_file(path);
@@ -1723,7 +1482,7 @@ impl GuiApp {
     }
 
     fn export_workspace_path(&mut self, source: &Path) {
-        if self.export_dialog_rx.is_some() {
+        if self.file_dialogs.export_dialog_rx.is_some() {
             self.show_info("Workspace", "Dialog already open");
             return;
         }
@@ -1733,7 +1492,7 @@ impl GuiApp {
             Err(_) => String::new(),
         };
         let (tx, rx) = mpsc::channel();
-        self.export_dialog_rx = Some(rx);
+        self.file_dialogs.export_dialog_rx = Some(rx);
         spawn_file_dialog_thread(move || {
             let dest = if has_rt_capabilities() {
                 let filename = if !workspace_name.is_empty() {
@@ -1754,71 +1513,27 @@ impl GuiApp {
     }
 
     fn import_workspace_from_path(&mut self, path: &Path) {
-        if let Ok(data) = fs::read(path) {
-            if let Ok(workspace) = serde_json::from_slice::<WorkspaceDefinition>(&data) {
-                let dest = self.workspace_file_path(&workspace.name);
-                let _ = fs::write(dest, data);
+        match self.workspace_manager.import_workspace(path) {
+            Ok(()) => {
                 self.show_info("Workspace", "Workspace imported");
                 self.scan_workspaces();
+            }
+            Err(e) => {
+                self.show_info("Workspace Error", &e);
             }
         }
     }
 
     fn load_installed_plugins(&mut self) {
-        self.installed_plugins.clear();
-        self.load_bundled_plugins();
-
-        let data = match fs::read_to_string(&self.install_db_path) {
-            Ok(content) => content,
-            Err(_) => return,
-        };
-
-        let entries: Vec<String> = match serde_json::from_str(&data) {
-            Ok(value) => value,
-            Err(err) => {
-                self.status = format!("Failed to read plugin registry: {err}");
-                return;
-            }
-        };
-
-        for entry in entries {
-            self.install_plugin_from_folder(entry, true, false);
-        }
-    }
-
-    fn load_bundled_plugins(&mut self) {
-        let app_plugins_dir = PathBuf::from("app_plugins");
-        if let Ok(entries) = fs::read_dir(&app_plugins_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() && path.join("plugin.toml").is_file() {
-                    self.install_plugin_from_folder(path, false, false);
-                }
-            }
-        }
+        self.plugin_manager.load_installed_plugins();
     }
 
     fn persist_installed_plugins(&mut self) {
-        let _ = fs::create_dir_all(
-            self.install_db_path
-                .parent()
-                .unwrap_or_else(|| Path::new("app_plugins")),
-        );
-
-        let user_entries: Vec<String> = self
-            .installed_plugins
-            .iter()
-            .filter(|plugin| plugin.removable)
-            .map(|plugin| plugin.path.to_string_lossy().to_string())
-            .collect();
-
-        if let Ok(data) = serde_json::to_string_pretty(&user_entries) {
-            let _ = fs::write(&self.install_db_path, data);
-        }
+        self.plugin_manager.persist_installed_plugins();
     }
 
     fn display_kind(kind: &str) -> String {
-        kind.replace('_', " ")
+        PluginManager::display_kind(kind)
     }
 
     fn show_info(&mut self, title: &str, message: &str) {
@@ -1841,18 +1556,18 @@ impl GuiApp {
         action_label: &str,
         action: ConfirmAction,
     ) {
-        self.confirm_dialog_title = title.to_string();
-        self.confirm_dialog_message = message.to_string();
-        self.confirm_dialog_action_label = action_label.to_string();
-        self.confirm_action = Some(action);
-        self.confirm_dialog_open = true;
+        self.confirm_dialog.title = title.to_string();
+        self.confirm_dialog.message = message.to_string();
+        self.confirm_dialog.action_label = action_label.to_string();
+        self.confirm_dialog.action = Some(action);
+        self.confirm_dialog.open = true;
     }
 
     fn perform_confirm_action(&mut self, action: ConfirmAction) {
         match action {
             ConfirmAction::RemovePlugin(plugin_id) => {
                 if let Some(index) = self
-                    .workspace
+            .workspace_manager.workspace
                     .plugins
                     .iter()
                     .position(|plugin| plugin.id == plugin_id)
@@ -1868,20 +1583,13 @@ impl GuiApp {
                 self.scan_workspaces();
                 self.show_info("Workspace", "Workspace deleted");
             }
-            ConfirmAction::OverwriteWorkspace(path, workspace) => {
-                let _ = workspace.save_to_file(&path);
-                self.workspace = workspace;
-                self.workspace_path = path;
-                self.scan_workspaces();
-                self.show_info("Workspace", "Workspace updated");
-            }
         }
     }
 
     fn poll_logic_state(&mut self) {
         let mut latest: Option<LogicState> = None;
         let mut merged_samples: HashMap<u64, Vec<(u64, Vec<f64>)>> = HashMap::new();
-        while let Ok(state) = self.logic_state_rx.try_recv() {
+        while let Ok(state) = self.state_sync.logic_state_rx.try_recv() {
             for (plugin_id, samples) in &state.plotter_samples {
                 let entry = merged_samples.entry(*plugin_id).or_default();
                 entry.extend(samples.iter().cloned());
@@ -1900,9 +1608,9 @@ impl GuiApp {
             } else {
                 Duration::from_secs(1)
             };
-            if self.last_output_update.elapsed() >= output_interval {
+            if self.state_sync.last_output_update.elapsed() >= output_interval {
                 // Filter out outputs from stopped plugins
-                let running_plugins: std::collections::HashSet<u64> = self.workspace.plugins
+                let running_plugins: std::collections::HashSet<u64> = self.workspace_manager.workspace.plugins
                     .iter()
                     .filter(|p| p.running)
                     .map(|p| p.id)
@@ -1921,17 +1629,17 @@ impl GuiApp {
                     .filter(|((id, _), _)| running_plugins.contains(id))
                     .collect();
                 
-                self.computed_outputs = filtered_outputs;
-                self.input_values = filtered_inputs;
-                self.internal_variable_values = filtered_internals;
-                self.viewer_values = viewer_values;
-                self.last_output_update = Instant::now();
+                self.state_sync.computed_outputs = filtered_outputs;
+                self.state_sync.input_values = filtered_inputs;
+                self.state_sync.internal_variable_values = filtered_internals;
+                self.state_sync.viewer_values = viewer_values;
+                self.state_sync.last_output_update = Instant::now();
             }
         }
     }
 
     fn ports_for_kind(&self, kind: &str, inputs: bool) -> Vec<String> {
-        self.installed_plugins
+        self.plugin_manager.installed_plugins
             .iter()
             .find(|plugin| plugin.manifest.kind == kind)
             .map(|plugin| {
@@ -1945,14 +1653,14 @@ impl GuiApp {
     }
 
     fn is_extendable_inputs(&self, kind: &str) -> bool {
-        if let Some(cached) = self.plugin_behaviors.get(kind) {
+        if let Some(cached) = self.plugin_manager.plugin_behaviors.get(kind) {
             return matches!(cached.extendable_inputs, rtsyn_plugin::ui::ExtendableInputs::Auto { .. } | rtsyn_plugin::ui::ExtendableInputs::Manual);
         }
         false
     }
 
     fn auto_extend_inputs(&self, kind: &str) -> bool {
-        if let Some(cached) = self.plugin_behaviors.get(kind) {
+        if let Some(cached) = self.plugin_manager.plugin_behaviors.get(kind) {
             return matches!(cached.extendable_inputs, rtsyn_plugin::ui::ExtendableInputs::Auto { .. });
         }
         false
@@ -1960,27 +1668,27 @@ impl GuiApp {
     
 
     fn ensure_plugin_behavior_cached_with_path(&mut self, kind: &str, library_path: Option<&PathBuf>) {
-        if self.plugin_behaviors.contains_key(kind) {
+        if self.plugin_manager.plugin_behaviors.contains_key(kind) {
             return;
         }
         
         let (tx, rx) = std::sync::mpsc::channel();
         let path_str = library_path.map(|p| p.to_string_lossy().to_string());
-        let _ = self.logic_tx.send(LogicMessage::QueryPluginBehavior(kind.to_string(), path_str, tx));
+        let _ = self.state_sync.logic_tx.send(LogicMessage::QueryPluginBehavior(kind.to_string(), path_str, tx));
         if let Ok(Some(behavior)) = rx.recv_timeout(std::time::Duration::from_millis(100)) {
-            self.plugin_behaviors.insert(kind.to_string(), behavior);
+            self.plugin_manager.plugin_behaviors.insert(kind.to_string(), behavior);
         }
     }
 
     fn ensure_plugin_behavior_cached(&mut self, kind: &str) {
-        if self.plugin_behaviors.contains_key(kind) {
+        if self.plugin_manager.plugin_behaviors.contains_key(kind) {
             return;
         }
         
         let (tx, rx) = std::sync::mpsc::channel();
-        let _ = self.logic_tx.send(LogicMessage::QueryPluginBehavior(kind.to_string(), None, tx));
+        let _ = self.state_sync.logic_tx.send(LogicMessage::QueryPluginBehavior(kind.to_string(), None, tx));
         if let Ok(Some(behavior)) = rx.recv_timeout(std::time::Duration::from_millis(100)) {
-            self.plugin_behaviors.insert(kind.to_string(), behavior);
+            self.plugin_manager.plugin_behaviors.insert(kind.to_string(), behavior);
         }
     }
 
@@ -1995,7 +1703,7 @@ impl GuiApp {
 
     fn next_available_extendable_input_index(&self, plugin_id: u64) -> usize {
         let mut used: HashSet<usize> = HashSet::new();
-        for connection in &self.workspace.connections {
+        for connection in &self.workspace_manager.workspace.connections {
             if connection.to_plugin == plugin_id {
                 if let Some(idx) = Self::extendable_input_index(&connection.to_port) {
                     used.insert(idx);
@@ -2015,7 +1723,7 @@ impl GuiApp {
         include_placeholder: bool,
     ) -> Vec<String> {
         let mut entries: Vec<(usize, String)> = self
-            .workspace
+            .workspace_manager.workspace
             .connections
             .iter()
             .filter(|conn| conn.to_plugin == plugin_id)
@@ -2043,7 +1751,7 @@ impl GuiApp {
 
     fn remove_extendable_input_at(&mut self, plugin_id: u64, remove_idx: usize) {
         let plugin_index = match self
-            .workspace
+            .workspace_manager.workspace
             .plugins
             .iter()
             .position(|p| p.id == plugin_id)
@@ -2051,13 +1759,13 @@ impl GuiApp {
             Some(idx) => idx,
             None => return,
         };
-        let kind = self.workspace.plugins[plugin_index].kind.clone();
+        let kind = self.workspace_manager.workspace.plugins[plugin_index].kind.clone();
         if !self.is_extendable_inputs(&kind) {
             return;
         }
 
         let (current_count, mut columns, is_csv) = {
-            let plugin = &self.workspace.plugins[plugin_index];
+            let plugin = &self.workspace_manager.workspace.plugins[plugin_index];
             let mut input_count = plugin
                 .config
                 .get("input_count")
@@ -2081,7 +1789,7 @@ impl GuiApp {
                 }
             }
             let mut max_idx: Option<usize> = None;
-            for conn in &self.workspace.connections {
+            for conn in &self.workspace_manager.workspace.connections {
                 if conn.to_plugin != plugin_id {
                     continue;
                 }
@@ -2099,14 +1807,14 @@ impl GuiApp {
             return;
         }
 
-        remove_extendable_input(&mut self.workspace.connections, plugin_id, remove_idx);
+        remove_extendable_input(&mut self.workspace_manager.workspace.connections, plugin_id, remove_idx);
         let new_count = current_count.saturating_sub(1);
 
-        let map = match self.workspace.plugins[plugin_index].config {
+        let map = match self.workspace_manager.workspace.plugins[plugin_index].config {
             Value::Object(ref mut map) => map,
             _ => {
-                self.workspace.plugins[plugin_index].config = Value::Object(serde_json::Map::new());
-                match self.workspace.plugins[plugin_index].config {
+                self.workspace_manager.workspace.plugins[plugin_index].config = Value::Object(serde_json::Map::new());
+                match self.workspace_manager.workspace.plugins[plugin_index].config {
                     Value::Object(ref mut map) => map,
                     _ => return,
                 }
@@ -2137,7 +1845,7 @@ impl GuiApp {
 
     fn reindex_extendable_inputs(&mut self, plugin_id: u64) {
         let kind = match self
-            .workspace
+            .workspace_manager.workspace
             .plugins
             .iter()
             .find(|p| p.id == plugin_id)
@@ -2151,7 +1859,7 @@ impl GuiApp {
         }
 
         let mut entries: Vec<(usize, usize)> = self
-            .workspace
+            .workspace_manager.workspace
             .connections
             .iter()
             .enumerate()
@@ -2163,13 +1871,13 @@ impl GuiApp {
         entries.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
 
         for (new_idx, (conn_idx, _)) in entries.iter().enumerate() {
-            if let Some(conn) = self.workspace.connections.get_mut(*conn_idx) {
+            if let Some(conn) = self.workspace_manager.workspace.connections.get_mut(*conn_idx) {
                 conn.to_port = format!("in_{new_idx}");
             }
         }
 
         let Some(plugin) = self
-            .workspace
+            .workspace_manager.workspace
             .plugins
             .iter_mut()
             .find(|p| p.id == plugin_id)
@@ -2214,7 +1922,7 @@ impl GuiApp {
     fn remove_connection_with_input(&mut self, connection: ConnectionDefinition) {
         if Self::extendable_input_index(&connection.to_port).is_some() {
             let target_kind = self
-                .workspace
+            .workspace_manager.workspace
                 .plugins
                 .iter()
                 .find(|p| p.id == connection.to_plugin)
@@ -2228,7 +1936,7 @@ impl GuiApp {
                             && left.to_port == right.to_port
                             && left.kind == right.kind
                     };
-                    self.workspace
+                    self.workspace_manager.workspace
                         .connections
                         .retain(|conn| !matches(conn, &connection));
                     self.reindex_extendable_inputs(connection.to_plugin);
@@ -2248,7 +1956,7 @@ impl GuiApp {
                 && left.to_port == right.to_port
                 && left.kind == right.kind
         };
-        self.workspace
+        self.workspace_manager.workspace
             .connections
             .retain(|conn| !matches(conn, &connection));
         self.mark_workspace_dirty();
@@ -2268,12 +1976,12 @@ impl GuiApp {
         dependent_by_kind.insert("comedi_daq".to_string(), true);
         
         let incoming: HashSet<u64> = self
-            .workspace
+            .workspace_manager.workspace
             .connections
             .iter()
             .map(|conn| conn.to_plugin)
             .collect();
-        for plugin in &mut self.workspace.plugins {
+        for plugin in &mut self.workspace_manager.workspace.plugins {
             if !dependent_by_kind
                 .get(&plugin.kind)
                 .copied()
@@ -2285,7 +1993,7 @@ impl GuiApp {
                 continue;
             }
             if plugin.kind == "live_plotter" {
-                if let Some(plotter) = self.plotters.get(&plugin.id) {
+                if let Some(plotter) = self.plotter_manager.plotters.get(&plugin.id) {
                     if let Ok(mut plotter) = plotter.lock() {
                         if plotter.open {
                             plotter.open = false;
@@ -2301,7 +2009,7 @@ impl GuiApp {
         }
         for id in stopped {
             let _ = self
-                .logic_tx
+            .state_sync.logic_tx
                 .send(LogicMessage::SetPluginRunning(id, false));
         }
         if plotter_closed {
@@ -2311,7 +2019,7 @@ impl GuiApp {
 
     fn ensure_extendable_input_count(&mut self, plugin_id: u64, required_count: usize) {
         let kind = self
-            .workspace
+            .workspace_manager.workspace
             .plugins
             .iter()
             .find(|p| p.id == plugin_id)
@@ -2323,7 +2031,7 @@ impl GuiApp {
             return;
         }
         let Some(plugin) = self
-            .workspace
+            .workspace_manager.workspace
             .plugins
             .iter_mut()
             .find(|p| p.id == plugin_id)
@@ -2368,7 +2076,7 @@ impl GuiApp {
 
     fn sync_extendable_input_count(&mut self, plugin_id: u64) {
         let kind = self
-            .workspace
+            .workspace_manager.workspace
             .plugins
             .iter()
             .find(|p| p.id == plugin_id)
@@ -2380,7 +2088,7 @@ impl GuiApp {
             return;
         }
         let Some(plugin) = self
-            .workspace
+            .workspace_manager.workspace
             .plugins
             .iter_mut()
             .find(|p| p.id == plugin_id)
@@ -2388,7 +2096,7 @@ impl GuiApp {
             return;
         };
         let mut max_idx: Option<usize> = None;
-        for conn in &self.workspace.connections {
+        for conn in &self.workspace_manager.workspace.connections {
             if conn.to_plugin != plugin_id {
                 continue;
             }
@@ -2438,7 +2146,7 @@ impl GuiApp {
     }
 
     fn ports_for_plugin(&self, plugin_id: u64, inputs: bool) -> Vec<String> {
-        let Some(plugin) = self.workspace.plugins.iter().find(|p| p.id == plugin_id) else {
+        let Some(plugin) = self.workspace_manager.workspace.plugins.iter().find(|p| p.id == plugin_id) else {
             return Vec::new();
         };
         let extendable_inputs = self.is_extendable_inputs(&plugin.kind);
@@ -2468,11 +2176,11 @@ impl GuiApp {
 
     fn plugin_display_name(&self, plugin_id: u64) -> String {
         let name_by_kind: HashMap<String, String> = self
-            .installed_plugins
+            .plugin_manager.installed_plugins
             .iter()
             .map(|plugin| (plugin.manifest.kind.clone(), plugin.manifest.name.clone()))
             .collect();
-        self.workspace
+        self.workspace_manager.workspace
             .plugins
             .iter()
             .find(|plugin| plugin.id == plugin_id)
@@ -2488,7 +2196,7 @@ impl GuiApp {
     fn default_csv_column(&self, recorder_id: u64, input_idx: usize) -> String {
         let port = format!("in_{input_idx}");
         if let Some(conn) = self
-            .workspace
+            .workspace_manager.workspace
             .connections
             .iter()
             .find(|conn| conn.to_plugin == recorder_id && conn.to_port == port)
@@ -2558,7 +2266,7 @@ impl GuiApp {
         for idx in 0..input_count {
             let port = format!("in_{idx}");
             if let Some(conn) = self
-                .workspace
+            .workspace_manager.workspace
                 .connections
                 .iter()
                 .find(|conn| conn.to_plugin == plotter_id && conn.to_port == port)
@@ -2583,9 +2291,9 @@ impl GuiApp {
             let port = format!("in_{idx}");
             let value = if idx == 0 {
                 let ports = vec![port.clone(), "in".to_string()];
-                input_sum_any(&self.workspace.connections, outputs, plotter_id, &ports)
+                input_sum_any(&self.workspace_manager.workspace.connections, outputs, plotter_id, &ports)
             } else {
-                input_sum(&self.workspace.connections, outputs, plotter_id, &port)
+                input_sum(&self.workspace_manager.workspace.connections, outputs, plotter_id, &port)
             };
             values.push(value);
         }
@@ -2599,10 +2307,10 @@ impl GuiApp {
         samples: &HashMap<u64, Vec<(u64, Vec<f64>)>>,
     ) {
         let mut max_refresh = 1.0;
-        let time_s = tick as f64 * self.logic_period_seconds.max(0.0);
+        let time_s = tick as f64 * self.state_sync.logic_period_seconds.max(0.0);
         let mut live_plotter_ids: HashSet<u64> = HashSet::new();
 
-        for plugin in &self.workspace.plugins {
+        for plugin in &self.workspace_manager.workspace.plugins {
             if plugin.kind != "live_plotter" {
                 continue;
             }
@@ -2611,7 +2319,7 @@ impl GuiApp {
                 self.plotter_config_from_value(&plugin.config);
             let series_names = self.plotter_series_names(plugin.id, input_count);
             let is_open = self
-                .plotters
+            .plotter_manager.plotters
                 .get(&plugin.id)
                 .and_then(|plotter| plotter.lock().ok().map(|plotter| plotter.open))
                 .unwrap_or(false);
@@ -2621,7 +2329,7 @@ impl GuiApp {
                 Vec::new()
             };
             let plotter = self
-                .plotters
+            .plotter_manager.plotters
                 .entry(plugin.id)
                 .or_insert_with(|| Arc::new(Mutex::new(LivePlotter::new(plugin.id))));
             if let Ok(mut plotter) = plotter.lock() {
@@ -2630,23 +2338,23 @@ impl GuiApp {
                     refresh_hz,
                     window_ms,
                     amplitude,
-                    self.logic_period_seconds,
+                    self.state_sync.logic_period_seconds,
                 );
                 plotter.set_series_names(series_names);
                 if plotter.open && plugin.running {
                     if let Some(samples) = samples.get(&plugin.id) {
                         for (sample_tick, values) in samples {
                             let sample_time_s =
-                                *sample_tick as f64 * self.logic_period_seconds.max(0.0);
+                                *sample_tick as f64 * self.state_sync.logic_period_seconds.max(0.0);
                             plotter.push_sample(
                                 *sample_tick,
                                 sample_time_s,
-                                self.logic_time_scale,
+                                self.state_sync.logic_time_scale,
                                 values,
                             );
                         }
                     } else {
-                        plotter.push_sample(tick, time_s, self.logic_time_scale, &values);
+                        plotter.push_sample(tick, time_s, self.state_sync.logic_time_scale, &values);
                     }
                     if refresh_hz > max_refresh {
                         max_refresh = refresh_hz;
@@ -2655,22 +2363,22 @@ impl GuiApp {
             }
         }
 
-        self.plotters
+        self.plotter_manager.plotters
             .retain(|plugin_id, _| live_plotter_ids.contains(plugin_id));
         self.refresh_logic_ui_hz(max_refresh);
     }
 
     fn refresh_logic_ui_hz(&mut self, max_refresh: f64) {
         let target_hz = if max_refresh > 0.0 { max_refresh } else { 1.0 };
-        if (self.logic_ui_hz - target_hz).abs() > f64::EPSILON {
-            self.logic_ui_hz = target_hz;
+        if (self.state_sync.logic_ui_hz - target_hz).abs() > f64::EPSILON {
+            self.state_sync.logic_ui_hz = target_hz;
             self.send_logic_settings();
         }
     }
 
     fn recompute_plotter_ui_hz(&mut self) {
         let mut max_refresh = 1.0;
-        for plotter in self.plotters.values() {
+        for plotter in self.plotter_manager.plotters.values() {
             if let Ok(plotter) = plotter.lock() {
                 if plotter.open && plotter.refresh_hz > max_refresh {
                     max_refresh = plotter.refresh_hz;
@@ -2732,7 +2440,7 @@ impl GuiApp {
     fn send_logic_settings(&mut self) {
         let period_seconds = self.compute_period_seconds();
         let (_unit, time_scale, time_label) = Self::time_settings_from_selection(
-            self.workspace_settings_tab,
+            self.workspace_settings.tab,
             self.frequency_unit,
             self.period_unit,
         );
@@ -2742,23 +2450,23 @@ impl GuiApp {
             .enumerate()
             .filter_map(|(idx, enabled)| if *enabled { Some(idx) } else { None })
             .collect();
-        self.logic_period_seconds = period_seconds;
-        self.logic_time_scale = time_scale;
-        self.logic_time_label = time_label.clone();
+        self.state_sync.logic_period_seconds = period_seconds;
+        self.state_sync.logic_time_scale = time_scale;
+        self.state_sync.logic_time_label = time_label.clone();
         let _ = self
-            .logic_tx
+            .state_sync.logic_tx
             .send(LogicMessage::UpdateSettings(LogicSettings {
                 cores,
                 period_seconds,
                 time_scale,
                 time_label,
-                ui_hz: self.logic_ui_hz,
+                ui_hz: self.state_sync.logic_ui_hz,
                 max_integration_steps: 10, // Default reasonable limit for real-time performance
             }));
     }
 
     fn current_workspace_settings(&self) -> WorkspaceSettings {
-        let timing_mode = match self.workspace_settings_tab {
+        let timing_mode = match self.workspace_settings.tab {
             WorkspaceTimingTab::Frequency => "frequency",
             WorkspaceTimingTab::Period => "period",
         };
@@ -2790,8 +2498,8 @@ impl GuiApp {
     }
 
     fn apply_workspace_settings(&mut self) {
-        let settings = self.workspace.settings.clone();
-        self.workspace_settings_tab = match settings.timing_mode.as_str() {
+        let settings = self.workspace_manager.workspace.settings.clone();
+        self.workspace_settings.tab = match settings.timing_mode.as_str() {
             "period" => WorkspaceTimingTab::Period,
             _ => WorkspaceTimingTab::Frequency,
         };
@@ -2820,7 +2528,7 @@ impl GuiApp {
 
     fn apply_loads_started_on_load(&mut self) {
         // All plugins start stopped by default (behavior.loads_started is queried at runtime if needed)
-        for plugin in &mut self.workspace.plugins {
+        for plugin in &mut self.workspace_manager.workspace.plugins {
             plugin.running = false;
         }
     }
@@ -2840,7 +2548,7 @@ impl eframe::App for GuiApp {
         self.poll_plotter_screenshot_dialog();
         self.poll_logic_state();
         let mut plotter_refresh = 0.0;
-        for plotter in self.plotters.values() {
+        for plotter in self.plotter_manager.plotters.values() {
             if let Ok(plotter) = plotter.lock() {
                 if plotter.open && plotter.refresh_hz > plotter_refresh {
                     plotter_refresh = plotter.refresh_hz;
@@ -2853,18 +2561,18 @@ impl eframe::App for GuiApp {
         } else if !ctx.input(|i| i.focused) {
             ctx.request_repaint_after(Duration::from_millis(250));
         }
-        if self.workspace_dirty {
+        if self.workspace_manager.workspace_dirty {
             let _ = self
-                .logic_tx
-                .send(LogicMessage::UpdateWorkspace(self.workspace.clone()));
-            self.workspace_dirty = false;
+            .state_sync.logic_tx
+                .send(LogicMessage::UpdateWorkspace(self.workspace_manager.workspace.clone()));
+            self.workspace_manager.workspace_dirty = false;
         }
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            if self.build_dialog_open && !self.build_dialog_in_progress {
-                self.build_dialog_open = false;
-            } else if self.confirm_dialog_open {
-                self.confirm_dialog_open = false;
-                self.confirm_action = None;
+            if self.build_dialog.open && !self.build_dialog.in_progress {
+                self.build_dialog.open = false;
+            } else if self.confirm_dialog.open {
+                self.confirm_dialog.open = false;
+                self.confirm_dialog.action = None;
             }
         }
         self.window_rects.clear();
@@ -2872,10 +2580,10 @@ impl eframe::App for GuiApp {
         egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 ui.menu_button("Workspace", |ui| {
-                    let label = if self.workspace_path.as_os_str().is_empty() {
+                    let label = if self.workspace_manager.workspace_path.as_os_str().is_empty() {
                         "No Workspace loaded".to_string()
                     } else {
-                        self.workspace.name.clone()
+                        self.workspace_manager.workspace.name.clone()
                     };
                     ui.add_enabled(
                         false,
@@ -2894,9 +2602,9 @@ impl eframe::App for GuiApp {
                         self.save_workspace_overwrite_current();
                         ui.close_menu();
                     }
-                    let has_workspace = !self.workspace_path.as_os_str().is_empty();
+                    let has_workspace = !self.workspace_manager.workspace_path.as_os_str().is_empty();
                     if ui.add_enabled(has_workspace, egui::Button::new("Export Workspace")).clicked() {
-                        self.export_workspace_path(&self.workspace_path.clone());
+                        self.export_workspace_path(&self.workspace_manager.workspace_path.clone());
                         ui.close_menu();
                     }
                     if ui.button("Manage Workspaces").clicked() {
@@ -2904,7 +2612,7 @@ impl eframe::App for GuiApp {
                         ui.close_menu();
                     }
                     if ui.button("Settings").clicked() {
-                        self.workspace_settings_open = true;
+                        self.workspace_settings.open = true;
                         self.pending_window_focus = Some(WindowFocus::WorkspaceSettings);
                         ui.close_menu();
                     }
@@ -2936,7 +2644,7 @@ impl eframe::App for GuiApp {
                         ui.close_menu();
                     }
                     if ui.button("Manage connections").clicked() {
-                        self.manage_connections_open = true;
+                        self.windows.manage_connections_open = true;
                         self.pending_window_focus = Some(WindowFocus::ManageConnections);
                         ui.close_menu();
                     }

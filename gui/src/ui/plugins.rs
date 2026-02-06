@@ -33,13 +33,13 @@ fn kv_row_wrapped(
 
 impl GuiApp {
     fn open_install_dialog(&mut self) {
-        if self.install_dialog_rx.is_some() {
+        if self.file_dialogs.install_dialog_rx.is_some() {
             self.status = "Plugin dialog already open".to_string();
             return;
         }
 
         let (tx, rx) = mpsc::channel();
-        self.install_dialog_rx = Some(rx);
+        self.file_dialogs.install_dialog_rx = Some(rx);
         self.status = "Opening plugin folder dialog...".to_string();
 
         crate::spawn_file_dialog_thread(move || {
@@ -53,12 +53,12 @@ impl GuiApp {
     }
 
     fn open_csv_path_dialog(&mut self, plugin_id: u64) {
-        if self.csv_path_dialog_rx.is_some() {
+        if self.file_dialogs.csv_path_dialog_rx.is_some() {
             self.show_info("CSV", "Dialog already open.");
             return;
         }
         let (tx, rx) = mpsc::channel();
-        self.csv_path_dialog_rx = Some(rx);
+        self.file_dialogs.csv_path_dialog_rx = Some(rx);
         self.csv_path_target_plugin_id = Some(plugin_id);
         crate::spawn_file_dialog_thread(move || {
             let file = if crate::has_rt_capabilities() {
@@ -71,45 +71,45 @@ impl GuiApp {
     }
 
     pub(crate) fn open_manage_plugins(&mut self) {
-        self.manage_plugins_open = true;
+        self.windows.manage_plugins_open = true;
         self.scan_detected_plugins();
         self.pending_window_focus = Some(WindowFocus::ManagePlugins);
     }
 
     pub(crate) fn open_plugins(&mut self) {
-        self.plugins_open = true;
-        self.plugin_selected_index = None;
-        self.organize_selected_index = None;
+        self.windows.plugins_open = true;
+        self.windows.plugin_selected_index = None;
+        self.windows.organize_selected_index = None;
         self.pending_window_focus = Some(WindowFocus::Plugins);
     }
 
     pub(crate) fn render_plugin_cards(&mut self, ctx: &egui::Context, panel_rect: egui::Rect) {
         let mut pending_info: Option<String> = None;
         let incoming_connections: HashSet<u64> = self
-            .workspace
+            .workspace_manager.workspace
             .connections
             .iter()
             .map(|conn| conn.to_plugin)
             .collect();
         let name_by_kind: HashMap<String, String> = self
-            .installed_plugins
+            .plugin_manager.installed_plugins
             .iter()
             .map(|plugin| (plugin.manifest.kind.clone(), plugin.manifest.name.clone()))
             .collect();
         let __manifest_by_kind: HashMap<String, PluginManifest> = self
-            .installed_plugins
+            .plugin_manager.installed_plugins
             .iter()
             .map(|plugin| (plugin.manifest.kind.clone(), plugin.manifest.clone()))
             .collect();
         let metadata_by_kind: HashMap<String, Vec<(String, f64)>> = self
-            .installed_plugins
+            .plugin_manager.installed_plugins
             .iter()
             .map(|plugin| (plugin.manifest.kind.clone(), plugin.metadata_variables.clone()))
             .collect();
-        let computed_outputs = self.computed_outputs.clone();
-        let input_values = self.input_values.clone();
-        let internal_variable_values = self.internal_variable_values.clone();
-        let viewer_values = self.viewer_values.clone();
+        let computed_outputs = self.state_sync.computed_outputs.clone();
+        let input_values = self.state_sync.input_values.clone();
+        let internal_variable_values = self.state_sync.internal_variable_values.clone();
+        let viewer_values = self.state_sync.viewer_values.clone();
         let mut remove_id: Option<u64> = None;
         let mut pending_running: Vec<(u64, bool)> = Vec::new();
         let mut pending_restart: Vec<u64> = Vec::new();
@@ -120,7 +120,7 @@ impl GuiApp {
         let mut workspace_changed = false;
         let mut recompute_plotter_needed = false;
         let right_down = ctx.input(|i| i.pointer.secondary_down());
-        for plugin in &mut self.workspace.plugins {
+        for plugin in &mut self.workspace_manager.workspace.plugins {
             let col = index % max_per_row;
             let row = index / max_per_row;
             let default_pos = panel_rect.min
@@ -132,13 +132,13 @@ impl GuiApp {
                 .unwrap_or(default_pos);
             let area_id = egui::Id::new(("plugin_window", plugin.id));
             let mut plugin_changed = false;
-            let current_id = self.connection_edit_plugin_id;
+            let current_id = self.connection_editor.plugin_id;
             let selected_id = self.connection_highlight_plugin_id;
-            let tab_primary = match self.connection_edit_tab {
+            let tab_primary = match self.connection_editor.tab {
                 ConnectionEditTab::Inputs => egui::Color32::from_rgb(255, 170, 80),
                 ConnectionEditTab::Outputs => egui::Color32::from_rgb(80, 200, 120),
             };
-            let tab_secondary = match self.connection_edit_tab {
+            let tab_secondary = match self.connection_editor.tab {
                 ConnectionEditTab::Inputs => egui::Color32::from_rgb(80, 200, 120),
                 ConnectionEditTab::Outputs => egui::Color32::from_rgb(255, 170, 80),
             };
@@ -452,7 +452,7 @@ impl GuiApp {
                                     }
                                 }
 
-                                        if let Some(installed) = self.installed_plugins.iter().find(|p| p.manifest.kind == plugin.kind) {
+                                        if let Some(installed) = self.plugin_manager.installed_plugins.iter().find(|p| p.manifest.kind == plugin.kind) {
                                             if let Some(schema) = &installed.display_schema {
                                                 // Internal Variables first
                                                 if !schema.variables.is_empty() {
@@ -590,7 +590,7 @@ impl GuiApp {
                             let mut controls_changed = false;
                             ui.horizontal(|ui| {
                                 let mut blocked_start = false;
-                                        let supports_start_stop = self.plugin_behaviors.get(&plugin.kind)
+                                        let supports_start_stop = self.plugin_manager.plugin_behaviors.get(&plugin.kind)
                                             .map(|b| b.supports_start_stop)
                                             .unwrap_or(true);  // Default to true
                                         if supports_start_stop {
@@ -637,7 +637,7 @@ impl GuiApp {
                                                     
                                                     // Auto-open plotter when starting live_plotter
                                                     if plugin.kind == "live_plotter" && plugin.running {
-                                                        let plotter = self.plotters.entry(plugin.id).or_insert_with(|| {
+                                                        let plotter = self.plotter_manager.plotters.entry(plugin.id).or_insert_with(|| {
                                                             Arc::new(Mutex::new(LivePlotter::new(plugin.id)))
                                                         });
                                                         if let Ok(mut plotter) = plotter.lock() {
@@ -652,7 +652,7 @@ impl GuiApp {
                                                 }
                                             }
                                         }
-                                        let supports_restart = self.plugin_behaviors.get(&plugin.kind)
+                                        let supports_restart = self.plugin_manager.plugin_behaviors.get(&plugin.kind)
                                             .map(|b| b.supports_restart)
                                             .unwrap_or(false);  // Default to false
                                         if supports_restart {
@@ -673,7 +673,7 @@ impl GuiApp {
                 .insert(plugin.id, response.response.rect.min);
             self.plugin_rects.insert(plugin.id, response.response.rect);
             if ctx.input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary)) {
-                if response.response.hovered() && !self.confirm_dialog_open {
+                if response.response.hovered() && !self.confirm_dialog.open {
                     // Toggle selection
                     if self.selected_plugin_id == Some(plugin.id) {
                         self.selected_plugin_id = None;
@@ -688,7 +688,7 @@ impl GuiApp {
             if ctx.input(|i| i.pointer.button_released(egui::PointerButton::Secondary)) {
                 if let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) {
                     if response.response.rect.contains(pos) && response.response.hovered() {
-                        if self.confirm_dialog_open {
+                        if self.confirm_dialog.open {
                             self.plugin_context_menu = None;
                         } else {
                             self.plugin_context_menu = Some((plugin.id, pos, ctx.frame_nr()));
@@ -703,19 +703,19 @@ impl GuiApp {
         }
         if pending_workspace_update {
             let _ = self
-                .logic_tx
-                .send(LogicMessage::UpdateWorkspace(self.workspace.clone()));
+            .state_sync.logic_tx
+                .send(LogicMessage::UpdateWorkspace(self.workspace_manager.workspace.clone()));
         }
         for (plugin_id, running) in pending_running {
             // Mark plugin as stopped BEFORE sending message to prevent one more update
             if !running {
-                if let Some(plugin) = self.workspace.plugins.iter_mut().find(|p| p.id == plugin_id) {
+                if let Some(plugin) = self.workspace_manager.workspace.plugins.iter_mut().find(|p| p.id == plugin_id) {
                     plugin.running = false;
                 }
             }
             
             let _ = self
-                .logic_tx
+            .state_sync.logic_tx
                 .send(LogicMessage::SetPluginRunning(plugin_id, running));
         }
         if recompute_plotter_needed {
@@ -730,12 +730,12 @@ impl GuiApp {
 
         if let Some(id) = remove_id {
             let name_by_kind: HashMap<String, String> = self
-                .installed_plugins
+            .plugin_manager.installed_plugins
                 .iter()
                 .map(|plugin| (plugin.manifest.kind.clone(), plugin.manifest.name.clone()))
                 .collect();
             let label = self
-                .workspace
+            .workspace_manager.workspace
                 .plugins
                 .iter()
                 .find(|plugin| plugin.id == id)
@@ -836,7 +836,7 @@ impl GuiApp {
 
     fn live_plotter_inputs_override(&self) -> Option<Vec<String>> {
         let plugin = self
-            .workspace
+            .workspace_manager.workspace
             .plugins
             .iter()
             .find(|p| p.kind == "live_plotter")?;
@@ -886,27 +886,27 @@ impl GuiApp {
     }
 
     pub(crate) fn render_plugins_window(&mut self, ctx: &egui::Context) {
-        if !self.plugins_open {
+        if !self.windows.plugins_open {
             return;
         }
 
         let name_by_kind: HashMap<String, String> = self
-            .installed_plugins
+            .plugin_manager.installed_plugins
             .iter()
             .map(|plugin| (plugin.manifest.kind.clone(), plugin.manifest.name.clone()))
             .collect();
         let __manifest_by_kind: HashMap<String, PluginManifest> = self
-            .installed_plugins
+            .plugin_manager.installed_plugins
             .iter()
             .map(|plugin| (plugin.manifest.kind.clone(), plugin.manifest.clone()))
             .collect();
         let metadata_by_kind: HashMap<String, Vec<(String, f64)>> = self
-            .installed_plugins
+            .plugin_manager.installed_plugins
             .iter()
             .map(|plugin| (plugin.manifest.kind.clone(), plugin.metadata_variables.clone()))
             .collect();
 
-        let mut window_open = self.plugins_open;
+        let mut window_open = self.windows.plugins_open;
         let window_size = egui::vec2(700.0, 420.0);
         let default_pos = Self::center_window(ctx, window_size);
         let response = egui::Window::new("Add plugins")
@@ -918,43 +918,43 @@ impl GuiApp {
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     if ui
-                        .selectable_label(matches!(self.plugin_tab, PluginTab::Add), "Add plugin")
+                        .selectable_label(matches!(self.windows.plugin_tab, PluginTab::Add), "Add plugin")
                         .clicked()
                     {
-                        self.plugin_tab = PluginTab::Add;
+                        self.windows.plugin_tab = PluginTab::Add;
                     }
                     if ui
-                        .selectable_label(matches!(self.plugin_tab, PluginTab::Organize), "Organize plugins")
+                        .selectable_label(matches!(self.windows.plugin_tab, PluginTab::Organize), "Organize plugins")
                         .clicked()
                     {
-                        self.plugin_tab = PluginTab::Organize;
+                        self.windows.plugin_tab = PluginTab::Organize;
                     }
                 });
                 ui.separator();
 
-                match self.plugin_tab {
+                match self.windows.plugin_tab {
                     PluginTab::Add => {
                         ui.columns(2, |columns| {
                             columns[0].label("Search");
-                            columns[0].text_edit_singleline(&mut self.plugin_search);
+                            columns[0].text_edit_singleline(&mut self.windows.plugin_search);
                             columns[0].add_space(6.0);
                             let mut selected: Option<usize> = None;
                             egui::ScrollArea::vertical()
                                 .id_source("organize_plugin_list")
                                 .max_height(220.0)
                                 .show(&mut columns[0], |ui| {
-                                    for (idx, installed) in self.installed_plugins.iter().enumerate() {
+                                    for (idx, installed) in self.plugin_manager.installed_plugins.iter().enumerate() {
                                         let label = installed.manifest.name.clone();
-                                        if !self.plugin_search.trim().is_empty()
+                                        if !self.windows.plugin_search.trim().is_empty()
                                             && !label
                                                 .to_lowercase()
-                                                .contains(&self.plugin_search.to_lowercase())
+                                                .contains(&self.windows.plugin_search.to_lowercase())
                                         {
                                             continue;
                                         }
                                         if ui
                                             .selectable_label(
-                                                self.plugin_selected_index == Some(idx),
+                                                self.windows.plugin_selected_index == Some(idx),
                                                 label,
                                             )
                                             .clicked()
@@ -964,11 +964,11 @@ impl GuiApp {
                                     }
                                 });
                             if let Some(idx) = selected {
-                                self.plugin_selected_index = Some(idx);
+                                self.windows.plugin_selected_index = Some(idx);
                             }
 
-                            if let Some(idx) = self.plugin_selected_index {
-                                if let Some(installed) = self.installed_plugins.get(idx) {
+                            if let Some(idx) = self.windows.plugin_selected_index {
+                                if let Some(installed) = self.plugin_manager.installed_plugins.get(idx) {
                                     let inputs_override = self.live_plotter_inputs_override();
                                     Self::render_plugin_preview(
                                         &mut columns[1],
@@ -977,7 +977,7 @@ impl GuiApp {
                                         &installed.manifest.kind,
                                         &serde_json::Value::Object(serde_json::Map::new()),
                                         false,
-                                        &self.installed_plugins,
+                                        &self.plugin_manager.installed_plugins,
                                     );
                                     if columns[1].button("Add to workspace").clicked() {
                                         self.add_installed_plugin(idx);
@@ -992,7 +992,7 @@ impl GuiApp {
                         let mut open_path_dialog: Option<u64> = None;
                         let mut pending_csv_prune: Option<(u64, usize)> = None;
                         let id_to_display: HashMap<u64, String> = self
-                            .workspace
+            .workspace_manager.workspace
                             .plugins
                             .iter()
                             .map(|plugin| {
@@ -1003,31 +1003,31 @@ impl GuiApp {
                                 (plugin.id, display_name)
                             })
                             .collect();
-                        let connections_snapshot = self.workspace.connections.clone();
+                        let connections_snapshot = self.workspace_manager.workspace.connections.clone();
                         ui.columns(2, |columns| {
                             columns[0].label("Search");
-                            columns[0].text_edit_singleline(&mut self.organize_search);
+                            columns[0].text_edit_singleline(&mut self.windows.organize_search);
                             columns[0].add_space(6.0);
                             let mut selected: Option<usize> = None;
                             egui::ScrollArea::vertical()
                                 .max_height(220.0)
                                 .show(&mut columns[0], |ui| {
-                                    for (idx, plugin) in self.workspace.plugins.iter().enumerate() {
+                                    for (idx, plugin) in self.workspace_manager.workspace.plugins.iter().enumerate() {
                                         let display_name = name_by_kind
                                             .get(&plugin.kind)
                                             .cloned()
                                             .unwrap_or_else(|| Self::display_kind(&plugin.kind));
                                         let label = format!("#{} {}", plugin.id, display_name);
-                                        if !self.organize_search.trim().is_empty()
+                                        if !self.windows.organize_search.trim().is_empty()
                                             && !label
                                                 .to_lowercase()
-                                                .contains(&self.organize_search.to_lowercase())
+                                                .contains(&self.windows.organize_search.to_lowercase())
                                         {
                                             continue;
                                         }
                                         if ui
                                             .selectable_label(
-                                                self.organize_selected_index == Some(idx),
+                                                self.windows.organize_selected_index == Some(idx),
                                                 label,
                                             )
                                             .clicked()
@@ -1037,13 +1037,13 @@ impl GuiApp {
                                     }
                                 });
                             if let Some(idx) = selected {
-                                self.organize_selected_index = Some(idx);
+                                self.windows.organize_selected_index = Some(idx);
                             }
 
                             columns[1].label("Edit");
-                            if let Some(idx) = self.organize_selected_index {
+                            if let Some(idx) = self.windows.organize_selected_index {
                                 let mut plugin_changed = false;
-                                if let Some(plugin) = self.workspace.plugins.get_mut(idx) {
+                                if let Some(plugin) = self.workspace_manager.workspace.plugins.get_mut(idx) {
                                     let display_name = name_by_kind
                                         .get(&plugin.kind)
                                         .cloned()
@@ -1094,7 +1094,7 @@ impl GuiApp {
                                                 }
                                             });
                                             let (_unit, _scale, time_label) = Self::time_settings_from_selection(
-                                                self.workspace_settings_tab,
+                                                self.workspace_settings.tab,
                                                 self.frequency_unit,
                                                 self.period_unit,
                                             );
@@ -1147,7 +1147,7 @@ impl GuiApp {
                                                             csv_columns.get(idx).cloned().unwrap_or_default();
                                                         if value.is_empty()
                                                             && self
-                                                                .workspace
+            .workspace_manager.workspace
                                                                 .connections
                                                                 .iter()
                                                                 .any(|conn| {
@@ -1329,7 +1329,7 @@ impl GuiApp {
                         }
                         if let Some((id, count)) = pending_csv_prune {
                             prune_extendable_inputs_plugin_connections(
-                                &mut self.workspace.connections,
+                                &mut self.workspace_manager.workspace.connections,
                                 id,
                                 count,
                             );
@@ -1340,7 +1340,7 @@ impl GuiApp {
             });
         if let Some(response) = response {
             self.window_rects.push(response.response.rect);
-            if !self.confirm_dialog_open
+            if !self.confirm_dialog.open
                 && (response.response.clicked() || response.response.dragged())
             {
                 ctx.move_to_top(response.response.layer_id);
@@ -1350,15 +1350,15 @@ impl GuiApp {
                 self.pending_window_focus = None;
             }
         }
-        self.plugins_open = window_open;
+        self.windows.plugins_open = window_open;
     }
 
     pub(crate) fn render_manage_plugins_window(&mut self, ctx: &egui::Context) {
-        if !self.manage_plugins_open {
+        if !self.windows.manage_plugins_open {
             return;
         }
 
-        let mut window_open = self.manage_plugins_open;
+        let mut window_open = self.windows.manage_plugins_open;
         let window_size = egui::vec2(700.0, 400.0);
         let default_pos = Self::center_window(ctx, window_size);
         let response = egui::Window::new("Manage plugins")
@@ -1367,18 +1367,18 @@ impl GuiApp {
             .default_pos(default_pos)
             .default_size(window_size)
             .fixed_size(window_size)
-            .show(ctx, |ui| match self.manage_plugins_tab {
+            .show(ctx, |ui| match self.windows.manage_plugins_tab {
                 ManageTab::Install => {
                     let mut rescan = false;
                     let installed_kinds: HashSet<String> = self
-                        .installed_plugins
+            .plugin_manager.installed_plugins
                         .iter()
                         .map(|plugin| plugin.manifest.kind.clone())
                         .collect();
                     ui.columns(2, |columns| {
                         columns[0].horizontal(|ui| {
                             ui.label("Search");
-                            ui.text_edit_singleline(&mut self.install_search);
+                            ui.text_edit_singleline(&mut self.windows.install_search);
                         });
                         columns[0].add_space(6.0);
                         let mut selected: Option<usize> = None;
@@ -1393,20 +1393,20 @@ impl GuiApp {
                                     .min_scrolled_height(list_height)
                                     .show(ui, |ui| {
                                         for (idx, detected) in
-                                            self.detected_plugins.iter().enumerate()
+                                            self.plugin_manager.detected_plugins.iter().enumerate()
                                         {
                                             let label = detected.manifest.name.clone();
-                                            if !self.install_search.trim().is_empty()
+                                            if !self.windows.install_search.trim().is_empty()
                                                 && !label
                                                     .to_lowercase()
-                                                    .contains(&self.install_search.to_lowercase())
+                                                    .contains(&self.windows.install_search.to_lowercase())
                                             {
                                                 continue;
                                             }
                                             let row = ui.add_sized(
                                                 [ui.available_width(), 18.0],
                                                 egui::SelectableLabel::new(
-                                                    self.manage_selected_index == Some(idx),
+                                                    self.windows.manage_selected_index == Some(idx),
                                                     label,
                                                 ),
                                             );
@@ -1418,7 +1418,7 @@ impl GuiApp {
                             },
                         );
                         if let Some(idx) = selected {
-                            self.manage_selected_index = Some(idx);
+                            self.windows.manage_selected_index = Some(idx);
                         }
 
                         columns[0].with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
@@ -1439,8 +1439,8 @@ impl GuiApp {
                         let mut install_selected: Option<(BuildAction, String)> = None;
                         let mut uninstall_selected: Option<usize> = None;
                         let mut reinstall_selected: Option<(BuildAction, String)> = None;
-                        if let Some(idx) = self.manage_selected_index {
-                            if let Some(detected) = self.detected_plugins.get(idx) {
+                        if let Some(idx) = self.windows.manage_selected_index {
+                            if let Some(detected) = self.plugin_manager.detected_plugins.get(idx) {
                                 let inputs_override = self.live_plotter_inputs_override();
                                 Self::render_plugin_preview(
                                     &mut columns[1],
@@ -1449,7 +1449,7 @@ impl GuiApp {
                                     &detected.manifest.kind,
                                     &serde_json::Value::Object(serde_json::Map::new()),
                                     false,
-                                        &self.installed_plugins,
+                                        &self.plugin_manager.installed_plugins,
                                 );
                                 let is_installed =
                                     installed_kinds.contains(&detected.manifest.kind);
@@ -1458,7 +1458,7 @@ impl GuiApp {
                                         let install_button = egui::Button::new("Install");
                                         if ui
                                             .add_enabled(
-                                                self.build_dialog_rx.is_none(),
+                                                self.build_dialog.rx.is_none(),
                                                 install_button,
                                             )
                                             .clicked()
@@ -1474,25 +1474,25 @@ impl GuiApp {
                                         }
                                     });
                                 } else if let Some(installed_idx) = self
-                                    .installed_plugins
+            .plugin_manager.installed_plugins
                                     .iter()
                                     .position(|p| p.manifest.kind == detected.manifest.kind)
                                 {
                                     let removable = self
-                                        .installed_plugins
+            .plugin_manager.installed_plugins
                                         .get(installed_idx)
                                         .map(|p| p.removable)
                                         .unwrap_or(false);
                                     columns[1].horizontal(|ui| {
                                         if ui
                                             .add_enabled(
-                                                self.build_dialog_rx.is_none(),
+                                                removable && self.build_dialog.rx.is_none(),
                                                 egui::Button::new("Reinstall"),
                                             )
                                             .clicked()
                                         {
                                             if let Some(installed) =
-                                                self.installed_plugins.get(installed_idx)
+                                                self.plugin_manager.installed_plugins.get(installed_idx)
                                             {
                                                 reinstall_selected = Some((
                                                     BuildAction::Reinstall {
@@ -1539,7 +1539,7 @@ impl GuiApp {
             });
         if let Some(response) = response {
             self.window_rects.push(response.response.rect);
-            if !self.confirm_dialog_open
+            if !self.confirm_dialog.open
                 && (response.response.clicked() || response.response.dragged())
             {
                 ctx.move_to_top(response.response.layer_id);
@@ -1550,7 +1550,7 @@ impl GuiApp {
             }
         }
 
-        self.manage_plugins_open = window_open;
+        self.windows.manage_plugins_open = window_open;
     }
 
     pub(crate) fn render_plugin_context_menu(&mut self, ctx: &egui::Context) {
@@ -1605,8 +1605,8 @@ impl GuiApp {
                         )
                         .inner;
                     if config_clicked {
-                        self.plugin_config_open = true;
-                        self.plugin_config_id = Some(plugin_id);
+                        self.windows.plugin_config_open = true;
+                        self.windows.plugin_config_id = Some(plugin_id);
                         close_menu = true;
                         self.pending_window_focus = Some(WindowFocus::PluginConfig);
                     }
@@ -1644,27 +1644,27 @@ impl GuiApp {
     }
 
     pub(crate) fn render_plugin_config_window(&mut self, ctx: &egui::Context) {
-        if !self.plugin_config_open {
+        if !self.windows.plugin_config_open {
             return;
         }
 
-        let mut open = self.plugin_config_open;
-        let plugin_id = match self.plugin_config_id {
+        let mut open = self.windows.plugin_config_open;
+        let plugin_id = match self.windows.plugin_config_id {
             Some(id) => id,
             None => {
-                self.plugin_config_open = false;
+                self.windows.plugin_config_open = false;
                 return;
             }
         };
 
         let name_by_kind: HashMap<String, String> = self
-            .installed_plugins
+            .plugin_manager.installed_plugins
             .iter()
             .map(|plugin| (plugin.manifest.kind.clone(), plugin.manifest.name.clone()))
             .collect();
 
         let window_size =
-            if let Some(plugin) = self.workspace.plugins.iter().find(|p| p.id == plugin_id) {
+            if let Some(plugin) = self.workspace_manager.workspace.plugins.iter().find(|p| p.id == plugin_id) {
                 if plugin.kind == "csv_recorder" {
                     egui::vec2(520.0, 360.0)
                 } else if plugin.kind == "live_plotter" {
@@ -1684,18 +1684,18 @@ impl GuiApp {
             .fixed_size(window_size)
             .show(ctx, |ui| {
                 let plugin_index = self
-                    .workspace
+            .workspace_manager.workspace
                     .plugins
                     .iter()
                     .position(|p| p.id == plugin_id);
                 if let Some(plugin_index) = plugin_index {
-                    let plugin_kind = self.workspace.plugins[plugin_index].kind.clone();
+                    let plugin_kind = self.workspace_manager.workspace.plugins[plugin_index].kind.clone();
                     let display_name = name_by_kind
                         .get(&plugin_kind)
                         .cloned()
                         .unwrap_or_else(|| Self::display_kind(&plugin_kind));
-                    let mut priority = self.workspace.plugins[plugin_index].priority;
-                    let mut config = self.workspace.plugins[plugin_index].config.clone();
+                    let mut priority = self.workspace_manager.workspace.plugins[plugin_index].priority;
+                    let mut config = self.workspace_manager.workspace.plugins[plugin_index].config.clone();
                     let mut config_changed = false;
                     let mut open_path_dialog = false;
                     let mut new_input_count = None;
@@ -1799,7 +1799,7 @@ impl GuiApp {
                             }
                         });
                         let (_unit, _scale, time_label) = Self::time_settings_from_selection(
-                            self.workspace_settings_tab,
+                            self.workspace_settings.tab,
                             self.frequency_unit,
                             self.period_unit,
                         );
@@ -1848,7 +1848,7 @@ impl GuiApp {
                                     let label = format!("in_{idx}");
                                     let mut value = columns.get(idx).cloned().unwrap_or_default();
                                     if value.is_empty()
-                                        && self.workspace.connections.iter().any(|conn| {
+                                        && self.workspace_manager.workspace.connections.iter().any(|conn| {
                                             conn.to_plugin == plugin_id && conn.to_port == label
                                         })
                                     {
@@ -2058,20 +2058,20 @@ impl GuiApp {
                     }
 
                     if config_changed {
-                        self.workspace.plugins[plugin_index].priority = priority;
-                        self.workspace.plugins[plugin_index].config = config;
+                        self.workspace_manager.workspace.plugins[plugin_index].priority = priority;
+                        self.workspace_manager.workspace.plugins[plugin_index].config = config;
                         self.mark_workspace_dirty();
                     }
                     if let Some(running) = pending_start {
                         let _ = self
-                            .logic_tx
+            .state_sync.logic_tx
                             .send(LogicMessage::SetPluginRunning(plugin_id, running));
                         self.mark_workspace_dirty();
                     }
 
                     if let Some(new_count) = new_input_count {
                         prune_extendable_inputs_plugin_connections(
-                            &mut self.workspace.connections,
+                            &mut self.workspace_manager.workspace.connections,
                             plugin_id,
                             new_count,
                         );
@@ -2090,7 +2090,7 @@ impl GuiApp {
             });
         if let Some(response) = response {
             self.window_rects.push(response.response.rect);
-            if !self.confirm_dialog_open
+            if !self.confirm_dialog.open
                 && (response.response.clicked() || response.response.dragged())
             {
                 ctx.move_to_top(response.response.layer_id);
@@ -2102,8 +2102,8 @@ impl GuiApp {
         }
 
         if !open {
-            self.plugin_config_open = false;
-            self.plugin_config_id = None;
+            self.windows.plugin_config_open = false;
+            self.windows.plugin_config_id = None;
         }
     }
 }

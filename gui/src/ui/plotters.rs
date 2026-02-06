@@ -6,13 +6,13 @@ impl GuiApp {
         let mut closed = Vec::new();
         let mut capture_requested = Vec::new();
         let name_by_id: HashMap<u64, String> = self
-            .workspace
+            .workspace_manager.workspace
             .plugins
             .iter()
             .map(|plugin| (plugin.id, self.plugin_display_name(plugin.id)))
             .collect();
         let plotter_ids: Vec<u64> = self
-            .plotters
+            .plotter_manager.plotters
             .iter()
             .filter_map(|(id, plotter)| {
                 plotter
@@ -34,12 +34,12 @@ impl GuiApp {
                 .with_inner_size([900.0, 520.0]);
 
             let plotter = self
-                .plotters
+            .plotter_manager.plotters
                 .get(&plugin_id)
                 .cloned()
                 .expect("plotter exists");
             let plotter_for_viewport = plotter.clone();
-            let time_label = self.logic_time_label.clone();
+            let time_label = self.state_sync.logic_time_label.clone();
 
             ctx.show_viewport_deferred(viewport_id, builder, move |ctx, class| {
                 if class == egui::ViewportClass::Embedded {
@@ -78,12 +78,12 @@ impl GuiApp {
                     .show(ctx, |ui| {
                         if let Ok(mut plotter) = plotter.lock() {
                             let label = format!("Inputs: {}", plotter.input_count);
-                            plotter.render(ui, &label, &self.logic_time_label);
+                            plotter.render(ui, &label, &self.state_sync.logic_time_label);
                         }
                     });
                 if let Some(response) = response {
                     self.window_rects.push(response.response.rect);
-                    if !self.confirm_dialog_open
+                    if !self.confirm_dialog.open
                         && (response.response.clicked() || response.response.dragged())
                     {
                         ctx.move_to_top(response.response.layer_id);
@@ -98,16 +98,16 @@ impl GuiApp {
         }
 
         for id in closed {
-            if let Some(plotter) = self.plotters.get(&id) {
+            if let Some(plotter) = self.plotter_manager.plotters.get(&id) {
                 if let Ok(mut plotter) = plotter.lock() {
                     plotter.open = false;
                 }
             }
             // Stop the plugin when plot window closes
-            if let Some(plugin) = self.workspace.plugins.iter_mut().find(|p| p.id == id) {
+            if let Some(plugin) = self.workspace_manager.workspace.plugins.iter_mut().find(|p| p.id == id) {
                 if plugin.running {
                     plugin.running = false;
-                    let _ = self.logic_tx.send(LogicMessage::SetPluginRunning(id, false));
+                    let _ = self.state_sync.logic_tx.send(LogicMessage::SetPluginRunning(id, false));
                     self.mark_workspace_dirty();
                 }
             }
@@ -120,54 +120,54 @@ impl GuiApp {
     }
 
     fn open_plotter_preview(&mut self, plugin_id: u64) {
-        self.plotter_preview_target = Some(plugin_id);
-        self.plotter_preview_open = true;
+        self.plotter_preview.target = Some(plugin_id);
+        self.plotter_preview.open = true;
         
         // Load existing settings or create defaults
-        if let Some((show_axes, show_legend, show_grid, series_names, colors, title, dark_theme, x_axis, y_axis, high_quality, export_svg)) = self.plotter_preview_settings.get(&plugin_id).cloned() {
-            self.plotter_preview_show_axes = show_axes;
-            self.plotter_preview_show_legend = show_legend;
-            self.plotter_preview_show_grid = show_grid;
-            self.plotter_preview_series_names = series_names;
-            self.plotter_preview_colors = colors;
-            self.plotter_preview_title = title;
-            self.plotter_preview_dark_theme = dark_theme;
-            self.plotter_preview_x_axis_name = x_axis;
-            self.plotter_preview_y_axis_name = y_axis;
-            self.plotter_preview_high_quality = high_quality;
-            self.plotter_preview_export_svg = export_svg;
+        if let Some((show_axes, show_legend, show_grid, series_names, colors, title, dark_theme, x_axis, y_axis, high_quality, export_svg)) = self.plotter_manager.plotter_preview_settings.get(&plugin_id).cloned() {
+            self.plotter_preview.show_axes = show_axes;
+            self.plotter_preview.show_legend = show_legend;
+            self.plotter_preview.show_grid = show_grid;
+            self.plotter_preview.series_names = series_names;
+            self.plotter_preview.colors = colors;
+            self.plotter_preview.title = title;
+            self.plotter_preview.dark_theme = dark_theme;
+            self.plotter_preview.x_axis_name = x_axis;
+            self.plotter_preview.y_axis_name = y_axis;
+            self.plotter_preview.high_quality = high_quality;
+            self.plotter_preview.export_svg = export_svg;
         } else {
             // Initialize default settings - find connected plugin names
-            let connected_plugin_names: Vec<String> = self.workspace.connections
+            let connected_plugin_names: Vec<String> = self.workspace_manager.workspace.connections
                 .iter()
                 .filter(|conn| conn.to_plugin == plugin_id)
                 .filter_map(|conn| {
-                    self.workspace.plugins
+                    self.workspace_manager.workspace.plugins
                         .iter()
                         .find(|p| p.id == conn.from_plugin)
                         .map(|p| self.plugin_display_name(p.id))
                 })
                 .collect();
                 
-            if let Some(plotter) = self.plotters.get(&plugin_id) {
+            if let Some(plotter) = self.plotter_manager.plotters.get(&plugin_id) {
                 if let Ok(plotter) = plotter.lock() {
-                    self.plotter_preview_show_axes = true;
-                    self.plotter_preview_show_legend = true;
-                    self.plotter_preview_show_grid = true;
-                    self.plotter_preview_title = String::new(); // Empty by default
-                    self.plotter_preview_dark_theme = true;
-                    self.plotter_preview_x_axis_name = self.logic_time_label.clone();
-                    self.plotter_preview_y_axis_name = "value".to_string();
-                    self.plotter_preview_high_quality = false;
+                    self.plotter_preview.show_axes = true;
+                    self.plotter_preview.show_legend = true;
+                    self.plotter_preview.show_grid = true;
+                    self.plotter_preview.title = String::new(); // Empty by default
+                    self.plotter_preview.dark_theme = true;
+                    self.plotter_preview.x_axis_name = self.state_sync.logic_time_label.clone();
+                    self.plotter_preview.y_axis_name = "value".to_string();
+                    self.plotter_preview.high_quality = false;
                     
-                    self.plotter_preview_series_names = (0..plotter.input_count)
+                    self.plotter_preview.series_names = (0..plotter.input_count)
                         .map(|i| {
                             connected_plugin_names.get(i)
                                 .cloned()
                                 .unwrap_or_else(|| format!("Series {}", i + 1))
                         })
                         .collect();
-                    self.plotter_preview_colors = (0..plotter.input_count)
+                    self.plotter_preview.colors = (0..plotter.input_count)
                         .map(|i| {
                             // Use the same palette as live plotter
                             match i % 8 {
@@ -188,11 +188,11 @@ impl GuiApp {
     }
 
     pub(crate) fn render_plotter_preview_dialog(&mut self, ctx: &egui::Context) {
-        if !self.plotter_preview_open {
+        if !self.plotter_preview.open {
             return;
         }
 
-        let Some(plugin_id) = self.plotter_preview_target else {
+        let Some(plugin_id) = self.plotter_preview.target else {
             return;
         };
 
@@ -204,30 +204,30 @@ impl GuiApp {
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.label("Title:");
-                    ui.text_edit_singleline(&mut self.plotter_preview_title);
+                    ui.text_edit_singleline(&mut self.plotter_preview.title);
                 });
                 
                 ui.horizontal(|ui| {
-                    ui.checkbox(&mut self.plotter_preview_show_axes, "Show axes");
-                    ui.checkbox(&mut self.plotter_preview_show_legend, "Show legend");
-                    ui.checkbox(&mut self.plotter_preview_show_grid, "Show grid");
-                    ui.checkbox(&mut self.plotter_preview_dark_theme, "Dark theme");
+                    ui.checkbox(&mut self.plotter_preview.show_axes, "Show axes");
+                    ui.checkbox(&mut self.plotter_preview.show_legend, "Show legend");
+                    ui.checkbox(&mut self.plotter_preview.show_grid, "Show grid");
+                    ui.checkbox(&mut self.plotter_preview.dark_theme, "Dark theme");
                 });
 
                 ui.horizontal(|ui| {
                     ui.label("X-axis:");
-                    ui.text_edit_singleline(&mut self.plotter_preview_x_axis_name);
+                    ui.text_edit_singleline(&mut self.plotter_preview.x_axis_name);
                     ui.label("Y-axis:");
-                    ui.text_edit_singleline(&mut self.plotter_preview_y_axis_name);
+                    ui.text_edit_singleline(&mut self.plotter_preview.y_axis_name);
                 });
 
                 ui.separator();
                 ui.label("Series customization:");
 
                 egui::ScrollArea::vertical().max_height(150.0).show(ui, |ui| {
-                    for (i, (name, color)) in self.plotter_preview_series_names
+                    for (i, (name, color)) in self.plotter_preview.series_names
                         .iter_mut()
-                        .zip(self.plotter_preview_colors.iter_mut())
+                        .zip(self.plotter_preview.colors.iter_mut())
                         .enumerate()
                     {
                         ui.horizontal(|ui| {
@@ -245,22 +245,22 @@ impl GuiApp {
                 let preview_rect = ui.available_rect_before_wrap();
                 let preview_size = egui::vec2(preview_rect.width(), 200.0);
                 
-                if let Some(plotter) = self.plotters.get(&plugin_id) {
+                if let Some(plotter) = self.plotter_manager.plotters.get(&plugin_id) {
                     if let Ok(mut plotter) = plotter.lock() {
                         ui.allocate_ui(preview_size, |ui| {
                             plotter.render_with_settings(
                                 ui, 
                                 "Preview", 
-                                &self.logic_time_label,
-                                self.plotter_preview_show_axes,
-                                self.plotter_preview_show_legend,
-                                self.plotter_preview_show_grid,
-                                Some(&self.plotter_preview_title),
-                                Some(&self.plotter_preview_series_names),
-                                Some(&self.plotter_preview_colors),
-                                self.plotter_preview_dark_theme,
-                                Some(&self.plotter_preview_x_axis_name),
-                                Some(&self.plotter_preview_y_axis_name),
+                                &self.state_sync.logic_time_label,
+                                self.plotter_preview.show_axes,
+                                self.plotter_preview.show_legend,
+                                self.plotter_preview.show_grid,
+                                Some(&self.plotter_preview.title),
+                                Some(&self.plotter_preview.series_names),
+                                Some(&self.plotter_preview.colors),
+                                self.plotter_preview.dark_theme,
+                                Some(&self.plotter_preview.x_axis_name),
+                                Some(&self.plotter_preview.y_axis_name),
                             );
                         });
                     }
@@ -269,35 +269,35 @@ impl GuiApp {
                 ui.separator();
 
                 ui.horizontal(|ui| {
-                    ui.checkbox(&mut self.plotter_preview_export_svg, "Export as SVG");
+                    ui.checkbox(&mut self.plotter_preview.export_svg, "Export as SVG");
                 });
                 
                 ui.horizontal(|ui| {
                     ui.label("Resolution:");
-                    let old_width = self.plotter_preview_width;
-                    ui.add_enabled(!self.plotter_preview_export_svg, 
-                        egui::DragValue::new(&mut self.plotter_preview_width).clamp_range(400..=4000).suffix("px"));
+                    let old_width = self.plotter_preview.width;
+                    ui.add_enabled(!self.plotter_preview.export_svg, 
+                        egui::DragValue::new(&mut self.plotter_preview.width).clamp_range(400..=4000).suffix("px"));
                     
                     // Update height proportionally if width changed
-                    if self.plotter_preview_width != old_width && !self.plotter_preview_export_svg {
+                    if self.plotter_preview.width != old_width && !self.plotter_preview.export_svg {
                         let ratio = 16.0 / 9.0;
-                        self.plotter_preview_height = (self.plotter_preview_width as f32 / ratio) as u32;
+                        self.plotter_preview.height = (self.plotter_preview.width as f32 / ratio) as u32;
                     }
                     
                     ui.label("×");
-                    let old_height = self.plotter_preview_height;
-                    ui.add_enabled(!self.plotter_preview_export_svg, 
-                        egui::DragValue::new(&mut self.plotter_preview_height).clamp_range(300..=3000).suffix("px"));
+                    let old_height = self.plotter_preview.height;
+                    ui.add_enabled(!self.plotter_preview.export_svg, 
+                        egui::DragValue::new(&mut self.plotter_preview.height).clamp_range(300..=3000).suffix("px"));
                     
                     // Update width proportionally if height changed
-                    if self.plotter_preview_height != old_height && !self.plotter_preview_export_svg {
+                    if self.plotter_preview.height != old_height && !self.plotter_preview.export_svg {
                         let ratio = 16.0 / 9.0;
-                        self.plotter_preview_width = (self.plotter_preview_height as f32 * ratio) as u32;
+                        self.plotter_preview.width = (self.plotter_preview.height as f32 * ratio) as u32;
                     }
                     
-                    if ui.button("16:9").clicked() && !self.plotter_preview_export_svg {
+                    if ui.button("16:9").clicked() && !self.plotter_preview.export_svg {
                         let ratio = 16.0 / 9.0;
-                        self.plotter_preview_height = (self.plotter_preview_width as f32 / ratio) as u32;
+                        self.plotter_preview.height = (self.plotter_preview.width as f32 / ratio) as u32;
                     }
                 });
 
@@ -306,28 +306,28 @@ impl GuiApp {
                         save_requested = true;
                     }
                     if ui.button("Cancel").clicked() {
-                        self.plotter_preview_open = false;
+                        self.plotter_preview.open = false;
                     }
                 });
             });
 
         // Save settings when dialog closes
-        if save_requested || !self.plotter_preview_open {
-            if let Some(plugin_id) = self.plotter_preview_target {
-                self.plotter_preview_settings.insert(
+        if save_requested || !self.plotter_preview.open {
+            if let Some(plugin_id) = self.plotter_preview.target {
+                self.plotter_manager.plotter_preview_settings.insert(
                     plugin_id,
                     (
-                        self.plotter_preview_show_axes,
-                        self.plotter_preview_show_legend,
-                        self.plotter_preview_show_grid,
-                        self.plotter_preview_series_names.clone(),
-                        self.plotter_preview_colors.clone(),
-                        self.plotter_preview_title.clone(),
-                        self.plotter_preview_dark_theme,
-                        self.plotter_preview_x_axis_name.clone(),
-                        self.plotter_preview_y_axis_name.clone(),
-                        self.plotter_preview_high_quality,
-                        self.plotter_preview_export_svg,
+                        self.plotter_preview.show_axes,
+                        self.plotter_preview.show_legend,
+                        self.plotter_preview.show_grid,
+                        self.plotter_preview.series_names.clone(),
+                        self.plotter_preview.colors.clone(),
+                        self.plotter_preview.title.clone(),
+                        self.plotter_preview.dark_theme,
+                        self.plotter_preview.x_axis_name.clone(),
+                        self.plotter_preview.y_axis_name.clone(),
+                        self.plotter_preview.high_quality,
+                        self.plotter_preview.export_svg,
                     ),
                 );
             }
