@@ -98,11 +98,6 @@ pub fn validate_connection(
     if existing_count >= max_per_input {
         return Err(ConnectionRuleError::InputLimitExceeded);
     }
-    if connections.iter().any(|conn| {
-        conn.from_plugin == from_plugin && conn.to_plugin == to_plugin
-    }) {
-        return Err(ConnectionRuleError::DuplicateConnection);
-    }
     Ok(())
 }
 
@@ -118,6 +113,17 @@ pub fn add_connection(
         &connection.to_port,
         max_per_input,
     )?;
+    
+    // Check if same output is already connected to a different input of the same target plugin
+    if connections.iter().any(|conn| {
+        conn.from_plugin == connection.from_plugin
+            && conn.from_port == connection.from_port
+            && conn.to_plugin == connection.to_plugin
+            && conn.to_port != connection.to_port
+    }) {
+        return Err(ConnectionRuleError::DuplicateConnection);
+    }
+    
     connections.push(connection);
     Ok(())
 }

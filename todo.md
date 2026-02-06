@@ -12,7 +12,6 @@
 - [ ] Windows must be on top of plugins and connection hover info always (but not over the tabs on top (Workspace Plugins ...))
 - [ ] New workspace should load the new empty workspace after creation
 - [ ] Fix spaceing of letters in descriptions
-- [ ] Close "no hooked windows". This is basically that if I have a Plugin config window opened and I change workspaces, remove the plugin etc, it should dissapear
 - [ ] export workspace file dialog should have the default name of the workspace
 - [ ] Notify the loading of workspace "Workspace 'name' loaded"
 - [ ] Notify when period frequency are applied. Name it "Time scale" and as description put "Sampling rate updated"
@@ -28,19 +27,20 @@
 - [ ] Let the installed plugins be organized in folders, there is one reserved for the System ones
 - [ ] When period is 100 us and window 10\*3500 plot isn't complete and the more I increment the window the less is shown (max points draw related, I think)
 - [ ] max_latency_us should be max_latency and have a input similar of the settings (the value and the units)
-- [ ] Eliminate dot for notifications
-- [ ] Deleting a plugin closes the window and references from it. Reinstalling it closes them and reopens them (with same connections)
+- [ ] Eliminate dot of end of phrase for notifications
+- [x] Deleting a plugin closes the window and references from it. Reinstalling it closes them and reopens them (with same connections)
 - [x] Allow "intenal" variables (that are shown on variables section)
 - [x] Add runtime support for per-port input values and internal variables display in plugin view (extend LogicState with input_values and variable_values HashMaps)
 - [x] fix reset button (should restart monitored variables)
 - [x] Instead of none inputs in plugin preview, when extendable inputs, show "incremental"
 - [x] For actual csv recorder and live plotter: make number of inputs and on/off internal variables instead of actual special view (which shall be removed)
 - [x] Performance monitor doesn't show the variables and outputs
-- [ ] On stop button it iterates one more time on showing outputs
-- [ ] Eliminate cross from plotter
-- [ ] Check if cached plugin is deleted when reinstalled (it should, plugin updates) and delete instances of same kind plugin that is open
-- [ ] dont allow plugins of same kind to be installed twice
+- [x] On stop button it iterates one more time on showing outputs
+- [x] Eliminate cross from plotter
+- [x] Check if cached plugin is deleted when reinstalled (it should, plugin updates) and delete instances of same kind plugin that is open
+- [x] Close "no hooked windows". This is basically that if I have a Plugin config window opened and I change workspaces, remove the plugin etc, it should dissapear
+- [x] dont allow plugins of same kind to be installed twice
 - [x] Make the Variables, Input/s, Output/s and Internal Variable/s be plegable sections if clicked a down arrow as same level as the section name. Also make them follow this order: Variables, Internal Variable/s, Input/s and Output/s
-- [ ] Cant add different outputs to different inputs between same plugins when a connection is already made
+- [x] Cant add different outputs to different inputs between same plugins when a connection is already made
 - [x] Visual bug on some plugins where the x is not on top right and the grey top part is not as wide as the plugin
 - [x] When all inputs connections deleted, close the live plotter

@@ -238,6 +238,7 @@ impl GuiApp {
                                 
                                 egui::ScrollArea::vertical()
                                     .max_height(400.0)
+                                    .drag_to_scroll(false)
                                     .show(ui, |ui| {
                                         ui.push_id(("plugin_content", plugin.id), |ui| {
                                         ui.style_mut().spacing.item_spacing = egui::vec2(0.0, 6.0);
@@ -640,6 +641,13 @@ impl GuiApp {
                 .send(LogicMessage::UpdateWorkspace(self.workspace.clone()));
         }
         for (plugin_id, running) in pending_running {
+            // Mark plugin as stopped BEFORE sending message to prevent one more update
+            if !running {
+                if let Some(plugin) = self.workspace.plugins.iter_mut().find(|p| p.id == plugin_id) {
+                    plugin.running = false;
+                }
+            }
+            
             let _ = self
                 .logic_tx
                 .send(LogicMessage::SetPluginRunning(plugin_id, running));

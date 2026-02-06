@@ -544,8 +544,15 @@ impl GuiApp {
                         removable,
                         persist,
                     } => {
+                        let prev_count = self.installed_plugins.len();
                         self.install_plugin_from_folder(path, removable, persist);
-                        self.show_info("Plugin", "Plugin built and installed.");
+                        let was_installed = self.installed_plugins.len() > prev_count;
+                        if was_installed {
+                            self.show_info("Plugin", "Plugin built and installed.");
+                        } else {
+                            let msg = self.status.clone();
+                            self.show_info("Plugin", &msg);
+                        }
                         self.scan_detected_plugins();
                     }
                     BuildAction::Reinstall { kind, path } => {
@@ -622,6 +629,13 @@ impl GuiApp {
                 variables: vec!["input_count".to_string(), "running".to_string()],
             });
         }
+        
+        // Check if plugin of this kind is already installed
+        if self.installed_plugins.iter().any(|p| p.manifest.kind == manifest.kind) {
+            self.status = format!("Plugin '{}' is already installed", manifest.kind);
+            return;
+        }
+        
         self.installed_plugins.push(InstalledPlugin {
             manifest,
             path: folder.as_ref().to_path_buf(),
@@ -1158,6 +1172,32 @@ impl GuiApp {
             return;
         }
 
+        let kind = plugin.manifest.kind.clone();
+        
+        // Close windows for plugins of this kind
+        let plugin_ids: Vec<u64> = self.workspace.plugins
+            .iter()
+            .filter(|p| p.kind == kind)
+            .map(|p| p.id)
+            .collect();
+        
+        for id in &plugin_ids {
+            if self.selected_plugin_id == Some(*id) {
+                self.selected_plugin_id = None;
+            }
+            if self.plugin_config_id == Some(*id) {
+                self.plugin_config_id = None;
+                self.plugin_config_open = false;
+            }
+            self.plotters.remove(id);
+        }
+        
+        // Remove all workspace plugin instances of this kind
+        self.workspace.plugins.retain(|p| p.kind != kind);
+        
+        // Remove connections involving these plugins
+        self.workspace.connections.retain(|conn| !plugin_ids.contains(&conn.from_plugin) && !plugin_ids.contains(&conn.to_plugin));
+        
         self.installed_plugins.remove(installed_index);
         self.scan_detected_plugins();
         self.show_info("Plugin", "Plugin uninstalled.");
@@ -1165,6 +1205,28 @@ impl GuiApp {
     }
 
     fn refresh_installed_plugin(&mut self, kind: String, path: &Path) {
+        // Clear cached plugin behavior for this kind so new version is loaded
+        self.plugin_behaviors.remove(&kind);
+        
+        // Close windows for plugins of this kind (they'll need to be reopened with new version)
+        let plugin_ids: Vec<u64> = self.workspace.plugins
+            .iter()
+            .filter(|p| p.kind == kind)
+            .map(|p| p.id)
+            .collect();
+        
+        for id in &plugin_ids {
+            if self.selected_plugin_id == Some(*id) {
+                self.selected_plugin_id = None;
+            }
+            if self.plugin_config_id == Some(*id) {
+                self.plugin_config_id = None;
+                self.plugin_config_open = false;
+            }
+            self.plotters.remove(id);
+        }
+        
+        // Keep workspace plugins - just update the installed plugin metadata
         let manifest_path = path.join("plugin.toml");
         let data = match fs::read_to_string(&manifest_path) {
             Ok(content) => content,
@@ -1276,6 +1338,17 @@ impl GuiApp {
         }
 
         let removed_id = self.workspace.plugins[plugin_index].id;
+        
+        // Close associated windows
+        if self.selected_plugin_id == Some(removed_id) {
+            self.selected_plugin_id = None;
+        }
+        if self.plugin_config_id == Some(removed_id) {
+            self.plugin_config_id = None;
+            self.plugin_config_open = false;
+        }
+        self.plotters.remove(&removed_id);
+        
         self.workspace.plugins.remove(plugin_index);
         self.workspace
             .connections
@@ -1284,9 +1357,7 @@ impl GuiApp {
         for id in ids {
             self.sync_extendable_input_count(id);
         }
-        if self.plotters.remove(&removed_id).is_some() {
-            self.recompute_plotter_ui_hz();
-        }
+        self.recompute_plotter_ui_hz();
         self.enforce_connection_dependent();
         self.status = "Plugin removed".to_string();
         self.mark_workspace_dirty();
@@ -1796,9 +1867,29 @@ impl GuiApp {
                 Duration::from_secs(1)
             };
             if self.last_output_update.elapsed() >= output_interval {
-                self.computed_outputs = outputs;
-                self.input_values = input_values;
-                self.internal_variable_values = internal_variable_values;
+                // Filter out outputs from stopped plugins
+                let running_plugins: std::collections::HashSet<u64> = self.workspace.plugins
+                    .iter()
+                    .filter(|p| p.running)
+                    .map(|p| p.id)
+                    .collect();
+                
+                let filtered_outputs: HashMap<(u64, String), f64> = outputs
+                    .into_iter()
+                    .filter(|((id, _), _)| running_plugins.contains(id))
+                    .collect();
+                let filtered_inputs: HashMap<(u64, String), f64> = input_values
+                    .into_iter()
+                    .filter(|((id, _), _)| running_plugins.contains(id))
+                    .collect();
+                let filtered_internals: HashMap<(u64, String), serde_json::Value> = internal_variable_values
+                    .into_iter()
+                    .filter(|((id, _), _)| running_plugins.contains(id))
+                    .collect();
+                
+                self.computed_outputs = filtered_outputs;
+                self.input_values = filtered_inputs;
+                self.internal_variable_values = filtered_internals;
                 self.viewer_values = viewer_values;
                 self.last_output_update = Instant::now();
             }

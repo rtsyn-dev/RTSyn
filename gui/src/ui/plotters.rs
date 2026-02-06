@@ -45,22 +45,20 @@ impl GuiApp {
                 if class == egui::ViewportClass::Embedded {
                     return;
                 }
-                egui::TopBottomPanel::top("plotter_toolbar").show(ctx, |ui| {
-                    ui.horizontal(|ui| {
-                        if ui.button("📷 Capture").clicked() {
-                            ctx.data_mut(|d| d.insert_temp(egui::Id::new(("capture_request", plugin_id)), true));
-                        }
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button("✕").clicked() {
-                                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                            }
-                        });
-                    });
-                });
+                
                 egui::CentralPanel::default().show(ctx, |ui| {
                     if let Ok(mut plotter) = plotter_for_viewport.lock() {
-                        let label = format!("Inputs: {}", plotter.input_count);
-                        plotter.render(ui, &label, &time_label);
+                        ui.horizontal(|ui| {
+                            let label = format!("Inputs: {}", plotter.input_count);
+                            ui.label(&label);
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if ui.button("Capture").clicked() {
+                                    ctx.data_mut(|d| d.insert_temp(egui::Id::new(("capture_request", plugin_id)), true));
+                                }
+                            });
+                        });
+                        ui.separator();
+                        plotter.render(ui, "", &time_label);
                         let refresh_hz = plotter.refresh_hz.max(1.0);
                         ctx.request_repaint_after(Duration::from_secs_f64(1.0 / refresh_hz));
                     }
