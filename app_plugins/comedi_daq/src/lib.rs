@@ -204,6 +204,14 @@ pub struct ComediDaqPlugin {
 unsafe impl Send for ComediDaqPlugin {}
 
 impl ComediDaqPlugin {
+    fn normalize_device_path(path: &str) -> &str {
+        if let Some(idx) = path.find("_subd") {
+            &path[..idx]
+        } else {
+            path
+        }
+    }
+
     pub fn new(id: u64) -> Self {
         let mut plugin = Self {
             id: PluginId(id),
@@ -327,7 +335,8 @@ impl ComediDaqPlugin {
     }
 
     fn auto_configure(&mut self) {
-        let Ok(dev) = (unsafe { comedilib::open(&self.device_path) }) else {
+        let device_path = Self::normalize_device_path(&self.device_path);
+        let Ok(dev) = (unsafe { comedilib::open(device_path) }) else {
             self.mock_default_channels();
             self.update_ports();
             return;
@@ -445,7 +454,8 @@ impl Plugin for ComediDaqPlugin {
 
 impl DeviceDriver for ComediDaqPlugin {
     fn open(&mut self) -> Result<(), PluginError> {
-        let dev = unsafe { comedilib::open(&self.device_path) }.map_err(Self::comedi_error)?;
+        let device_path = Self::normalize_device_path(&self.device_path);
+        let dev = unsafe { comedilib::open(device_path) }.map_err(Self::comedi_error)?;
         self.dev = std::ptr::NonNull::new(dev);
         self.is_open = true;
         Ok(())

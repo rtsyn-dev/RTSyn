@@ -19,10 +19,11 @@ thiserror = { workspace = true }
 log = { workspace = true }
 csv_recorder_plugin = { path = "../app_plugins/csv_recorder" }
 live_plotter_plugin = { path = "../app_plugins/live_plotter" }
+comedi_daq_plugin = { path = "../app_plugins/comedi_daq", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [features]
 default = []
-comedi = []
+comedi = ["comedi_daq_plugin"]

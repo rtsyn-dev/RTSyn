@@ -3,6 +3,8 @@ use rtsyn_plugin::ui::PluginBehavior;
 use rtsyn_plugin::Plugin;
 use csv_recorder_plugin::CsvRecorderedPlugin;
 use live_plotter_plugin::LivePlotterPlugin;
+#[cfg(feature = "comedi")]
+use comedi_daq_plugin::ComediDaqPlugin;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -59,8 +61,9 @@ impl PluginManager {
         ];
 
         for (kind, name, desc) in bundled {
-            let (metadata_outputs, metadata_variables, display_schema, ui_schema) = match kind {
+            let (metadata_inputs, metadata_outputs, metadata_variables, display_schema, ui_schema) = match kind {
                 "performance_monitor" => (
+                    Vec::new(),
                     vec![
                         "period_us".to_string(),
                         "latency_us".to_string(),
@@ -82,13 +85,33 @@ impl PluginManager {
                 ),
                 "csv_recorder" => {
                     let plugin = CsvRecorderedPlugin::new(0);
-                    (Vec::new(), Vec::new(), plugin.display_schema(), plugin.ui_schema())
+                    (Vec::new(), Vec::new(), Vec::new(), plugin.display_schema(), plugin.ui_schema())
                 }
                 "live_plotter" => {
                     let plugin = LivePlotterPlugin::new(0);
-                    (Vec::new(), Vec::new(), plugin.display_schema(), plugin.ui_schema())
+                    (Vec::new(), Vec::new(), Vec::new(), plugin.display_schema(), plugin.ui_schema())
                 }
-                _ => (Vec::new(), Vec::new(), None, None),
+                #[cfg(feature = "comedi")]
+                "comedi_daq" => {
+                    let plugin = ComediDaqPlugin::new(0);
+                    let inputs: Vec<String> = plugin
+                        .inputs()
+                        .iter()
+                        .map(|p| p.id.0.clone())
+                        .collect();
+                    let outputs: Vec<String> = plugin
+                        .outputs()
+                        .iter()
+                        .map(|p| p.id.0.clone())
+                        .collect();
+                    let display_schema = Some(rtsyn_plugin::ui::DisplaySchema {
+                        inputs: inputs.clone(),
+                        outputs: outputs.clone(),
+                        variables: Vec::new(),
+                    });
+                    (inputs, outputs, Vec::new(), display_schema, None)
+                }
+                _ => (Vec::new(), Vec::new(), Vec::new(), None, None),
             };
 
             self.installed_plugins.push(InstalledPlugin {
@@ -102,7 +125,7 @@ impl PluginManager {
                 path: PathBuf::new(),
                 library_path: None,
                 removable: false,
-                metadata_inputs: Vec::new(),
+                metadata_inputs,
                 metadata_outputs,
                 metadata_variables,
                 display_schema,

@@ -283,7 +283,7 @@ impl GuiApp {
                                                         if let Ok(entries) = std::fs::read_dir("/dev") {
                                                             for entry in entries.flatten() {
                                                                 if let Ok(name) = entry.file_name().into_string() {
-                                                                    if name.starts_with("comedi") {
+                                                                    if name.starts_with("comedi") && !name.contains("_subd") {
                                                                         devices.push(format!("/dev/{name}"));
                                                                     }
                                                                 }
