@@ -4,6 +4,33 @@ use crate::WindowFocus;
 use crate::{BuildAction, LivePlotter};
 use std::sync::{Arc, Mutex};
 
+fn kv_row_wrapped(
+    ui: &mut egui::Ui,
+    label: &str,
+    label_w: f32,
+    value_ui: impl FnOnce(&mut egui::Ui),
+) {
+    ui.horizontal(|ui| {
+        // Label in fixed-width area
+        let label_response = ui.allocate_ui_with_layout(
+            egui::vec2(label_w, 0.0),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                ui.add(egui::Label::new(label).wrap(true));
+            },
+        );
+        
+        // Add spacing to reach fixed position
+        let used_width = label_response.response.rect.width();
+        if used_width < label_w {
+            ui.add_space(label_w - used_width);
+        }
+        
+        ui.add_space(8.0);
+        value_ui(ui);
+    });
+}
+
 impl GuiApp {
     fn open_install_dialog(&mut self) {
         if self.install_dialog_rx.is_some() {
@@ -122,9 +149,12 @@ impl GuiApp {
             } else {
                 None
             };
-            let mut frame = egui::Frame::window(&ctx.style())
-                .inner_margin(egui::Margin::ZERO)
-                .fill(egui::Color32::from_gray(30));
+            let mut frame = egui::Frame::none()
+                .fill(egui::Color32::from_gray(30))
+                .rounding(egui::Rounding::same(6.0))
+                .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(50)))
+                .inner_margin(egui::Margin::same(12.0))
+                .outer_margin(egui::Margin::ZERO);
             if let Some(color) = highlight_color {
                 frame = frame.stroke(egui::Stroke::new(2.0, color));
             }
@@ -134,79 +164,92 @@ impl GuiApp {
                 .movable(!right_down)
                 .constrain_to(panel_rect)
                 .show(ctx, |ui| {
-                    ui.set_min_width(240.0);
-                    ui.set_max_width(260.0);
+                    let card_width = 280.0;
+                    ui.set_width(card_width);
+                    
                     frame.show(ui, |ui| {
-                        ui.push_id(("plugin_content", plugin.id), |ui| {
-                            egui::Frame::none()
-                                .fill(egui::Color32::from_gray(40))
-                                .inner_margin(egui::Margin::symmetric(8.0, 4.0))
-                                .show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                    let display_name = name_by_kind
-                                        .get(&plugin.kind)
-                                        .cloned()
-                                        .unwrap_or_else(|| Self::display_kind(&plugin.kind));
-                                    let (id_rect, _) = ui.allocate_exact_size(
+                        ui.vertical(|ui| {
+                            // Header
+                            ui.horizontal(|ui| {
+                                // ID badge
+                                let (id_rect, _) = ui.allocate_exact_size(
+                                    egui::vec2(24.0, 24.0),
+                                    egui::Sense::hover(),
+                                );
+                                ui.painter().rect_filled(
+                                    id_rect,
+                                    8.0,
+                                    egui::Color32::from_gray(60),
+                                );
+                                ui.painter().text(
+                                    id_rect.center(),
+                                    egui::Align2::CENTER_CENTER,
+                                    plugin.id.to_string(),
+                                    egui::FontId::proportional(12.0),
+                                    egui::Color32::from_rgb(200, 200, 210),
+                                );
+                                
+                                ui.add_space(8.0);
+                                
+                                // Plugin name
+                                let display_name = name_by_kind
+                                    .get(&plugin.kind)
+                                    .cloned()
+                                    .unwrap_or_else(|| Self::display_kind(&plugin.kind));
+                                ui.label(RichText::new(display_name).size(15.0).strong());
+                                
+                                // Close button
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    let (close_rect, close_resp) = ui.allocate_exact_size(
                                         egui::vec2(20.0, 20.0),
-                                        egui::Sense::hover(),
+                                        egui::Sense::click(),
                                     );
-                                    ui.painter().circle_filled(
-                                        id_rect.center(),
-                                        9.0,
-                                        egui::Color32::from_gray(60),
-                                    );
+                                    let close_color = if close_resp.hovered() {
+                                        egui::Color32::WHITE
+                                    } else {
+                                        egui::Color32::from_gray(140)
+                                    };
                                     ui.painter().text(
-                                        id_rect.center(),
+                                        close_rect.center(),
                                         egui::Align2::CENTER_CENTER,
-                                        plugin.id.to_string(),
-                                        egui::FontId::proportional(13.0),
-                                        ui.visuals().text_color(),
+                                        "✕",
+                                        egui::FontId::proportional(16.0),
+                                        close_color,
                                     );
-                                    ui.label(
-                                        RichText::new(display_name)
-                                            .strong()
-                                            .size(16.0),
-                                    );
-                                    ui.with_layout(
-                                        egui::Layout::right_to_left(egui::Align::Center),
-                                        |ui| {
-                                            ui.push_id(("remove", plugin.id), |ui| {
-                                                let (rect, resp) = ui.allocate_exact_size(
-                                                    egui::vec2(24.0, 24.0),
-                                                    egui::Sense::click(),
-                                                );
-                                                let (size, color) = if resp.hovered() {
-                                                    (30.0, egui::Color32::WHITE)
-                                                } else {
-                                                    (24.0, ui.visuals().text_color())
-                                                };
-                                                ui.painter().text(
-                                                    rect.center(),
-                                                    egui::Align2::CENTER_CENTER,
-                                                    "×",
-                                                    egui::FontId::proportional(size),
-                                                    color,
-                                                );
-                                                if resp.clicked() {
-                                                    remove_id = Some(plugin.id);
-                                                }
-                                            });
-                                        },
-                                    );
-                                    });
+                                    if close_resp.clicked() {
+                                        remove_id = Some(plugin.id);
+                                    }
                                 });
-                        egui::Frame::none()
-                            .inner_margin(egui::Margin::symmetric(16.0, 12.0))
-                            .show(ui, |ui| {
-                                if plugin.kind != "csv_recorder" {
-                                    match plugin.config {
-                                        Value::Object(ref mut map) => {
-                                            if plugin.kind == "comedi_daq" {
-                                                ui.label(RichText::new("Comedi Configuration").strong().size(13.0));
-                                                ui.add_space(4.0);
+                            });
+                            
+                            ui.add_space(8.0);
+                            ui.separator();
+                            ui.add_space(4.0);
+                            
+                            // Body with sections
+                            ui.scope(|ui| {
+                                // Set thin scrollbar BEFORE creating ScrollArea
+                                let mut scroll_style = egui::style::ScrollStyle::solid();
+                                scroll_style.bar_width = 4.0;
+                                scroll_style.floating = true;  // Only show on hover
+                                scroll_style.floating_width = 2.0;  // Thinner when not hovered
+                                scroll_style.floating_allocated_width = 2.0;
+                                ui.style_mut().spacing.scroll = scroll_style;
+                                
+                                egui::ScrollArea::vertical()
+                                    .max_height(400.0)
+                                    .show(ui, |ui| {
+                                        ui.push_id(("plugin_content", plugin.id), |ui| {
+                                        ui.style_mut().spacing.item_spacing = egui::vec2(0.0, 6.0);
+                                    
+                                    if plugin.kind != "csv_recorder" {
+                                        match plugin.config {
+                                            Value::Object(ref mut map) => {
+                                                if plugin.kind == "comedi_daq" {
+                                                    ui.label(RichText::new("Comedi Configuration").strong().size(13.0));
+                                                    ui.add_space(4.0);
 
-                                                egui::Grid::new(("comedi_config_grid", plugin.id))
+                                                    egui::Grid::new(("comedi_config_grid", plugin.id))
                                                     .num_columns(2)
                                                     .min_col_width(110.0)
                                                     .spacing([10.0, 6.0])
@@ -299,22 +342,15 @@ impl GuiApp {
                                                     .cloned()
                                                     .unwrap_or_default();
                                                 if !vars.is_empty() {
-                                                    let title = if vars.len() == 1 {
-                                                        "Variable"
-                                                    } else {
-                                                        "Variables"
-                                                    };
-                                                    ui.label(RichText::new(title).strong().size(13.0));
-                                                    ui.add_space(4.0);
-                                                    egui::Grid::new(("plugin_config_grid", plugin.id))
-                                                        .num_columns(2)
-                                                        .min_col_width(110.0)
-                                                        .spacing([10.0, 6.0])
-                                                        .show(ui, |ui| {
-                                                            for (name, __default_value) in vars {
-                                                                let key = &name;
+                                                    egui::CollapsingHeader::new(
+                                                        RichText::new("\u{f013}  Variables").size(13.0).strong()  // gear icon
+                                                    )
+                                                    .default_open(true)
+                                                    .show(ui, |ui| {
+                                                        ui.add_space(4.0);
+                                                        for (name, __default_value) in vars {
+                                                            let key = &name;
                                                             if let Some(value) = map.get_mut(key) {
-                                                                ui.label(key);
                                                                 let buffer_key = (plugin.id, key.clone());
                                                                 let buffer = self
                                                                     .number_edit_buffers
@@ -324,23 +360,20 @@ impl GuiApp {
                                                                             value.as_f64().unwrap_or(0.0),
                                                                         )
                                                                     });
-                                                                let resp = ui.add(
-                                                                    egui::TextEdit::singleline(buffer)
-                                                                        .desired_width(80.0),
-                                                                );
-                                                                if resp.changed() {
-                                                                    let _ = normalize_numeric_input(buffer);
-                                                                    if let Some(parsed) =
-                                                                        parse_f64_input(buffer)
-                                                                    {
-                                                                        let truncated = truncate_f64(parsed);
-                                                                        *value = Value::from(truncated);
-                                                                        *buffer =
-                                                                            format_f64_with_input(buffer, truncated);
-                                                                        plugin_changed = true;
-                                                                    }
-                                                                }
-                                                                ui.end_row();
+                                                                kv_row_wrapped(ui, key, 140.0, |ui| {
+                                                                    ui.add_sized(
+                                                                        [80.0, 0.0],
+                                                                        egui::TextEdit::singleline(buffer)
+                                                                    ).changed().then(|| {
+                                                                        let _ = normalize_numeric_input(buffer);
+                                                                        if let Some(parsed) = parse_f64_input(buffer) {
+                                                                            let truncated = truncate_f64(parsed);
+                                                                            *value = Value::from(truncated);
+                                                                            *buffer = format_f64_with_input(buffer, truncated);
+                                                                            plugin_changed = true;
+                                                                        }
+                                                                    });
+                                                                });
                                                             }
                                                         }
                                                     });
@@ -353,161 +386,144 @@ impl GuiApp {
                                     }
                                 }
 
-                                if let Some(installed) = self.installed_plugins.iter().find(|p| p.manifest.kind == plugin.kind) {
-                                    if let Some(schema) = &installed.display_schema {
-                                        if !schema.outputs.is_empty() {
-                                            ui.add_space(6.0);
-                                            ui.separator();
-                                            let title = if schema.outputs.len() == 1 {
-                                                "Output"
-                                            } else {
-                                                "Outputs"
-                                            };
-                                            ui.label(RichText::new(title).strong().size(13.0));
-                                            ui.add_space(4.0);
-                                            egui::Grid::new(("plugin_outputs_grid", plugin.id))
-                                                .num_columns(2)
-                                                .min_col_width(110.0)
-                                                .spacing([10.0, 6.0])
-                                                .show(ui, |ui| {
-                                                    for output_name in &schema.outputs {
-                                                        let value = computed_outputs
-                                                            .get(&(plugin.id, output_name.clone()))
-                                                            .copied()
-                                                            .unwrap_or(0.0);
-                                                        ui.label(output_name);
-                                                        let mut value_text = if (value.fract() - 0.0).abs() < f64::EPSILON {
-                                                            format!("{value:.0}")
-                                                        } else {
-                                                            format!("{value:.4}")
-                                                        };
-                                                        ui.add_enabled(
-                                                            false,
-                                                            egui::TextEdit::singleline(&mut value_text)
-                                                                .desired_width(80.0),
-                                                        );
-                                                        ui.end_row();
-                                                    }
-                                                });
-                                        }
-                                    
-                                        if !schema.inputs.is_empty() {
-                                            ui.add_space(6.0);
-                                            ui.separator();
-                                            let title = if schema.inputs.len() == 1 {
-                                                "Input"
-                                            } else {
-                                                "Inputs"
-                                            };
-                                            ui.label(RichText::new(title).strong().size(13.0));
-                                            ui.add_space(4.0);
-                                            egui::Grid::new(("plugin_inputs_grid", plugin.id))
-                                                .num_columns(2)
-                                                .min_col_width(110.0)
-                                                .spacing([10.0, 6.0])
-                                                .show(ui, |ui| {
-                                                    for input_name in &schema.inputs {
-                                                        let value = input_values
-                                                            .get(&(plugin.id, input_name.clone()))
-                                                            .copied()
-                                                            .unwrap_or(0.0);
-                                                        ui.label(input_name);
-                                                        let mut value_text = format!("{value:.4}");
-                                                        ui.add_enabled(
-                                                            false,
-                                                            egui::TextEdit::singleline(&mut value_text)
-                                                                .desired_width(80.0),
-                                                        );
-                                                        ui.end_row();
-                                                    }
-                                                });
-                                        }
-
-                                        if !schema.variables.is_empty() {
-                                            let has_prev_sections =
-                                                !schema.outputs.is_empty() || !schema.inputs.is_empty();
-                                            if has_prev_sections {
-                                                ui.add_space(6.0);
-                                                ui.separator();
-                                            }
-                                            let title = if schema.variables.len() == 1 {
-                                                "Internal Variable"
-                                            } else {
-                                                "Internal Variables"
-                                            };
-                                            ui.label(RichText::new(title).strong().size(13.0));
-                                            ui.add_space(4.0);
-                                            egui::Grid::new(("plugin_internal_vars_grid", plugin.id))
-                                                .num_columns(2)
-                                                .min_col_width(110.0)
-                                                .spacing([10.0, 6.0])
-                                                .show(ui, |ui| {
-                                                    for var_name in &schema.variables {
-                                                        let value = internal_variable_values
-                                                            .get(&(plugin.id, var_name.clone()))
-                                                            .cloned()
-                                                            .unwrap_or_else(|| {
-                                                                if matches!(plugin.kind.as_str(), "csv_recorder" | "live_plotter") {
-                                                                    match var_name.as_str() {
-                                                                        "input_count" => serde_json::Value::from(0),
-                                                                        "running" => serde_json::Value::from(false),
-                                                                        _ => serde_json::Value::from(0.0),
+                                        if let Some(installed) = self.installed_plugins.iter().find(|p| p.manifest.kind == plugin.kind) {
+                                            if let Some(schema) = &installed.display_schema {
+                                                // Internal Variables first
+                                                if !schema.variables.is_empty() {
+                                                    egui::CollapsingHeader::new(
+                                                        RichText::new("\u{f0ae}  Internal State").size(13.0).strong()  // tasks icon
+                                                    )
+                                                    .default_open(true)
+                                                    .show(ui, |ui| {
+                                                        ui.add_space(4.0);
+                                                        for var_name in &schema.variables {
+                                                            let value = internal_variable_values
+                                                                .get(&(plugin.id, var_name.clone()))
+                                                                .cloned()
+                                                                .unwrap_or_else(|| {
+                                                                    if matches!(plugin.kind.as_str(), "csv_recorder" | "live_plotter") {
+                                                                        match var_name.as_str() {
+                                                                            "input_count" => serde_json::Value::from(0),
+                                                                            "running" => serde_json::Value::from(false),
+                                                                            _ => serde_json::Value::from(0.0),
+                                                                        }
+                                                                    } else {
+                                                                        serde_json::Value::from(0.0)
                                                                     }
-                                                                } else {
-                                                                    serde_json::Value::from(0.0)
+                                                                });
+                                                            let value_text = match value {
+                                                                serde_json::Value::Bool(v) => v.to_string(),
+                                                                serde_json::Value::Number(n) => {
+                                                                    if let Some(int_value) = n.as_i64() {
+                                                                        int_value.to_string()
+                                                                    } else if let Some(int_value) = n.as_u64() {
+                                                                        int_value.to_string()
+                                                                    } else {
+                                                                        format!("{:.4}", n.as_f64().unwrap_or(0.0))
+                                                                    }
                                                                 }
+                                                                _ => value.to_string(),
+                                                            };
+                                                            let mut value_text = value_text;
+                                                            kv_row_wrapped(ui, var_name, 140.0, |ui| {
+                                                                ui.add_enabled_ui(false, |ui| {
+                                                                    ui.add_sized(
+                                                                        [80.0, 0.0],
+                                                                        egui::TextEdit::singleline(&mut value_text)
+                                                                    );
+                                                                });
                                                             });
-                                                        let value_text = match value {
-                                                            serde_json::Value::Bool(v) => v.to_string(),
-                                                            serde_json::Value::Number(n) => {
-                                                                if let Some(int_value) = n.as_i64() {
-                                                                    int_value.to_string()
-                                                                } else if let Some(int_value) = n.as_u64() {
-                                                                    int_value.to_string()
-                                                                } else {
-                                                                    format!("{:.4}", n.as_f64().unwrap_or(0.0))
-                                                                }
-                                                            }
-                                                            _ => value.to_string(),
-                                                        };
-                                                        ui.label(var_name);
-                                                        let mut value_text = value_text;
-                                                        ui.add_enabled(
-                                                            false,
-                                                            egui::TextEdit::singleline(&mut value_text)
-                                                                .desired_width(80.0),
-                                                        );
-                                                        ui.end_row();
-                                                    }
-                                                });
+                                                            ui.add_space(4.0);
+                                                        }
+                                                    });
+                                                }
+                                                
+                                                // Inputs second
+                                                if !schema.inputs.is_empty() {
+                                                    egui::CollapsingHeader::new(
+                                                        RichText::new("\u{f090}  Inputs").size(13.0).strong()  // sign-in icon with space
+                                                    )
+                                                    .default_open(true)
+                                                    .show(ui, |ui| {
+                                                        ui.add_space(4.0);
+                                                        for input_name in &schema.inputs {
+                                                            let value = input_values
+                                                                .get(&(plugin.id, input_name.clone()))
+                                                                .copied()
+                                                                .unwrap_or(0.0);
+                                                            let mut value_text = format!("{value:.4}");
+                                                            kv_row_wrapped(ui, input_name, 140.0, |ui| {
+                                                                ui.add_enabled_ui(false, |ui| {
+                                                                    ui.add_sized(
+                                                                        [80.0, 0.0],
+                                                                        egui::TextEdit::singleline(&mut value_text)
+                                                                    );
+                                                                });
+                                                            });
+                                                            ui.add_space(4.0);
+                                                        }
+                                                    });
+                                                }
+                                                
+                                                // Outputs third
+                                                if !schema.outputs.is_empty() {
+                                                    egui::CollapsingHeader::new(
+                                                        RichText::new("\u{f08b}  Outputs").size(13.0).strong()  // sign-out icon with space
+                                                    )
+                                                    .default_open(true)
+                                                    .show(ui, |ui| {
+                                                        ui.add_space(4.0);
+                                                        for output_name in &schema.outputs {
+                                                            let value = computed_outputs
+                                                                .get(&(plugin.id, output_name.clone()))
+                                                                .copied()
+                                                                .unwrap_or(0.0);
+                                                            let mut value_text = if (value.fract() - 0.0).abs() < f64::EPSILON {
+                                                                format!("{value:.0}")
+                                                            } else {
+                                                                format!("{value:.4}")
+                                                            };
+                                                            kv_row_wrapped(ui, output_name, 140.0, |ui| {
+                                                                ui.add_enabled_ui(false, |ui| {
+                                                                    ui.add_sized(
+                                                                        [80.0, 0.0],
+                                                                        egui::TextEdit::singleline(&mut value_text)
+                                                                    );
+                                                                });
+                                                            });
+                                                            ui.add_space(4.0);
+                                                        }
+                                                    });
+                                                }
+                                            }
                                         }
-                                }
-                                }
 
-                                if plugin.kind == "value_viewer" {
-                                    let value =
-                                        viewer_values.get(&plugin.id).copied().unwrap_or(0.0);
-                                    ui.add_space(4.0);
-                                    ui.separator();
-                                    ui.label(RichText::new("Last value").strong());
-                                    ui.add_space(4.0);
-                                    let mut value_text = format!("{value:.4}");
-                                    ui.add_enabled(
-                                        false,
-                                        egui::TextEdit::singleline(&mut value_text)
-                                            .desired_width(80.0),
-                                    );
-                                }
-                            });
-
-                            let mut controls_changed = false;
-                            ui.add_space(6.0);
+                                        if plugin.kind == "value_viewer" {
+                                            let value =
+                                                viewer_values.get(&plugin.id).copied().unwrap_or(0.0);
+                                            ui.add_space(4.0);
+                                            ui.separator();
+                                            ui.label(RichText::new("Last value").strong());
+                                            ui.add_space(4.0);
+                                            let mut value_text = format!("{value:.4}");
+                                            ui.add_enabled(
+                                                false,
+                                                egui::TextEdit::singleline(&mut value_text)
+                                                    .desired_width(80.0),
+                                            );
+                                        }
+                                        });  // close push_id
+                                    });  // close ScrollArea.show
+                            });  // close scope
+                            
+                            // Controls at bottom
+                            ui.add_space(8.0);
                             ui.separator();
-                            egui::Frame::none()
-                                .inner_margin(egui::Margin::symmetric(10.0, 8.0))
-                                .show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        let mut blocked_start = false;
+                            ui.add_space(8.0);
+                            
+                            let mut controls_changed = false;
+                            ui.horizontal(|ui| {
+                                let mut blocked_start = false;
                                         let supports_start_stop = self.plugin_behaviors.get(&plugin.kind)
                                             .map(|b| b.supports_start_stop)
                                             .unwrap_or(true);  // Default to true
@@ -579,11 +595,10 @@ impl GuiApp {
                                             }
                                         }
                                     });
-                                });
-                            ui.add_space(6.0);
-                            if controls_changed {
-                                workspace_changed = true;
-                            }
+                                    
+                                    if controls_changed {
+                                        workspace_changed = true;
+                                    }
                         });
                     });
                 });

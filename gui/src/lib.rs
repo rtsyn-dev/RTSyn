@@ -2132,6 +2132,7 @@ impl GuiApp {
 
     fn enforce_connection_dependent(&mut self) {
         let mut stopped = Vec::new();
+        let mut plotter_closed = false;
         
         // Build map of connection-dependent plugins from cached behaviors
         let mut dependent_by_kind: HashMap<String, bool> = HashMap::new();
@@ -2158,6 +2159,16 @@ impl GuiApp {
             if incoming.contains(&plugin.id) {
                 continue;
             }
+            if plugin.kind == "live_plotter" {
+                if let Some(plotter) = self.plotters.get(&plugin.id) {
+                    if let Ok(mut plotter) = plotter.lock() {
+                        if plotter.open {
+                            plotter.open = false;
+                            plotter_closed = true;
+                        }
+                    }
+                }
+            }
             if plugin.running {
                 plugin.running = false;
                 stopped.push(plugin.id);
@@ -2167,6 +2178,9 @@ impl GuiApp {
             let _ = self
                 .logic_tx
                 .send(LogicMessage::SetPluginRunning(id, false));
+        }
+        if plotter_closed {
+            self.recompute_plotter_ui_hz();
         }
     }
 

@@ -40,5 +40,7 @@
 - [ ] Eliminate cross from plotter
 - [ ] Check if cached plugin is deleted when reinstalled (it should, plugin updates) and delete instances of same kind plugin that is open
 - [ ] dont allow plugins of same kind to be installed twice
-- [ ] Make the Variables, Input/s, Output/s and Internal Variable/s be plegable sections if clicked a down arrow as same level as the section name. Also make them follow this order: Variables, Internal Variable/s, Input/s and Output/s
+- [x] Make the Variables, Input/s, Output/s and Internal Variable/s be plegable sections if clicked a down arrow as same level as the section name. Also make them follow this order: Variables, Internal Variable/s, Input/s and Output/s
 - [ ] Cant add different outputs to different inputs between same plugins when a connection is already made
+- [x] Visual bug on some plugins where the x is not on top right and the grey top part is not as wide as the plugin
+- [x] When all inputs connections deleted, close the live plotter
