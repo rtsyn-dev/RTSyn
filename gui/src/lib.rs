@@ -548,7 +548,7 @@ impl GuiApp {
                         self.install_plugin_from_folder(path, removable, persist);
                         let was_installed = self.installed_plugins.len() > prev_count;
                         if was_installed {
-                            self.show_info("Plugin", "Plugin built and installed.");
+                            self.show_info("Plugin", "Plugin built and installed");
                         } else {
                             let msg = self.status.clone();
                             self.show_info("Plugin", &msg);
@@ -559,12 +559,12 @@ impl GuiApp {
                         self.refresh_installed_plugin(kind, &path);
                         self.scan_detected_plugins();
                         self.status = "Plugin rebuilt".to_string();
-                        self.show_info("Plugin", "Plugin rebuilt.");
+                        self.show_info("Plugin", "Plugin rebuilt");
                     }
                 }
             } else {
                 self.status = "Plugin build failed".to_string();
-                self.show_info("Plugin", "Plugin build failed.");
+                self.show_info("Plugin", "Plugin build failed");
             }
             self.build_dialog_open = false;
         }
@@ -971,7 +971,7 @@ impl GuiApp {
             self.export_dialog_rx = None;
             if let Some(dest) = dest {
                 let _ = fs::copy(source, dest);
-                self.show_info("Workspace", "Workspace exported.");
+                self.show_info("Workspace", "Workspace exported");
             }
         }
     }
@@ -1136,7 +1136,7 @@ impl GuiApp {
         let source = match self.workspace.plugins.iter().find(|p| p.id == plugin_id) {
             Some(plugin) => plugin.clone(),
             None => {
-                self.show_info("Plugin", "Invalid plugin.");
+                self.show_info("Plugin", "Invalid plugin");
                 return;
             }
         };
@@ -1162,13 +1162,13 @@ impl GuiApp {
         let plugin = match self.installed_plugins.get(installed_index) {
             Some(plugin) => plugin.clone(),
             None => {
-                self.show_info("Plugin", "Invalid installed plugin.");
+                self.show_info("Plugin", "Invalid installed plugin");
                 return;
             }
         };
 
         if !plugin.removable {
-            self.show_info("Plugin", "Plugin is bundled and cannot be uninstalled.");
+            self.show_info("Plugin", "Plugin is bundled and cannot be uninstalled");
             return;
         }
 
@@ -1200,7 +1200,7 @@ impl GuiApp {
         
         self.installed_plugins.remove(installed_index);
         self.scan_detected_plugins();
-        self.show_info("Plugin", "Plugin uninstalled.");
+        self.show_info("Plugin", "Plugin uninstalled");
         self.persist_installed_plugins();
     }
 
@@ -1369,7 +1369,7 @@ impl GuiApp {
 
     fn add_connection(&mut self) {
         if self.connection_from_idx == self.connection_to_idx {
-            self.show_info("Connections", "Cannot connect a plugin to itself.");
+            self.show_info("Connections", "Cannot connect a plugin to itself");
             return;
         }
         if self.workspace.plugins.len() < 2 {
@@ -1488,11 +1488,11 @@ impl GuiApp {
         kind: String,
     ) {
         if from_plugin == to_plugin {
-            self.show_info("Connections", "Cannot connect a plugin to itself.");
+            self.show_info("Connections", "Cannot connect a plugin to itself");
             return;
         }
         if from_port.trim().is_empty() || to_port.trim().is_empty() || kind.trim().is_empty() {
-            self.show_info("Connections", "Connection fields cannot be empty.");
+            self.show_info("Connections", "Connection fields cannot be empty");
             return;
         }
         let mut to_port_string = to_port.clone();
@@ -1571,7 +1571,7 @@ impl GuiApp {
 
     fn load_workspace(&mut self) {
         if self.workspace_path.as_os_str().is_empty() {
-            self.show_info("Workspace", "Workspace path is required.");
+            self.show_info("Workspace", "Workspace path is required");
             return;
         }
 
@@ -1603,7 +1603,7 @@ impl GuiApp {
     fn create_workspace_from_dialog(&mut self) -> bool {
         let name = self.workspace_name_input.trim();
         if name.is_empty() {
-            self.show_info("Workspace", "Workspace name is required.");
+            self.show_info("Workspace", "Workspace name is required");
             return false;
         }
         let path = self.workspace_file_path(name);
@@ -1637,7 +1637,7 @@ impl GuiApp {
         self.workspace = workspace;
         self.next_plugin_id = 1;
         let _ = self.workspace.save_to_file(&path);
-        self.show_info("Workspace", "Workspace created.");
+        self.show_info("Workspace", "Workspace created");
         self.scan_workspaces();
         self.mark_workspace_dirty();
         true
@@ -1646,7 +1646,7 @@ impl GuiApp {
     fn save_workspace_as(&mut self) -> bool {
         let name = self.workspace_name_input.trim();
         if name.is_empty() {
-            self.show_info("Workspace", "Workspace name is required.");
+            self.show_info("Workspace", "Workspace name is required");
             return false;
         }
         let path = self.workspace_file_path(name);
@@ -1658,9 +1658,9 @@ impl GuiApp {
         self.workspace_path = path.clone();
         let _ = self.workspace.save_to_file(&path);
         if existed {
-            self.show_info("Workspace", "Workspace updated.");
+            self.show_info("Workspace", "Workspace updated");
         } else {
-            self.show_info("Workspace", "Workspace created.");
+            self.show_info("Workspace", "Workspace created");
         }
         self.scan_workspaces();
         true
@@ -1673,14 +1673,14 @@ impl GuiApp {
         }
         self.workspace.settings = self.current_workspace_settings();
         let _ = self.workspace.save_to_file(&self.workspace_path);
-        self.show_info("Workspace", "Workspace updated.");
+        self.show_info("Workspace", "Workspace updated");
         self.scan_workspaces();
     }
 
     fn update_workspace_metadata(&mut self, path: &Path) -> bool {
         let name = self.workspace_name_input.trim();
         if name.is_empty() {
-            self.show_info("Workspace", "Workspace name is required.");
+            self.show_info("Workspace", "Workspace name is required");
             return false;
         }
         let new_path = self.workspace_file_path(name);
@@ -1693,7 +1693,7 @@ impl GuiApp {
                 if new_path != path {
                     let _ = fs::remove_file(path);
                 }
-                self.show_info("Workspace", "Workspace updated.");
+                self.show_info("Workspace", "Workspace updated");
                 updated = true;
             }
         }
@@ -1703,7 +1703,7 @@ impl GuiApp {
 
     fn export_workspace_path(&mut self, source: &Path) {
         if self.export_dialog_rx.is_some() {
-            self.show_info("Workspace", "Dialog already open.");
+            self.show_info("Workspace", "Dialog already open");
             return;
         }
         let source = source.to_path_buf();
@@ -1724,7 +1724,7 @@ impl GuiApp {
             if let Ok(workspace) = serde_json::from_slice::<WorkspaceDefinition>(&data) {
                 let dest = self.workspace_file_path(&workspace.name);
                 let _ = fs::write(dest, data);
-                self.show_info("Workspace", "Workspace imported.");
+                self.show_info("Workspace", "Workspace imported");
                 self.scan_workspaces();
             }
         }
@@ -1832,14 +1832,14 @@ impl GuiApp {
             ConfirmAction::DeleteWorkspace(path) => {
                 let _ = fs::remove_file(&path);
                 self.scan_workspaces();
-                self.show_info("Workspace", "Workspace deleted.");
+                self.show_info("Workspace", "Workspace deleted");
             }
             ConfirmAction::OverwriteWorkspace(path, workspace) => {
                 let _ = workspace.save_to_file(&path);
                 self.workspace = workspace;
                 self.workspace_path = path;
                 self.scan_workspaces();
-                self.show_info("Workspace", "Workspace updated.");
+                self.show_info("Workspace", "Workspace updated");
             }
         }
     }

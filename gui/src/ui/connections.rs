@@ -926,7 +926,21 @@ impl GuiApp {
         if let (Some(pointer), Some((_dist, _mid, outputs, inputs, from_id, to_id, conn_index))) =
             (pointer_pos, best_hover)
         {
-            if pointer_over_plugin || pointer_over_window || self.confirm_dialog_open {
+            // Only show tooltip if pointer is not over any UI element
+            if pointer_over_plugin || pointer_over_window || self.confirm_dialog_open || ctx.is_pointer_over_area() {
+                // Still allow right-click menu
+                if ctx.input(|i| i.pointer.secondary_clicked()) && !self.confirm_dialog_open {
+                    let matched: Vec<ConnectionDefinition> = self
+                        .workspace
+                        .connections
+                        .iter()
+                        .filter(|conn| conn.from_plugin == from_id && conn.to_plugin == to_id)
+                        .cloned()
+                        .collect();
+                    if !matched.is_empty() {
+                        self.connection_context_menu = Some((matched, pointer, ctx.frame_nr()));
+                    }
+                }
                 return;
             }
             if ctx.input(|i| i.pointer.secondary_clicked()) && !self.confirm_dialog_open {

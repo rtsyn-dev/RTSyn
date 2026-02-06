@@ -352,29 +352,94 @@ impl GuiApp {
                                                         for (name, __default_value) in vars {
                                                             let key = &name;
                                                             if let Some(value) = map.get_mut(key) {
-                                                                let buffer_key = (plugin.id, key.clone());
-                                                                let buffer = self
-                                                                    .number_edit_buffers
-                                                                    .entry(buffer_key)
-                                                                    .or_insert_with(|| {
-                                                                        format_f64_6(
-                                                                            value.as_f64().unwrap_or(0.0),
-                                                                        )
-                                                                    });
-                                                                kv_row_wrapped(ui, key, 140.0, |ui| {
-                                                                    ui.add_sized(
-                                                                        [80.0, 0.0],
-                                                                        egui::TextEdit::singleline(buffer)
-                                                                    ).changed().then(|| {
-                                                                        let _ = normalize_numeric_input(buffer);
-                                                                        if let Some(parsed) = parse_f64_input(buffer) {
-                                                                            let truncated = truncate_f64(parsed);
-                                                                            *value = Value::from(truncated);
-                                                                            *buffer = format_f64_with_input(buffer, truncated);
+                                                                // Special handling for max_latency_us
+                                                                if key == "max_latency_us" {
+                                                                    let us_value = value.as_f64().unwrap_or(1000.0);
+                                                                    let value_key = (plugin.id, "max_latency_value".to_string());
+                                                                    let unit_key = (plugin.id, "max_latency_unit".to_string());
+                                                                    
+                                                                    // Determine display value and unit
+                                                                    let (display_value, default_unit) = if us_value >= 1000.0 {
+                                                                        (us_value / 1000.0, "ms")
+                                                                    } else if us_value >= 1.0 {
+                                                                        (us_value, "us")
+                                                                    } else {
+                                                                        (us_value * 1000.0, "ns")
+                                                                    };
+                                                                    
+                                                                    if !self.number_edit_buffers.contains_key(&value_key) {
+                                                                        self.number_edit_buffers.insert(value_key.clone(), display_value.to_string());
+                                                                    }
+                                                                    if !self.number_edit_buffers.contains_key(&unit_key) {
+                                                                        self.number_edit_buffers.insert(unit_key.clone(), default_unit.to_string());
+                                                                    }
+                                                                    
+                                                                    let mut drag_value = self.number_edit_buffers[&value_key].parse::<f64>().unwrap_or(display_value);
+                                                                    let mut unit_clone = self.number_edit_buffers[&unit_key].clone();
+                                                                    
+                                                                    kv_row_wrapped(ui, "max_latency", 140.0, |ui| {
+                                                                        let mut changed = false;
+                                                                        if ui.add(egui::DragValue::new(&mut drag_value).speed(10.0).clamp_range(1.0..=f64::INFINITY).fixed_decimals(0)).changed() {
+                                                                            changed = true;
+                                                                        }
+                                                                        ui.add_space(4.0);
+                                                                        egui::ComboBox::from_id_source((plugin.id, "max_latency_unit"))
+                                                                            .selected_text(&unit_clone)
+                                                                            .width(40.0)
+                                                                            .show_ui(ui, |ui| {
+                                                                                if ui.selectable_label(unit_clone == "ns", "ns").clicked() {
+                                                                                    unit_clone = "ns".to_string();
+                                                                                    changed = true;
+                                                                                }
+                                                                                if ui.selectable_label(unit_clone == "us", "us").clicked() {
+                                                                                    unit_clone = "us".to_string();
+                                                                                    changed = true;
+                                                                                }
+                                                                                if ui.selectable_label(unit_clone == "ms", "ms").clicked() {
+                                                                                    unit_clone = "ms".to_string();
+                                                                                    changed = true;
+                                                                                }
+                                                                            });
+                                                                        
+                                                                        if changed {
+                                                                            let us_val = match unit_clone.as_str() {
+                                                                                "ms" => drag_value * 1000.0,
+                                                                                "us" => drag_value,
+                                                                                "ns" => drag_value / 1000.0,
+                                                                                _ => drag_value,
+                                                                            };
+                                                                            *value = Value::from(us_val);
                                                                             plugin_changed = true;
                                                                         }
                                                                     });
-                                                                });
+                                                                    
+                                                                    self.number_edit_buffers.insert(value_key, drag_value.to_string());
+                                                                    self.number_edit_buffers.insert(unit_key, unit_clone);
+                                                                } else {
+                                                                    let buffer_key = (plugin.id, key.clone());
+                                                                    let buffer = self
+                                                                        .number_edit_buffers
+                                                                        .entry(buffer_key)
+                                                                        .or_insert_with(|| {
+                                                                            format_f64_6(
+                                                                                value.as_f64().unwrap_or(0.0),
+                                                                            )
+                                                                        });
+                                                                    kv_row_wrapped(ui, key, 140.0, |ui| {
+                                                                        ui.add_sized(
+                                                                            [80.0, 0.0],
+                                                                            egui::TextEdit::singleline(buffer)
+                                                                        ).changed().then(|| {
+                                                                            let _ = normalize_numeric_input(buffer);
+                                                                            if let Some(parsed) = parse_f64_input(buffer) {
+                                                                                let truncated = truncate_f64(parsed);
+                                                                                *value = Value::from(truncated);
+                                                                                *buffer = format_f64_with_input(buffer, truncated);
+                                                                                plugin_changed = true;
+                                                                            }
+                                                                        });
+                                                                    });
+                                                                }
                                                             }
                                                         }
                                                     });
@@ -607,12 +672,13 @@ impl GuiApp {
             self.plugin_positions
                 .insert(plugin.id, response.response.rect.min);
             self.plugin_rects.insert(plugin.id, response.response.rect);
-            if ctx.input(|i| i.pointer.primary_clicked()) && !response.response.dragged() {
-                if let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) {
-                    if response.response.rect.contains(pos) {
-                        if !self.confirm_dialog_open {
-                            self.selected_plugin_id = Some(plugin.id);
-                        }
+            if ctx.input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary)) {
+                if response.response.hovered() && !self.confirm_dialog_open {
+                    // Toggle selection
+                    if self.selected_plugin_id == Some(plugin.id) {
+                        self.selected_plugin_id = None;
+                    } else {
+                        self.selected_plugin_id = Some(plugin.id);
                     }
                 }
             }
@@ -621,7 +687,7 @@ impl GuiApp {
             }
             if ctx.input(|i| i.pointer.button_released(egui::PointerButton::Secondary)) {
                 if let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) {
-                    if response.response.rect.contains(pos) {
+                    if response.response.rect.contains(pos) && response.response.hovered() {
                         if self.confirm_dialog_open {
                             self.plugin_context_menu = None;
                         } else {

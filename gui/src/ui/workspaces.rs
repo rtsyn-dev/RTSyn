@@ -813,7 +813,10 @@ impl GuiApp {
                     .show(ui, |ui| {
                         ui.heading(&self.build_dialog_title);
                         if self.build_dialog_in_progress {
-                            ui.add(egui::Spinner::new());
+                            ui.horizontal(|ui| {
+                                ui.label(&self.build_dialog_message);
+                                ui.add(egui::Spinner::new());
+                            });
                             return;
                         }
                         ui.label(&self.build_dialog_message);
