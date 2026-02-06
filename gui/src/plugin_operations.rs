@@ -79,23 +79,25 @@ impl GuiApp {
                 }
             }
         }
+        if let Some(schema) = installed.ui_schema.as_ref() {
+            for field in &schema.fields {
+                if config_map.contains_key(&field.key) {
+                    continue;
+                }
+                if let Some(default) = field.default.as_ref() {
+                    config_map.insert(field.key.clone(), default.clone());
+                }
+            }
+        }
+        if self.is_extendable_inputs(&installed.manifest.kind) {
+            config_map.entry("input_count".to_string()).or_insert_with(|| Value::from(0));
+        }
         if installed.manifest.kind == "csv_recorder" {
-            config_map.insert("separator".to_string(), Value::from(","));
-            config_map.insert("path".to_string(), Value::from(Self::default_csv_path()));
-            config_map.insert("input_count".to_string(), Value::from(0));
-            config_map.insert("columns".to_string(), Value::Array(Vec::new()));
-            config_map.insert("include_time".to_string(), Value::from(true));
-            config_map.insert("path_autogen".to_string(), Value::from(true));
-        } else if installed.manifest.kind == "live_plotter" {
-            config_map.insert("input_count".to_string(), Value::from(0));
-            config_map.insert("refresh_hz".to_string(), Value::from(60.0));
-            config_map.insert("window_ms".to_string(), Value::from(10000.0));
-        } else if installed.manifest.kind == "performance_monitor" {
-            config_map.insert("input_count".to_string(), Value::from(0));
+            config_map.entry("columns".to_string()).or_insert_with(|| Value::Array(Vec::new()));
+            config_map.entry("path".to_string()).or_insert_with(|| Value::from(""));
+            config_map.entry("path_autogen".to_string()).or_insert_with(|| Value::from(true));
         } else if installed.manifest.kind == "comedi_daq" {
-            config_map.insert("device_path".to_string(), Value::from("/dev/comedi0"));
-            config_map.insert("scan_devices".to_string(), Value::from(false));
-            config_map.insert("scan_nonce".to_string(), Value::from(0));
+            config_map.entry("scan_nonce".to_string()).or_insert_with(|| Value::from(0));
         }
         if let Some(library_path) = installed.library_path.as_ref() {
             config_map.insert("library_path".to_string(), Value::String(library_path.to_string_lossy().to_string()));
@@ -236,7 +238,7 @@ impl GuiApp {
         }
 
         let library_path = PluginManager::resolve_library_path(&manifest, folder.as_ref());
-        let (mut metadata_inputs, mut metadata_outputs, mut metadata_variables, mut display_schema, mut ui_schema) = if let Some(ref lib_path) = library_path {
+        let (metadata_inputs, metadata_outputs, metadata_variables, mut display_schema, ui_schema) = if let Some(ref lib_path) = library_path {
             let (tx, rx) = mpsc::channel();
             let _ = self.state_sync.logic_tx.send(LogicMessage::QueryPluginMetadata(lib_path.to_string_lossy().to_string(), tx));
             if let Ok(Some((inputs, outputs, vars, schema, ui_sch))) = rx.recv() {
@@ -247,22 +249,7 @@ impl GuiApp {
         } else {
             (vec![], vec![], vec![], None, None)
         };
-        if manifest.kind == "performance_monitor" {
-            metadata_inputs = Vec::new();
-            metadata_outputs = vec!["period_us".to_string(), "latency_us".to_string(), "jitter_us".to_string(), "realtime_violation".to_string()];
-            metadata_variables = vec![("max_latency_us".to_string(), 1000.0)];
-            display_schema = Some(rtsyn_plugin::ui::DisplaySchema {
-                outputs: metadata_outputs.clone(),
-                inputs: Vec::new(),
-                variables: Vec::new(),
-            });
-        } else if matches!(manifest.kind.as_str(), "csv_recorder" | "live_plotter") {
-            display_schema = Some(rtsyn_plugin::ui::DisplaySchema {
-                outputs: Vec::new(),
-                inputs: Vec::new(),
-                variables: vec!["input_count".to_string(), "running".to_string()],
-            });
-        } else if display_schema.is_none() && (!metadata_outputs.is_empty() || !metadata_variables.is_empty()) {
+        if display_schema.is_none() && (!metadata_outputs.is_empty() || !metadata_variables.is_empty()) {
             display_schema = Some(rtsyn_plugin::ui::DisplaySchema {
                 outputs: metadata_outputs.clone(),
                 inputs: Vec::new(),
@@ -343,26 +330,23 @@ impl GuiApp {
                     installed.ui_schema = ui_schema;
                 }
             }
-            if installed.manifest.kind == "performance_monitor" {
-                installed.metadata_inputs = Vec::new();
-                installed.metadata_outputs = vec!["period_us".to_string(), "latency_us".to_string(), "jitter_us".to_string(), "realtime_violation".to_string()];
-                installed.metadata_variables = vec![("max_latency_us".to_string(), 1000.0)];
+            if installed.display_schema.is_none()
+                && (!installed.metadata_outputs.is_empty() || !installed.metadata_variables.is_empty())
+            {
                 installed.display_schema = Some(rtsyn_plugin::ui::DisplaySchema {
                     outputs: installed.metadata_outputs.clone(),
                     inputs: Vec::new(),
-                    variables: Vec::new(),
-                });
-            } else if matches!(installed.manifest.kind.as_str(), "csv_recorder" | "live_plotter") {
-                installed.display_schema = Some(rtsyn_plugin::ui::DisplaySchema {
-                    outputs: Vec::new(),
-                    inputs: Vec::new(),
-                    variables: vec!["input_count".to_string(), "running".to_string()],
+                    variables: installed
+                        .metadata_variables
+                        .iter()
+                        .map(|(name, _)| name.clone())
+                        .collect(),
                 });
             }
             installed.path = path.to_path_buf();
             installed.library_path = library_path;
         } else {
-            let (mut metadata_inputs, mut metadata_outputs, mut metadata_variables, mut display_schema, mut ui_schema) = if let Some(ref lib_path) = library_path {
+            let (metadata_inputs, metadata_outputs, metadata_variables, mut display_schema, ui_schema) = if let Some(ref lib_path) = library_path {
                 let (tx, rx) = mpsc::channel();
                 let _ = self.state_sync.logic_tx.send(LogicMessage::QueryPluginMetadata(lib_path.to_string_lossy().to_string(), tx));
                 if let Ok(Some((inputs, outputs, vars, display_schema, ui_schema))) = rx.recv() {
@@ -373,20 +357,11 @@ impl GuiApp {
             } else {
                 (vec![], vec![], vec![], None, None)
             };
-            if manifest.kind == "performance_monitor" {
-                metadata_inputs = Vec::new();
-                metadata_outputs = vec!["period_us".to_string(), "latency_us".to_string(), "jitter_us".to_string(), "realtime_violation".to_string()];
-                metadata_variables = vec![("max_latency_us".to_string(), 1000.0)];
+            if display_schema.is_none() && (!metadata_outputs.is_empty() || !metadata_variables.is_empty()) {
                 display_schema = Some(rtsyn_plugin::ui::DisplaySchema {
                     outputs: metadata_outputs.clone(),
                     inputs: Vec::new(),
-                    variables: Vec::new(),
-                });
-            } else if matches!(manifest.kind.as_str(), "csv_recorder" | "live_plotter") {
-                display_schema = Some(rtsyn_plugin::ui::DisplaySchema {
-                    outputs: Vec::new(),
-                    inputs: Vec::new(),
-                    variables: vec!["input_count".to_string(), "running".to_string()],
+                    variables: metadata_variables.iter().map(|(name, _)| name.clone()).collect(),
                 });
             }
             self.plugin_manager.installed_plugins.push(InstalledPlugin {

@@ -450,6 +450,70 @@ impl Plugin for ComediDaqPlugin {
         ConnectionBehavior { dependent: true }
     }
 
+    fn ui_schema(&self) -> Option<UISchema> {
+        Some(
+            UISchema::new()
+                .field(
+                    ConfigField::text("device_path", "Device")
+                        .default_value(Value::String("/dev/comedi0".to_string()))
+                        .hint("Comedi device node (e.g. /dev/comedi0)"),
+                )
+                .field(
+                    ConfigField::boolean("scan_devices", "Scan Channels")
+                        .default_value(Value::Bool(false))
+                        .hint("Toggle to rescan channels"),
+                ),
+        )
+    }
+
+    fn display_schema(&self) -> Option<DisplaySchema> {
+        Some(DisplaySchema {
+            inputs: self.input_port_names.clone(),
+            outputs: self.output_port_names.clone(),
+            variables: vec!["device_path".to_string(), "scan_devices".to_string()],
+        })
+    }
+
+    fn get_variable(&self, name: &str) -> Option<Value> {
+        match name {
+            "device_path" => Some(Value::String(self.device_path.clone())),
+            "scan_devices" => Some(Value::Bool(self.last_scan_devices)),
+            "scan_nonce" => Some(Value::from(self.last_scan_nonce)),
+            _ => None,
+        }
+    }
+
+    fn set_variable(&mut self, name: &str, value: Value) -> Result<(), PluginError> {
+        match name {
+            "device_path" => {
+                if let Value::String(s) = value {
+                    if self.device_path != s {
+                        self.device_path = s;
+                        self.auto_configure();
+                    }
+                }
+            }
+            "scan_devices" => {
+                if let Value::Bool(b) = value {
+                    if b && !self.last_scan_devices {
+                        self.auto_configure();
+                    }
+                    self.last_scan_devices = b;
+                }
+            }
+            "scan_nonce" => {
+                if let Some(n) = value.as_u64() {
+                    if self.last_scan_nonce != n {
+                        self.last_scan_nonce = n;
+                        self.auto_configure();
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
 }
 
 impl DeviceDriver for ComediDaqPlugin {

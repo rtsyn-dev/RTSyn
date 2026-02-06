@@ -128,4 +128,36 @@ impl Plugin for PerformanceMonitorPlugin {
                 ),
         )
     }
+
+    fn display_schema(&self) -> Option<DisplaySchema> {
+        Some(DisplaySchema {
+            outputs: vec![
+                "period_us".to_string(),
+                "latency_us".to_string(),
+                "jitter_us".to_string(),
+                "realtime_violation".to_string(),
+            ],
+            inputs: Vec::new(),
+            variables: vec!["max_latency_us".to_string()],
+        })
+    }
+
+    fn get_variable(&self, name: &str) -> Option<Value> {
+        match name {
+            "max_latency_us" => Some(Value::from(self.max_latency_us)),
+            _ => None,
+        }
+    }
+
+    fn set_variable(&mut self, name: &str, value: Value) -> Result<(), PluginError> {
+        match name {
+            "max_latency_us" => {
+                if let Some(v) = value.as_f64() {
+                    self.max_latency_us = v;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
 }

@@ -1783,6 +1783,7 @@ dependencies = [
 name = "gui"
 version = "0.1.0"
 dependencies = [
+ "comedi_daq_plugin",
  "csv_recorder_plugin",
  "eframe",
  "egui",
@@ -1790,6 +1791,7 @@ dependencies = [
  "libc",
  "live_plotter_plugin",
  "log",
+ "performance_monitor_plugin",
  "plotters",
  "rfd",
  "rtsyn-runtime",

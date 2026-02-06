@@ -237,6 +237,7 @@ impl Plugin for CsvRecorderedPlugin {
                 "separator".to_string(),
                 "include_time".to_string(),
                 "path".to_string(),
+                "columns".to_string(),
             ],
         })
     }
@@ -245,10 +246,15 @@ impl Plugin for CsvRecorderedPlugin {
         match name {
             "separator" => Some(Value::String(self.separator.clone())),
             "include_time" => Some(Value::Bool(self.include_time)),
-            "path" => self
-                .path
-                .as_ref()
-                .map(|p| Value::String(p.to_string_lossy().to_string())),
+            "path" => Some(Value::String(
+                self.path
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_default(),
+            )),
+            "columns" => Some(Value::Array(
+                self.columns.iter().map(|c| Value::String(c.clone())).collect()
+            )),
             _ => None,
         }
     }
@@ -273,9 +279,25 @@ impl Plugin for CsvRecorderedPlugin {
             }
             "path" => {
                 if let Value::String(p) = value {
-                    let new_path = Some(PathBuf::from(p));
+                    let new_path = if p.trim().is_empty() {
+                        None
+                    } else {
+                        Some(PathBuf::from(p))
+                    };
                     if self.path != new_path {
                         self.path = new_path;
+                        self.reopen_file();
+                    }
+                }
+            }
+            "columns" => {
+                if let Value::Array(arr) = value {
+                    let new_columns: Vec<String> = arr
+                        .into_iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect();
+                    if self.columns != new_columns {
+                        self.columns = new_columns;
                         self.reopen_file();
                     }
                 }

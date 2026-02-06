@@ -53,24 +53,6 @@ impl GuiApp {
         });
     }
 
-    fn open_csv_path_dialog(&mut self, plugin_id: u64) {
-        if self.file_dialogs.csv_path_dialog_rx.is_some() {
-            self.show_info("CSV", "Dialog already open.");
-            return;
-        }
-        let (tx, rx) = mpsc::channel();
-        self.file_dialogs.csv_path_dialog_rx = Some(rx);
-        self.csv_path_target_plugin_id = Some(plugin_id);
-        crate::spawn_file_dialog_thread(move || {
-            let file = if crate::has_rt_capabilities() {
-                crate::zenity_file_dialog("save", None)
-            } else {
-                rfd::FileDialog::new().save_file()
-            };
-            let _ = tx.send(file);
-        });
-    }
-
     pub(crate) fn open_manage_plugins(&mut self) {
         self.windows.manage_plugins_open = true;
         self.scan_detected_plugins();
@@ -115,6 +97,8 @@ impl GuiApp {
         let mut pending_running: Vec<(u64, bool)> = Vec::new();
         let mut pending_restart: Vec<u64> = Vec::new();
         let mut pending_workspace_update = false;
+        let mut pending_prune: Option<(u64, usize)> = None;
+        let mut pending_enforce_connection = false;
 
         let mut index = 0usize;
         let max_per_row = ((panel_rect.width() / 240.0).floor() as usize).max(1);
@@ -244,101 +228,14 @@ impl GuiApp {
                                         ui.push_id(("plugin_content", plugin.id), |ui| {
                                         ui.style_mut().spacing.item_spacing = egui::vec2(0.0, 6.0);
                                     
-                                    if plugin.kind != "csv_recorder" {
+                                    let is_app_plugin = matches!(
+                                        plugin.kind.as_str(),
+                                        "csv_recorder" | "live_plotter" | "performance_monitor" | "comedi_daq"
+                                    );
+
+                                    if !is_app_plugin {
                                         match plugin.config {
                                             Value::Object(ref mut map) => {
-                                                if plugin.kind == "comedi_daq" {
-                                                    ui.label(RichText::new("Comedi Configuration").strong().size(13.0));
-                                                    ui.add_space(4.0);
-
-                                                    egui::Grid::new(("comedi_config_grid", plugin.id))
-                                                    .num_columns(2)
-                                                    .min_col_width(110.0)
-                                                    .spacing([10.0, 6.0])
-                                                    .show(ui, |ui| {
-                                                        ui.label("Scan:");
-                                                        let mut rescan_devices = false;
-                                                        if ui.button("Scan Channels").clicked() {
-                                                            let next = map
-                                                                .get("scan_nonce")
-                                                                .and_then(|v| v.as_u64())
-                                                                .unwrap_or(0)
-                                                                .saturating_add(1);
-                                                            map.insert(
-                                                                "scan_nonce".to_string(),
-                                                                Value::from(next),
-                                                            );
-                                                            plugin_changed = true;
-                                                            rescan_devices = true;
-                                                        }
-                                                        ui.end_row();
-
-                                                        ui.label("Device:");
-                                                        let current_path = map
-                                                            .get("device_path")
-                                                            .and_then(|v| v.as_str())
-                                                            .unwrap_or("/dev/comedi0")
-                                                            .to_string();
-                                                        let mut devices: Vec<String> = Vec::new();
-                                                        if let Ok(entries) = std::fs::read_dir("/dev") {
-                                                            for entry in entries.flatten() {
-                                                                if let Ok(name) = entry.file_name().into_string() {
-                                                                    if name.starts_with("comedi") && !name.contains("_subd") {
-                                                                        devices.push(format!("/dev/{name}"));
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                        devices.sort();
-                                                        devices.dedup();
-                                                        if devices.is_empty() {
-                                                            devices.push("(no devices found)".to_string());
-                                                        } else if !devices.contains(&current_path) {
-                                                            devices.insert(0, current_path.clone());
-                                                        }
-                                                        if rescan_devices
-                                                            && !devices.is_empty()
-                                                            && devices[0].starts_with("/dev/")
-                                                            && !devices.contains(&current_path)
-                                                        {
-                                                            map.insert(
-                                                                "device_path".to_string(),
-                                                                Value::from(devices[0].clone()),
-                                                            );
-                                                            plugin_changed = true;
-                                                        }
-                                                        let selected_text = if devices.len() == 1
-                                                            && devices[0] == "(no devices found)"
-                                                        {
-                                                            "(no devices found)".to_string()
-                                                        } else {
-                                                            current_path.clone()
-                                                        };
-                                                        let mut selected = selected_text.clone();
-                                                        let resp = egui::ComboBox::from_id_source(("comedi_device_combo", plugin.id))
-                                                            .selected_text(&selected_text)
-                                                            .show_ui(ui, |ui| {
-                                                                let mut changed = false;
-                                                                for dev in &devices {
-                                                                    if ui.selectable_value(&mut selected, dev.clone(), dev).changed() {
-                                                                        changed = true;
-                                                                    }
-                                                                }
-                                                                changed
-                                                            });
-                                                        if resp.inner.unwrap_or(false)
-                                                            && selected != current_path
-                                                            && selected.starts_with("/dev/")
-                                                        {
-                                                            map.insert(
-                                                                "device_path".to_string(),
-                                                                Value::from(selected),
-                                                            );
-                                                            plugin_changed = true;
-                                                        }
-                                                        ui.end_row();
-                                                    });
-                                            } else {
                                                 let vars = metadata_by_kind
                                                     .get(&plugin.kind)
                                                     .cloned()
@@ -446,17 +343,19 @@ impl GuiApp {
                                                     });
                                                 }
                                             }
-                                        }
-                                        _ => {
-                                            ui.label("Config is not an object.");
+                                            _ => {
+                                                ui.label("Config is not an object.");
+                                            }
                                         }
                                     }
-                                }
 
-                                        if let Some(installed) = self.plugin_manager.installed_plugins.iter().find(|p| p.manifest.kind == plugin.kind) {
-                                            if let Some(schema) = &installed.display_schema {
+                                        let (display_schema, ui_schema) = self.plugin_manager.installed_plugins
+                                            .iter()
+                                            .find(|p| p.manifest.kind == plugin.kind)
+                                            .map(|p| (p.display_schema.clone(), p.ui_schema.clone()))
+                                            .unwrap_or((None, None));
+                                        if let Some(schema) = display_schema.as_ref() {
                                                 // Variables section for app plugins
-                                                let is_app_plugin = matches!(plugin.kind.as_str(), "csv_recorder" | "live_plotter" | "performance_monitor");
                                                 if !schema.variables.is_empty() && is_app_plugin {
                                                     egui::CollapsingHeader::new(
                                                         RichText::new("\u{f0ae}  Variables").size(13.0).strong()
@@ -470,19 +369,34 @@ impl GuiApp {
                                                             let _ = self.state_sync.logic_tx.send(LogicMessage::GetPluginVariable(plugin.id, var_name.clone(), tx));
                                                             
                                                             if let Ok(Some(value)) = rx.recv() {
-                                                                // Check if this is a FilePath field from ui_schema
-                                                                let is_filepath = installed.ui_schema.as_ref()
-                                                                    .and_then(|schema| schema.fields.iter().find(|f| f.key == *var_name))
+                                                                let field_info = ui_schema.as_ref()
+                                                                    .and_then(|schema| schema.fields.iter().find(|f| f.key == *var_name));
+                                                                let label = field_info
+                                                                    .map(|field| field.label.as_str())
+                                                                    .unwrap_or(var_name.as_str());
+                                                                let is_filepath = field_info
                                                                     .map(|field| matches!(field.field_type, rtsyn_plugin::ui::FieldType::FilePath { .. }))
                                                                     .unwrap_or(false);
                                                                 
-                                                                kv_row_wrapped(ui, var_name, 140.0, |ui| {
+                                                                kv_row_wrapped(ui, label, 140.0, |ui| {
                                                                     match &value {
                                                                         Value::String(s) => {
                                                                             let mut text = s.clone();
                                                                             let width = if is_filepath { 80.0 } else { 80.0 };
                                                                             if ui.add(egui::TextEdit::singleline(&mut text).desired_width(width)).changed() {
-                                                                                let _ = self.state_sync.logic_tx.send(LogicMessage::SetPluginVariable(plugin.id, var_name.clone(), Value::String(text)));
+                                                                                let new_text = text.clone();
+                                                                                let _ = self.state_sync.logic_tx.send(LogicMessage::SetPluginVariable(
+                                                                                    plugin.id,
+                                                                                    var_name.clone(),
+                                                                                    Value::String(new_text.clone())
+                                                                                ));
+                                                                                if let Value::Object(ref mut map) = plugin.config {
+                                                                                    map.insert(var_name.clone(), Value::String(new_text));
+                                                                                    if var_name == "path" {
+                                                                                        map.insert("path_autogen".to_string(), Value::from(false));
+                                                                                    }
+                                                                                    plugin_changed = true;
+                                                                                }
                                                                             }
                                                                             if is_filepath {
                                                                                 ui.add_space(2.0);
@@ -505,11 +419,15 @@ impl GuiApp {
                                                                             let mut checked = *b;
                                                                             if ui.checkbox(&mut checked, "").changed() {
                                                                                 let _ = self.state_sync.logic_tx.send(LogicMessage::SetPluginVariable(plugin.id, var_name.clone(), Value::Bool(checked)));
+                                                                                if let Value::Object(ref mut map) = plugin.config {
+                                                                                    map.insert(var_name.clone(), Value::Bool(checked));
+                                                                                    plugin_changed = true;
+                                                                                }
                                                                             }
                                                                         }
                                                                         Value::Number(n) => {
                                                                             // Get field type info from ui_schema
-                                                                            let field_info = installed.ui_schema.as_ref()
+                                                                            let field_info = ui_schema.as_ref()
                                                                                 .and_then(|schema| schema.fields.iter().find(|f| f.key == *var_name));
                                                                             
                                                                             if let Some(f) = n.as_f64() {
@@ -531,6 +449,10 @@ impl GuiApp {
                                                                                 };
                                                                                 if ui.add(egui::DragValue::new(&mut val).speed(speed).clamp_range(range)).changed() {
                                                                                     let _ = self.state_sync.logic_tx.send(LogicMessage::SetPluginVariable(plugin.id, var_name.clone(), Value::from(val)));
+                                                                                    if let Value::Object(ref mut map) = plugin.config {
+                                                                                        map.insert(var_name.clone(), Value::from(val));
+                                                                                        plugin_changed = true;
+                                                                                    }
                                                                                     if var_name == "refresh_hz" {
                                                                                         recompute_plotter_needed = true;
                                                                                     }
@@ -554,8 +476,75 @@ impl GuiApp {
                                                                                 };
                                                                                 if ui.add(egui::DragValue::new(&mut val).speed(speed).clamp_range(range)).changed() {
                                                                                     let _ = self.state_sync.logic_tx.send(LogicMessage::SetPluginVariable(plugin.id, var_name.clone(), Value::from(val)));
+                                                                                    if let Value::Object(ref mut map) = plugin.config {
+                                                                                        map.insert(var_name.clone(), Value::from(val));
+                                                                                        plugin_changed = true;
+                                                                                    }
                                                                                 }
                                                                             }
+                                                                        }
+                                                                        Value::Array(arr) => {
+                                                                            if let Some(field) = field_info {
+                                                                                if let rtsyn_plugin::ui::FieldType::DynamicList { item_type, add_label } = &field.field_type {
+                                                                                    let mut items: Vec<String> = arr
+                                                                                        .iter()
+                                                                                        .map(|v| v.as_str().unwrap_or("").to_string())
+                                                                                        .collect();
+                                                                                    let mut list_changed = false;
+
+                                                                                    ui.vertical(|ui| {
+                                                                                        let mut idx = 0usize;
+                                                                                        while idx < items.len() {
+                                                                                            let mut value = items[idx].clone();
+                                                                                            let mut remove_row = false;
+                                                                                            ui.horizontal(|ui| {
+                                                                                                match &**item_type {
+                                                                                                    rtsyn_plugin::ui::FieldType::Text { .. } => {
+                                                                                                        if ui.add(egui::TextEdit::singleline(&mut value).desired_width(140.0)).changed() {
+                                                                                                            items[idx] = value.clone();
+                                                                                                            list_changed = true;
+                                                                                                        }
+                                                                                                    }
+                                                                                                    _ => {
+                                                                                                        ui.label("Unsupported list item type");
+                                                                                                    }
+                                                                                                }
+                                                                                                if ui.small_button("X").clicked() {
+                                                                                                    remove_row = true;
+                                                                                                }
+                                                                                            });
+                                                                                            if remove_row {
+                                                                                                items.remove(idx);
+                                                                                                list_changed = true;
+                                                                                            } else {
+                                                                                                idx += 1;
+                                                                                            }
+                                                                                        }
+                                                                                        if ui.small_button(add_label).clicked() {
+                                                                                            items.push(String::new());
+                                                                                            list_changed = true;
+                                                                                        }
+                                                                                    });
+
+                                                                                    if list_changed {
+                                                                                        let new_value = Value::Array(
+                                                                                            items.iter().cloned().map(Value::String).collect()
+                                                                                        );
+                                                                                        let _ = self.state_sync.logic_tx.send(
+                                                                                            LogicMessage::SetPluginVariable(plugin.id, var_name.clone(), new_value.clone())
+                                                                                        );
+                                                                                        if let Value::Object(ref mut map) = plugin.config {
+                                                                                            map.insert(var_name.clone(), new_value);
+                                                                                            if var_name == "columns" {
+                                                                                                map.insert("input_count".to_string(), Value::from(items.len() as u64));
+                                                                                                pending_prune = Some((plugin.id, items.len()));
+                                                                                                pending_enforce_connection = true;
+                                                                                            }
+                                                                                            plugin_changed = true;
+                                                                                        }
+                                                                                    }
+                                                                            }
+                                                                        }
                                                                         }
                                                                         _ => {}
                                                                     }
@@ -624,7 +613,6 @@ impl GuiApp {
                                                     });
                                                 }
                                             }
-                                        }
 
                                         if plugin.kind == "value_viewer" {
                                             let value =
@@ -786,6 +774,16 @@ impl GuiApp {
         for plugin_id in pending_restart {
             self.restart_plugin(plugin_id);
         }
+        if let Some((plugin_id, count)) = pending_prune {
+            prune_extendable_inputs_plugin_connections(
+                &mut self.workspace_manager.workspace.connections,
+                plugin_id,
+                count,
+            );
+        }
+        if pending_enforce_connection {
+            self.enforce_connection_dependent();
+        }
         if workspace_changed {
             self.mark_workspace_dirty();
         }
@@ -851,7 +849,12 @@ impl GuiApp {
                     installed_plugins
                         .iter()
                         .find(|p| p.manifest.kind == manifest.kind)
-                        .map(|p| p.metadata_inputs.clone())
+                        .map(|p| {
+                            p.display_schema
+                                .as_ref()
+                                .map(|s| s.inputs.clone())
+                                .unwrap_or_else(|| p.metadata_inputs.clone())
+                        })
                         .unwrap_or_default()
                 });
                 let mut inputs_label = inputs.join(", ");
@@ -866,7 +869,12 @@ impl GuiApp {
                 let outputs = installed_plugins
                     .iter()
                     .find(|p| p.manifest.kind == manifest.kind)
-                    .map(|p| p.metadata_outputs.join(", "))
+                    .map(|p| {
+                        p.display_schema
+                            .as_ref()
+                            .map(|s| s.outputs.join(", "))
+                            .unwrap_or_else(|| p.metadata_outputs.join(", "))
+                    })
                     .unwrap_or_default();
                 egui::Grid::new(("plugin_preview_ports", manifest.kind.as_str()))
                     .num_columns(2)
@@ -1051,21 +1059,7 @@ impl GuiApp {
                         });
                     }
                     PluginTab::Organize => {
-                        let mut open_path_dialog: Option<u64> = None;
                         let mut pending_csv_prune: Option<(u64, usize)> = None;
-                        let id_to_display: HashMap<u64, String> = self
-            .workspace_manager.workspace
-                            .plugins
-                            .iter()
-                            .map(|plugin| {
-                                let display_name = name_by_kind
-                                    .get(&plugin.kind)
-                                    .cloned()
-                                    .unwrap_or_else(|| Self::display_kind(&plugin.kind));
-                                (plugin.id, display_name)
-                            })
-                            .collect();
-                        let connections_snapshot = self.workspace_manager.workspace.connections.clone();
                         ui.columns(2, |columns| {
                             columns[0].label("Search");
                             columns[0].text_edit_singleline(&mut self.windows.organize_search);
@@ -1111,199 +1105,204 @@ impl GuiApp {
                                         .cloned()
                                         .unwrap_or_else(|| Self::display_kind(&plugin.kind));
                                     columns[1].label(format!("#{} {}", plugin.id, display_name));
-                                    if plugin.kind == "csv_recorder" {
-                                    if let Value::Object(ref mut map) = plugin.config {
-                                        let mut separator = map
-                                            .get("separator")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or(",")
-                                            .to_string();
-                                            let mut include_time = map
-                                                .get("include_time")
-                                                .and_then(|v| v.as_bool())
-                                                .unwrap_or(true);
-                                            let mut path = map
-                                                .get("path")
-                                                .and_then(|v| v.as_str())
-                                                .unwrap_or("")
-                                                .to_string();
-                                            let mut path_autogen = map
-                                                .get("path_autogen")
-                                                .and_then(|v| v.as_bool())
-                                                .unwrap_or(true);
-                                            let mut csv_columns: Vec<String> = map
-                                                .get("columns")
-                                                .and_then(|v| v.as_array())
-                                                .map(|arr| {
-                                                    arr.iter()
-                                                        .map(|value| value.as_str().unwrap_or("").to_string())
-                                                        .collect()
-                                                })
-                                                .unwrap_or_default();
-                                            let mut input_count = csv_columns.len();
+                                    let is_app_plugin = matches!(
+                                        plugin.kind.as_str(),
+                                        "csv_recorder" | "live_plotter" | "performance_monitor" | "comedi_daq"
+                                    );
+                                    if is_app_plugin {
+                                        if let Some(installed) = self.plugin_manager.installed_plugins.iter().find(|p| p.manifest.kind == plugin.kind) {
+                                            if let Some(schema) = &installed.display_schema {
+                                                let col1 = &mut columns[1];
+                                                if schema.variables.is_empty() {
+                                                    col1.label("No configurable variables.");
+                                                } else {
+                                                    for var_name in &schema.variables {
+                                                        let (tx, rx) = mpsc::channel();
+                                                        let _ = self.state_sync.logic_tx.send(
+                                                            LogicMessage::GetPluginVariable(plugin.id, var_name.clone(), tx),
+                                                        );
+                                                        if let Ok(Some(value)) = rx.recv() {
+                                                            let field_info = installed.ui_schema.as_ref()
+                                                                .and_then(|schema| schema.fields.iter().find(|f| f.key == *var_name));
+                                                            let label = field_info
+                                                                .map(|field| field.label.as_str())
+                                                                .unwrap_or(var_name.as_str());
+                                                            let is_filepath = field_info
+                                                                .map(|field| matches!(field.field_type, rtsyn_plugin::ui::FieldType::FilePath { .. }))
+                                                                .unwrap_or(false);
+                                                            kv_row_wrapped(col1, label, 140.0, |ui| {
+                                                                match &value {
+                                                                    Value::String(s) => {
+                                                                        let mut text = s.clone();
+                                                                        let width = if is_filepath { 80.0 } else { 80.0 };
+                                                                        if ui.add(egui::TextEdit::singleline(&mut text).desired_width(width)).changed() {
+                                                                            let new_text = text.clone();
+                                                                            let _ = self.state_sync.logic_tx.send(
+                                                                                LogicMessage::SetPluginVariable(plugin.id, var_name.clone(), Value::String(new_text.clone())),
+                                                                            );
+                                                                            if let Value::Object(ref mut map) = plugin.config {
+                                                                                map.insert(var_name.clone(), Value::String(new_text));
+                                                                                if var_name == "path" {
+                                                                                    map.insert("path_autogen".to_string(), Value::from(false));
+                                                                                }
+                                                                                plugin_changed = true;
+                                                                            }
+                                                                        }
+                                                                        if is_filepath {
+                                                                            ui.add_space(2.0);
+                                                                            if ui.small_button("...").clicked() {
+                                                                                self.csv_path_target_plugin_id = Some(plugin.id);
+                                                                                let (tx, rx) = mpsc::channel();
+                                                                                self.file_dialogs.csv_path_dialog_rx = Some(rx);
+                                                                                spawn_file_dialog_thread(move || {
+                                                                                    let file = if has_rt_capabilities() {
+                                                                                        zenity_file_dialog("save", None)
+                                                                                    } else {
+                                                                                        rfd::FileDialog::new().save_file()
+                                                                                    };
+                                                                                    let _ = tx.send(file);
+                                                                                });
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    Value::Bool(b) => {
+                                                                        let mut checked = *b;
+                                                                        if ui.checkbox(&mut checked, "").changed() {
+                                                                            let _ = self.state_sync.logic_tx.send(
+                                                                                LogicMessage::SetPluginVariable(plugin.id, var_name.clone(), Value::Bool(checked)),
+                                                                            );
+                                                                            if let Value::Object(ref mut map) = plugin.config {
+                                                                                map.insert(var_name.clone(), Value::Bool(checked));
+                                                                                plugin_changed = true;
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    Value::Number(n) => {
+                                                                        let field_info = installed.ui_schema.as_ref()
+                                                                            .and_then(|schema| schema.fields.iter().find(|f| f.key == *var_name));
+                                                                        if let Some(f) = n.as_f64() {
+                                                                            let mut val = f;
+                                                                            let (speed, min, max) = if let Some(field) = field_info {
+                                                                                if let rtsyn_plugin::ui::FieldType::Float { min, max, step } = &field.field_type {
+                                                                                    (*step, *min, *max)
+                                                                                } else {
+                                                                                    (1.0, None, None)
+                                                                                }
+                                                                            } else {
+                                                                                (1.0, None, None)
+                                                                            };
+                                                                            let range = match (min, max) {
+                                                                                (Some(mn), Some(mx)) => mn..=mx,
+                                                                                (Some(mn), None) => mn..=f64::INFINITY,
+                                                                                (None, Some(mx)) => f64::NEG_INFINITY..=mx,
+                                                                                (None, None) => f64::NEG_INFINITY..=f64::INFINITY,
+                                                                            };
+                                                                            if ui.add(egui::DragValue::new(&mut val).speed(speed).clamp_range(range)).changed() {
+                                                                                let _ = self.state_sync.logic_tx.send(
+                                                                                    LogicMessage::SetPluginVariable(plugin.id, var_name.clone(), Value::from(val)),
+                                                                                );
+                                                                                if let Value::Object(ref mut map) = plugin.config {
+                                                                                    map.insert(var_name.clone(), Value::from(val));
+                                                                                    plugin_changed = true;
+                                                                                }
+                                                                            }
+                                                                        } else if let Some(i) = n.as_i64() {
+                                                                            let mut val = i;
+                                                                            let (speed, min, max) = if let Some(field) = field_info {
+                                                                                if let rtsyn_plugin::ui::FieldType::Integer { min, max, step } = &field.field_type {
+                                                                                    (*step as f64, *min, *max)
+                                                                                } else {
+                                                                                    (1.0, None, None)
+                                                                                }
+                                                                            } else {
+                                                                                (1.0, None, None)
+                                                                            };
+                                                                            let range = match (min, max) {
+                                                                                (Some(mn), Some(mx)) => mn..=mx,
+                                                                                (Some(mn), None) => mn..=i64::MAX,
+                                                                                (None, Some(mx)) => i64::MIN..=mx,
+                                                                                (None, None) => i64::MIN..=i64::MAX,
+                                                                            };
+                                                                            if ui.add(egui::DragValue::new(&mut val).speed(speed).clamp_range(range)).changed() {
+                                                                                let _ = self.state_sync.logic_tx.send(
+                                                                                    LogicMessage::SetPluginVariable(plugin.id, var_name.clone(), Value::from(val)),
+                                                                                );
+                                                                                if let Value::Object(ref mut map) = plugin.config {
+                                                                                    map.insert(var_name.clone(), Value::from(val));
+                                                                                    plugin_changed = true;
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    Value::Array(arr) => {
+                                                                        if let Some(field) = field_info {
+                                                                            if let rtsyn_plugin::ui::FieldType::DynamicList { item_type, add_label } = &field.field_type {
+                                                                                let mut items: Vec<String> = arr
+                                                                                    .iter()
+                                                                                    .map(|v| v.as_str().unwrap_or("").to_string())
+                                                                                    .collect();
+                                                                                let mut list_changed = false;
 
-                                            let col1 = &mut columns[1];
-                                            col1.horizontal(|ui| {
-                                                ui.label("Separator");
-                                                if ui
-                                                    .add(
-                                                        egui::TextEdit::singleline(&mut separator)
-                                                            .desired_width(40.0),
-                                                    )
-                                                    .changed()
-                                                {
-                                                    plugin_changed = true;
-                                                }
-                                            });
-                                            let (_unit, _scale, time_label) = Self::time_settings_from_selection(
-                                                self.workspace_settings.tab,
-                                                self.frequency_unit,
-                                                self.period_unit,
-                                            );
-                                            col1.horizontal(|ui| {
-                                                if ui
-                                                    .checkbox(&mut include_time, "Include time column")
-                                                    .changed()
-                                                {
-                                                    plugin_changed = true;
-                                                }
-                                                ui.label(RichText::new(time_label).color(egui::Color32::GRAY));
-                                            });
+                                                                                ui.vertical(|ui| {
+                                                                                    let mut idx = 0usize;
+                                                                                    while idx < items.len() {
+                                                                                        let mut value = items[idx].clone();
+                                                                                        let mut remove_row = false;
+                                                                                        ui.horizontal(|ui| {
+                                                                                            match &**item_type {
+                                                                                                rtsyn_plugin::ui::FieldType::Text { .. } => {
+                                                                                                    if ui.add(egui::TextEdit::singleline(&mut value).desired_width(140.0)).changed() {
+                                                                                                        items[idx] = value.clone();
+                                                                                                        list_changed = true;
+                                                                                                    }
+                                                                                                }
+                                                                                                _ => {
+                                                                                                    ui.label("Unsupported list item type");
+                                                                                                }
+                                                                                            }
+                                                                                            if ui.small_button("X").clicked() {
+                                                                                                remove_row = true;
+                                                                                            }
+                                                                                        });
+                                                                                        if remove_row {
+                                                                                            items.remove(idx);
+                                                                                            list_changed = true;
+                                                                                        } else {
+                                                                                            idx += 1;
+                                                                                        }
+                                                                                    }
+                                                                                    if ui.small_button(add_label).clicked() {
+                                                                                        items.push(String::new());
+                                                                                        list_changed = true;
+                                                                                    }
+                                                                                });
 
-                                            col1.horizontal(|ui| {
-                                                ui.label("Path");
-                                                if ui
-                                                    .add(
-                                                        egui::TextEdit::singleline(&mut path)
-                                                            .desired_width(220.0),
-                                                    )
-                                                    .changed()
-                                                {
-                                                    plugin_changed = true;
-                                                    path_autogen = false;
-                                                }
-                                                if ui.button("Browse...").clicked() {
-                                                    open_path_dialog = Some(plugin.id);
-                                                    path_autogen = false;
-                                                }
-                                            });
-
-                                            col1.horizontal(|ui| {
-                                                ui.label("Inputs");
-                                                if ui.button("Add input").clicked() {
-                                                    csv_columns.push(String::new());
-                                                    input_count = csv_columns.len();
-                                                    plugin_changed = true;
-                                                }
-                                            });
-
-                                            col1.label("Columns");
-                                            egui::ScrollArea::vertical()
-                                                .id_source(("csv_columns", plugin.id))
-                                                .max_height(120.0)
-                                                .show(col1, |ui| {
-                                                    let mut idx = 0usize;
-                                                    while idx < input_count {
-                                                        let label = format!("in_{idx}");
-                                                        let mut value =
-                                                            csv_columns.get(idx).cloned().unwrap_or_default();
-                                                        if value.is_empty()
-                                                            && self
-            .workspace_manager.workspace
-                                                                .connections
-                                                                .iter()
-                                                                .any(|conn| {
-                                                                    conn.to_plugin == plugin.id
-                                                                        && conn.to_port == label
-                                                                })
-                                                        {
-                                                            let default_name = {
-                                                                let port = format!("in_{idx}");
-                                                                if let Some(conn) = connections_snapshot
-                                                                    .iter()
-                                                                    .find(|conn| {
-                                                                        conn.to_plugin == plugin.id
-                                                                            && conn.to_port == port
-                                                                    })
-                                                                {
-                                                                    let source_name = id_to_display
-                                                                        .get(&conn.from_plugin)
-                                                                        .cloned()
-                                                                        .unwrap_or_else(|| "plugin".to_string())
-                                                                        .replace(' ', "_")
-                                                                        .to_lowercase();
-                                                                    let port = conn.from_port.to_lowercase();
-                                                                    format!(
-                                                                        "{source_name}_{}_{}",
-                                                                        conn.from_plugin, port
-                                                                    )
-                                                                } else {
-                                                                    let recorder_name = id_to_display
-                                                                        .get(&plugin.id)
-                                                                        .cloned()
-                                                                        .unwrap_or_else(|| "plugin".to_string())
-                                                                        .replace(' ', "_")
-                                                                        .to_lowercase();
-                                                                    format!("{recorder_name}_{}_{}", plugin.id, port.to_lowercase())
+                                                                                if list_changed {
+                                                                                    let new_value = Value::Array(
+                                                                                        items.clone().into_iter().map(Value::String).collect()
+                                                                                    );
+                                                                                    let _ = self.state_sync.logic_tx.send(
+                                                                                        LogicMessage::SetPluginVariable(plugin.id, var_name.clone(), new_value.clone())
+                                                                                    );
+                                                                                    if let Value::Object(ref mut map) = plugin.config {
+                                                                                        map.insert(var_name.clone(), new_value);
+                                                                                        if var_name == "columns" {
+                                                                                            map.insert("input_count".to_string(), Value::from(items.len() as u64));
+                                                                                            pending_csv_prune = Some((plugin.id, items.len()));
+                                                                                        }
+                                                                                        plugin_changed = true;
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    _ => {}
                                                                 }
-                                                            };
-                                                            value = default_name.clone();
-                                                            if idx < csv_columns.len() {
-                                                                csv_columns[idx] = default_name;
-                                                            } else {
-                                                                csv_columns.push(default_name);
-                                                            }
-                                                            plugin_changed = true;
+                                                            });
                                                         }
-                                                        let display = if value.is_empty() {
-                                                            "empty".to_string()
-                                                        } else {
-                                                            value.clone()
-                                                        };
-                                                        let mut remove_row = false;
-                                                        ui.horizontal(|ui| {
-                                                            ui.label(label);
-                                                            if ui
-                                                                .add(
-                                                                    egui::TextEdit::singleline(&mut value)
-                                                                        .hint_text(display)
-                                                                        .desired_width(140.0),
-                                                                )
-                                                                .changed()
-                                                            {
-                                                                if idx < csv_columns.len() {
-                                                                    csv_columns[idx] = value.clone();
-                                                                }
-                                                                plugin_changed = true;
-                                                            }
-                                                            if ui.button("X").clicked() {
-                                                                remove_row = true;
-                                                            }
-                                                        });
-                                                        if remove_row {
-                                                            if idx < csv_columns.len() {
-                                                                csv_columns.remove(idx);
-                                                                input_count = csv_columns.len();
-                                                                plugin_changed = true;
-                                                                continue;
-                                                            }
-                                                        }
-                                                        idx += 1;
                                                     }
-                                                });
-
-                                            map.insert("separator".to_string(), Value::String(separator));
-                                            map.insert("include_time".to_string(), Value::from(include_time));
-                                            map.insert("input_count".to_string(), Value::from(input_count as u64));
-                                            map.insert(
-                                                "columns".to_string(),
-                                                Value::Array(csv_columns.into_iter().map(Value::from).collect()),
-                                            );
-                                            map.insert("path".to_string(), Value::String(path));
-                                            map.insert("path_autogen".to_string(), Value::from(path_autogen));
-                                            pending_csv_prune = Some((plugin.id, input_count));
-                                        } else {
-                                            columns[1].label("Config is not an object.");
+                                                }
+                                            }
                                         }
                                     } else {
                                         match plugin.config {
@@ -1386,9 +1385,6 @@ impl GuiApp {
                                 columns[1].label("Select a plugin to edit.");
                             }
                         });
-                        if let Some(id) = open_path_dialog {
-                            self.open_csv_path_dialog(id);
-                        }
                         if let Some((id, count)) = pending_csv_prune {
                             prune_extendable_inputs_plugin_connections(
                                 &mut self.workspace_manager.workspace.connections,

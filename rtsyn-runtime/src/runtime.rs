@@ -87,14 +87,14 @@ impl DynamicPluginInstance {
         let outputs = Self::read_ports(unsafe { &*api }, handle, unsafe { (*api).outputs_json });
         let input_bytes = inputs.iter().map(|v| v.as_bytes().to_vec()).collect();
         let output_bytes = outputs.iter().map(|v| v.as_bytes().to_vec()).collect();
-        let display_schema = unsafe { (*api).ui_schema_json }
+        let display_schema = unsafe { (*api).display_schema_json }
             .and_then(|schema_fn| {
                 let raw = schema_fn(handle);
                 if raw.ptr.is_null() || raw.len == 0 {
                     return None;
                 }
-                let slice = unsafe { std::slice::from_raw_parts(raw.ptr, raw.len) };
-                serde_json::from_slice::<DisplaySchema>(slice).ok()
+                let json = unsafe { raw.into_string() };
+                serde_json::from_str::<DisplaySchema>(&json).ok()
             });
         let internal_variables = display_schema
             .as_ref()
@@ -263,26 +263,16 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                                     if let Some(dynamic) = unsafe { DynamicPluginInstance::load(path, 0) } {
                                         if let Some(behavior_json_fn) = unsafe { (*dynamic.api).behavior_json } {
                                             let json_str = behavior_json_fn(dynamic.handle);
-                                            let json_slice = unsafe { std::slice::from_raw_parts(json_str.ptr, json_str.len) };
-                                            if let Ok(behavior) = serde_json::from_slice(json_slice) {
-                            let ui_schema: Option<rtsyn_plugin::ui::UISchema> = if let Some(ui_schema_fn) = unsafe { (*dynamic.api).ui_schema_json } {
-                                let schema_str = ui_schema_fn(dynamic.handle);
-                                let schema_slice = unsafe { std::slice::from_raw_parts(schema_str.ptr, schema_str.len) };
-                                serde_json::from_slice(schema_slice).ok()
-                            } else {
-                                None
-                            };
-                                                unsafe { ((*dynamic.api).destroy)(dynamic.handle); }
-                                                let _ = response_tx.send(Some(behavior));
-                                                continue;
+                                            if !json_str.ptr.is_null() && json_str.len > 0 {
+                                                let json = unsafe { json_str.into_string() };
+                                                if let Ok(behavior) = serde_json::from_str(&json) {
+                                                    unsafe { ((*dynamic.api).destroy)(dynamic.handle); }
+                                                    let _ = response_tx.send(Some(behavior));
+                                                    continue;
+                                                }
                                             }
-                            let ui_schema: Option<rtsyn_plugin::ui::UISchema> = if let Some(ui_schema_fn) = unsafe { (*dynamic.api).ui_schema_json } {
-                                let schema_str = ui_schema_fn(dynamic.handle);
-                                let schema_slice = unsafe { std::slice::from_raw_parts(schema_str.ptr, schema_str.len) };
-                                serde_json::from_slice(schema_slice).ok()
-                            } else {
-                                None
-                            };
+                                            unsafe { ((*dynamic.api).destroy)(dynamic.handle); }
+                                        } else {
                                             unsafe { ((*dynamic.api).destroy)(dynamic.handle); }
                                         }
                                     }
@@ -297,17 +287,23 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                             let inputs_str = unsafe { ((*dynamic.api).inputs_json)(dynamic.handle) };
                             let outputs_str = unsafe { ((*dynamic.api).outputs_json)(dynamic.handle) };
                             let meta_str = unsafe { ((*dynamic.api).meta_json)(dynamic.handle) };
-                            let inputs: Vec<String> = unsafe {
-                                let slice = std::slice::from_raw_parts(inputs_str.ptr, inputs_str.len);
-                                serde_json::from_slice(slice).unwrap_or_default()
+                            let inputs: Vec<String> = if inputs_str.ptr.is_null() || inputs_str.len == 0 {
+                                Vec::new()
+                            } else {
+                                let json = unsafe { inputs_str.into_string() };
+                                serde_json::from_str(&json).unwrap_or_default()
                             };
-                            let outputs: Vec<String> = unsafe {
-                                let slice = std::slice::from_raw_parts(outputs_str.ptr, outputs_str.len);
-                                serde_json::from_slice(slice).unwrap_or_default()
+                            let outputs: Vec<String> = if outputs_str.ptr.is_null() || outputs_str.len == 0 {
+                                Vec::new()
+                            } else {
+                                let json = unsafe { outputs_str.into_string() };
+                                serde_json::from_str(&json).unwrap_or_default()
                             };
-                            let meta: serde_json::Value = unsafe {
-                                let slice = std::slice::from_raw_parts(meta_str.ptr, meta_str.len);
-                                serde_json::from_slice(slice).unwrap_or(serde_json::json!({}))
+                            let meta: serde_json::Value = if meta_str.ptr.is_null() || meta_str.len == 0 {
+                                serde_json::json!({})
+                            } else {
+                                let json = unsafe { meta_str.into_string() };
+                                serde_json::from_str(&json).unwrap_or(serde_json::json!({}))
                             };
                             let variables: Vec<(String, f64)> = meta.get("default_vars")
                                 .and_then(|v| v.as_array())
@@ -324,17 +320,25 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                                     }).collect()
                                 })
                                 .unwrap_or_default();
-                            let display_schema = if let Some(ui_schema_fn) = unsafe { (*dynamic.api).ui_schema_json } {
-                                let schema_str = ui_schema_fn(dynamic.handle);
-                                let schema_slice = unsafe { std::slice::from_raw_parts(schema_str.ptr, schema_str.len) };
-                                serde_json::from_slice(schema_slice).ok()
+                            let display_schema = if let Some(schema_fn) = unsafe { (*dynamic.api).display_schema_json } {
+                                let schema_str = schema_fn(dynamic.handle);
+                                if schema_str.ptr.is_null() || schema_str.len == 0 {
+                                    None
+                                } else {
+                                    let json = unsafe { schema_str.into_string() };
+                                    serde_json::from_str(&json).ok()
+                                }
                             } else {
                                 None
                             };
                             let ui_schema: Option<rtsyn_plugin::ui::UISchema> = if let Some(ui_schema_fn) = unsafe { (*dynamic.api).ui_schema_json } {
                                 let schema_str = ui_schema_fn(dynamic.handle);
-                                let schema_slice = unsafe { std::slice::from_raw_parts(schema_str.ptr, schema_str.len) };
-                                serde_json::from_slice(schema_slice).ok()
+                                if schema_str.ptr.is_null() || schema_str.len == 0 {
+                                    None
+                                } else {
+                                    let json = unsafe { schema_str.into_string() };
+                                    serde_json::from_str(&json).ok()
+                                }
                             } else {
                                 None
                             };
@@ -878,26 +882,16 @@ pub fn run_runtime_current(
                                     if let Some(dynamic) = unsafe { DynamicPluginInstance::load(path, 0) } {
                                         if let Some(behavior_json_fn) = unsafe { (*dynamic.api).behavior_json } {
                                             let json_str = behavior_json_fn(dynamic.handle);
-                                            let json_slice = unsafe { std::slice::from_raw_parts(json_str.ptr, json_str.len) };
-                                            if let Ok(behavior) = serde_json::from_slice(json_slice) {
-                            let ui_schema: Option<rtsyn_plugin::ui::UISchema> = if let Some(ui_schema_fn) = unsafe { (*dynamic.api).ui_schema_json } {
-                                let schema_str = ui_schema_fn(dynamic.handle);
-                                let schema_slice = unsafe { std::slice::from_raw_parts(schema_str.ptr, schema_str.len) };
-                                serde_json::from_slice(schema_slice).ok()
-                            } else {
-                                None
-                            };
-                                                unsafe { ((*dynamic.api).destroy)(dynamic.handle); }
-                                                let _ = response_tx.send(Some(behavior));
-                                                continue;
+                                            if !json_str.ptr.is_null() && json_str.len > 0 {
+                                                let json = unsafe { json_str.into_string() };
+                                                if let Ok(behavior) = serde_json::from_str(&json) {
+                                                    unsafe { ((*dynamic.api).destroy)(dynamic.handle); }
+                                                    let _ = response_tx.send(Some(behavior));
+                                                    continue;
+                                                }
                                             }
-                            let ui_schema: Option<rtsyn_plugin::ui::UISchema> = if let Some(ui_schema_fn) = unsafe { (*dynamic.api).ui_schema_json } {
-                                let schema_str = ui_schema_fn(dynamic.handle);
-                                let schema_slice = unsafe { std::slice::from_raw_parts(schema_str.ptr, schema_str.len) };
-                                serde_json::from_slice(schema_slice).ok()
-                            } else {
-                                None
-                            };
+                                            unsafe { ((*dynamic.api).destroy)(dynamic.handle); }
+                                        } else {
                                             unsafe { ((*dynamic.api).destroy)(dynamic.handle); }
                                         }
                                     }
@@ -912,17 +906,23 @@ pub fn run_runtime_current(
                             let inputs_str = unsafe { ((*dynamic.api).inputs_json)(dynamic.handle) };
                             let outputs_str = unsafe { ((*dynamic.api).outputs_json)(dynamic.handle) };
                             let meta_str = unsafe { ((*dynamic.api).meta_json)(dynamic.handle) };
-                            let inputs: Vec<String> = unsafe {
-                                let slice = std::slice::from_raw_parts(inputs_str.ptr, inputs_str.len);
-                                serde_json::from_slice(slice).unwrap_or_default()
+                            let inputs: Vec<String> = if inputs_str.ptr.is_null() || inputs_str.len == 0 {
+                                Vec::new()
+                            } else {
+                                let json = unsafe { inputs_str.into_string() };
+                                serde_json::from_str(&json).unwrap_or_default()
                             };
-                            let outputs: Vec<String> = unsafe {
-                                let slice = std::slice::from_raw_parts(outputs_str.ptr, outputs_str.len);
-                                serde_json::from_slice(slice).unwrap_or_default()
+                            let outputs: Vec<String> = if outputs_str.ptr.is_null() || outputs_str.len == 0 {
+                                Vec::new()
+                            } else {
+                                let json = unsafe { outputs_str.into_string() };
+                                serde_json::from_str(&json).unwrap_or_default()
                             };
-                            let meta: serde_json::Value = unsafe {
-                                let slice = std::slice::from_raw_parts(meta_str.ptr, meta_str.len);
-                                serde_json::from_slice(slice).unwrap_or(serde_json::json!({}))
+                            let meta: serde_json::Value = if meta_str.ptr.is_null() || meta_str.len == 0 {
+                                serde_json::json!({})
+                            } else {
+                                let json = unsafe { meta_str.into_string() };
+                                serde_json::from_str(&json).unwrap_or(serde_json::json!({}))
                             };
                             let variables: Vec<(String, f64)> = meta.get("default_vars")
                                 .and_then(|v| v.as_array())
@@ -939,17 +939,25 @@ pub fn run_runtime_current(
                                     }).collect()
                                 })
                                 .unwrap_or_default();
-                            let display_schema = if let Some(ui_schema_fn) = unsafe { (*dynamic.api).ui_schema_json } {
-                                let schema_str = ui_schema_fn(dynamic.handle);
-                                let schema_slice = unsafe { std::slice::from_raw_parts(schema_str.ptr, schema_str.len) };
-                                serde_json::from_slice(schema_slice).ok()
+                            let display_schema = if let Some(schema_fn) = unsafe { (*dynamic.api).display_schema_json } {
+                                let schema_str = schema_fn(dynamic.handle);
+                                if schema_str.ptr.is_null() || schema_str.len == 0 {
+                                    None
+                                } else {
+                                    let json = unsafe { schema_str.into_string() };
+                                    serde_json::from_str(&json).ok()
+                                }
                             } else {
                                 None
                             };
                             let ui_schema: Option<rtsyn_plugin::ui::UISchema> = if let Some(ui_schema_fn) = unsafe { (*dynamic.api).ui_schema_json } {
                                 let schema_str = ui_schema_fn(dynamic.handle);
-                                let schema_slice = unsafe { std::slice::from_raw_parts(schema_str.ptr, schema_str.len) };
-                                serde_json::from_slice(schema_slice).ok()
+                                if schema_str.ptr.is_null() || schema_str.len == 0 {
+                                    None
+                                } else {
+                                    let json = unsafe { schema_str.into_string() };
+                                    serde_json::from_str(&json).ok()
+                                }
                             } else {
                                 None
                             };

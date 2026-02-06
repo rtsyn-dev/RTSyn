@@ -95,11 +95,19 @@ impl GuiApp {
             self.file_dialogs.csv_path_dialog_rx = None;
             let plugin_id = self.csv_path_target_plugin_id.take();
             if let (Some(path), Some(id)) = (selection, plugin_id) {
+                let path_str = path.to_string_lossy().to_string();
                 let _ = self.state_sync.logic_tx.send(LogicMessage::SetPluginVariable(
                     id,
                     "path".to_string(),
-                    serde_json::Value::String(path.to_string_lossy().to_string())
+                    serde_json::Value::String(path_str.clone())
                 ));
+                if let Some(plugin) = self.workspace_manager.workspace.plugins.iter_mut().find(|p| p.id == id) {
+                    if let serde_json::Value::Object(ref mut map) = plugin.config {
+                        map.insert("path".to_string(), serde_json::Value::String(path_str));
+                        map.insert("path_autogen".to_string(), serde_json::Value::Bool(false));
+                        self.mark_workspace_dirty();
+                    }
+                }
             }
         }
     }

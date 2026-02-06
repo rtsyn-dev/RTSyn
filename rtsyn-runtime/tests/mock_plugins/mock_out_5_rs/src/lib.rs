@@ -94,6 +94,7 @@ pub extern "C" fn rtsyn_plugin_api() -> *const PluginApi {
         process,
         get_output,
         behavior_json: None,
+        display_schema_json: None,
         ui_schema_json: None,
     };
     &API as *const PluginApi

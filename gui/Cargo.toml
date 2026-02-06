@@ -19,6 +19,7 @@ thiserror = { workspace = true }
 log = { workspace = true }
 csv_recorder_plugin = { path = "../app_plugins/csv_recorder" }
 live_plotter_plugin = { path = "../app_plugins/live_plotter" }
+performance_monitor_plugin = { path = "../app_plugins/performance_monitor" }
 comedi_daq_plugin = { path = "../app_plugins/comedi_daq", optional = true }
 
 [target.'cfg(unix)'.dependencies]
