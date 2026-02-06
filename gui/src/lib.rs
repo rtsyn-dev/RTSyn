@@ -23,6 +23,10 @@ fn has_rt_capabilities() -> bool {
 
 // External file dialog using zenity
 fn zenity_file_dialog(mode: &str, filter: Option<&str>) -> Option<PathBuf> {
+    zenity_file_dialog_with_name(mode, filter, None)
+}
+
+fn zenity_file_dialog_with_name(mode: &str, filter: Option<&str>, filename: Option<&str>) -> Option<PathBuf> {
     let mut cmd = Command::new("zenity");
     cmd.arg("--file-selection");
     
@@ -34,6 +38,10 @@ fn zenity_file_dialog(mode: &str, filter: Option<&str>) -> Option<PathBuf> {
     
     if let Some(f) = filter {
         cmd.arg("--file-filter").arg(f);
+    }
+    
+    if let Some(name) = filename {
+        cmd.arg("--filename").arg(name);
     }
     
     cmd.output().ok()
@@ -287,6 +295,7 @@ struct GuiApp {
     plotter_preview_height: u32,
     plotter_preview_settings: HashMap<u64, (bool, bool, bool, Vec<String>, Vec<egui::Color32>, String, bool, String, String, bool, bool)>,
     next_plugin_id: u64,
+    available_plugin_ids: Vec<u64>,
     connection_from_idx: usize,
     connection_to_idx: usize,
     connection_from_port: String,
@@ -425,6 +434,7 @@ impl GuiApp {
             plotter_preview_height: 700,
             plotter_preview_settings: HashMap::new(),
             next_plugin_id: 1,
+            available_plugin_ids: Vec::new(),
             connection_from_idx: 0,
             connection_to_idx: 0,
             connection_from_port: "out".to_string(),
@@ -1119,7 +1129,11 @@ impl GuiApp {
         
 
         let plugin = PluginDefinition {
-            id: self.next_plugin_id,
+            id: self.available_plugin_ids.pop().unwrap_or_else(|| {
+                let id = self.next_plugin_id;
+                self.next_plugin_id += 1;
+                id
+            }),
             kind: installed.manifest.kind.clone(),
             config: Value::Object(config_map),
             priority: 99,
@@ -1127,7 +1141,6 @@ impl GuiApp {
         };
 
         self.workspace.plugins.push(plugin);
-        self.next_plugin_id += 1;
         
         self.status = "Installed plugin added".to_string();
         self.mark_workspace_dirty();
@@ -1141,7 +1154,11 @@ impl GuiApp {
             }
         };
         let plugin = PluginDefinition {
-            id: self.next_plugin_id,
+            id: self.available_plugin_ids.pop().unwrap_or_else(|| {
+                let id = self.next_plugin_id;
+                self.next_plugin_id += 1;
+                id
+            }),
             kind: source.kind,
             config: source.config,
             priority: source.priority,
@@ -1149,7 +1166,6 @@ impl GuiApp {
         };
         let kind = plugin.kind.clone();
         self.workspace.plugins.push(plugin);
-        self.next_plugin_id += 1;
         
         // Cache plugin behavior
         self.ensure_plugin_behavior_cached(&kind);
@@ -1338,6 +1354,7 @@ impl GuiApp {
         }
 
         let removed_id = self.workspace.plugins[plugin_index].id;
+        self.available_plugin_ids.push(removed_id);
         
         // Close associated windows
         if self.selected_plugin_id == Some(removed_id) {
@@ -1577,6 +1594,7 @@ impl GuiApp {
 
         match WorkspaceDefinition::load_from_file(&self.workspace_path) {
             Ok(workspace) => {
+                let name = workspace.name.clone();
                 self.workspace = workspace;
                 self.refresh_installed_library_paths();
                 self.inject_library_paths_into_workspace();
@@ -1584,7 +1602,9 @@ impl GuiApp {
                 self.enforce_connection_dependent();
                 self.apply_workspace_settings();
                 self.sync_next_plugin_id();
+                self.available_plugin_ids.clear();
                 self.mark_workspace_dirty();
+                self.show_info("Workspace", &format!("Workspace '{}' loaded", name));
             }
             Err(err) => {
                 self.show_info("Workspace", &format!("Load failed: {err}"));
@@ -1636,6 +1656,7 @@ impl GuiApp {
         self.workspace_path = path.clone();
         self.workspace = workspace;
         self.next_plugin_id = 1;
+        self.available_plugin_ids.clear();
         let _ = self.workspace.save_to_file(&path);
         self.show_info("Workspace", "Workspace created");
         self.scan_workspaces();
@@ -1707,13 +1728,26 @@ impl GuiApp {
             return;
         }
         let source = source.to_path_buf();
+        let workspace_name = match WorkspaceDefinition::load_from_file(&source) {
+            Ok(ws) => format!("{}.json", ws.name),
+            Err(_) => String::new(),
+        };
         let (tx, rx) = mpsc::channel();
         self.export_dialog_rx = Some(rx);
         spawn_file_dialog_thread(move || {
             let dest = if has_rt_capabilities() {
-                zenity_file_dialog("save", None)
+                let filename = if !workspace_name.is_empty() {
+                    Some(workspace_name.as_str())
+                } else {
+                    None
+                };
+                zenity_file_dialog_with_name("save", None, filename)
             } else {
-                rfd::FileDialog::new().save_file()
+                let mut dialog = rfd::FileDialog::new();
+                if !workspace_name.is_empty() {
+                    dialog = dialog.set_file_name(&workspace_name);
+                }
+                dialog.save_file()
             };
             let _ = tx.send((source, dest));
         });
@@ -2858,6 +2892,11 @@ impl eframe::App for GuiApp {
                     }
                     if ui.button("Save Workspace").clicked() {
                         self.save_workspace_overwrite_current();
+                        ui.close_menu();
+                    }
+                    let has_workspace = !self.workspace_path.as_os_str().is_empty();
+                    if ui.add_enabled(has_workspace, egui::Button::new("Export Workspace")).clicked() {
+                        self.export_workspace_path(&self.workspace_path.clone());
                         ui.close_menu();
                     }
                     if ui.button("Manage Workspaces").clicked() {

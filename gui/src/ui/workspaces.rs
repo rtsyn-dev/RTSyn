@@ -164,7 +164,7 @@ impl GuiApp {
             .fixed_size(window_size)
             .show(ctx, |ui| {
                 ui.columns(2, |columns| {
-                    columns[0].label("Workspaces");
+                    columns[0].add_space(4.0);
                     let mut selected: Option<usize> = None;
                     let bottom_height = 60.0;
                     let list_height = (columns[0].available_height() - bottom_height).max(120.0);
@@ -177,11 +177,12 @@ impl GuiApp {
                                 .max_height(list_height)
                                 .min_scrolled_height(list_height)
                                 .show(ui, |ui| {
+                                    ui.style_mut().spacing.item_spacing.y = 4.0;
                                     for (idx, entry) in self.workspace_entries.iter().enumerate() {
                                         let label = format!("{} ({})", entry.name, entry.plugins);
                                         let response = ui.selectable_label(
                                             self.manage_workspace_selected_index == Some(idx),
-                                            label,
+                                            egui::RichText::new(label).size(14.0),
                                         );
                                         if response.clicked() {
                                             selected = Some(idx);
@@ -201,33 +202,45 @@ impl GuiApp {
                         }
                     }
 
-                    columns[1].label("Preview");
+                    columns[1].add_space(4.0);
                     if let Some(idx) = self.manage_workspace_selected_index {
                         if let Some(entry) = self.workspace_entries.get(idx) {
-                            columns[1].label(entry.description.clone());
-                            columns[1].label(format!("Plugins: {}", entry.plugins));
-                            if !entry.plugin_kinds.is_empty() {
-                                columns[1].label(entry.plugin_kinds.join(", "));
-                            }
-                            columns[1].add_space(6.0);
-                            if columns[1].button("Load").clicked() {
-                                action_load = Some(entry.path.clone());
-                            }
-                            if columns[1].button("Edit metadata").clicked() {
-                                action_edit = Some(entry.path.clone());
-                            }
-                            if columns[1].button("Export").clicked() {
-                                action_export = Some(entry.path.clone());
-                            }
-                            if columns[1].button("Delete").clicked() {
-                                action_delete = Some(entry.path.clone());
-                            }
+                            columns[1].vertical(|ui| {
+                                ui.add_space(4.0);
+                                if !entry.description.is_empty() {
+                                    ui.label(egui::RichText::new(&entry.description).size(13.0).color(egui::Color32::from_gray(200)));
+                                    ui.add_space(8.0);
+                                }
+                                ui.horizontal(|ui| {
+                                    ui.label(egui::RichText::new("Plugins:").strong());
+                                    ui.label(entry.plugins.to_string());
+                                });
+                                if !entry.plugin_kinds.is_empty() {
+                                    ui.add_space(4.0);
+                                    ui.label(egui::RichText::new("Types:").strong());
+                                    ui.label(egui::RichText::new(entry.plugin_kinds.join(", ")).size(12.0).color(egui::Color32::from_gray(180)));
+                                }
+                                ui.add_space(12.0);
+                                if ui.button("Load").clicked() {
+                                    action_load = Some(entry.path.clone());
+                                }
+                                if ui.button("Edit metadata").clicked() {
+                                    action_edit = Some(entry.path.clone());
+                                }
+                                if ui.button("Export").clicked() {
+                                    action_export = Some(entry.path.clone());
+                                }
+                                if ui.button("Delete").clicked() {
+                                    action_delete = Some(entry.path.clone());
+                                }
+                            });
                         }
                     } else {
                         columns[1].with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
+                            ui.add_space(4.0);
                             ui.label(
-                                RichText::new("Select a workspace to manage.")
-                                    .color(egui::Color32::GRAY),
+                                RichText::new("No workspace selected")
+                                    .color(egui::Color32::from_gray(120)),
                             );
                         });
                     }
@@ -294,7 +307,7 @@ impl GuiApp {
             .fixed_size(window_size)
             .show(ctx, |ui| {
                 ui.columns(2, |columns| {
-                    columns[0].label("Workspaces");
+                    columns[0].add_space(4.0);
                     let mut selected: Option<usize> = None;
                     let bottom_height = 60.0;
                     let list_height = (columns[0].available_height() - bottom_height).max(120.0);
@@ -307,17 +320,15 @@ impl GuiApp {
                                 .max_height(list_height)
                                 .min_scrolled_height(list_height)
                                 .show(ui, |ui| {
+                                    ui.style_mut().spacing.item_spacing.y = 4.0;
                                     for (idx, entry) in self.workspace_entries.iter().enumerate() {
                                         let label = format!("{} ({})", entry.name, entry.plugins);
                                         let response = ui.selectable_label(
                                             self.load_workspace_selected_index == Some(idx),
-                                            label,
+                                            egui::RichText::new(label).size(14.0),
                                         );
                                         if response.clicked() {
                                             selected = Some(idx);
-                                        }
-                                        if response.double_clicked() {
-                                            action_load = Some(entry.path.clone());
                                         }
                                     }
                                 });
@@ -331,21 +342,36 @@ impl GuiApp {
                         }
                     }
 
-                    columns[1].label("Preview");
+                    columns[1].add_space(4.0);
                     if let Some(idx) = self.load_workspace_selected_index {
                         if let Some(entry) = self.workspace_entries.get(idx) {
-                            columns[1].label(entry.description.clone());
-                            columns[1].label(format!("Plugins: {}", entry.plugins));
-                            if !entry.plugin_kinds.is_empty() {
-                                columns[1].label(entry.plugin_kinds.join(", "));
-                            }
-                            columns[1].add_space(6.0);
+                            columns[1].vertical(|ui| {
+                                ui.add_space(4.0);
+                                if !entry.description.is_empty() {
+                                    ui.label(egui::RichText::new(&entry.description).size(13.0).color(egui::Color32::from_gray(200)));
+                                    ui.add_space(8.0);
+                                }
+                                ui.horizontal(|ui| {
+                                    ui.label(egui::RichText::new("Plugins:").strong());
+                                    ui.label(entry.plugins.to_string());
+                                });
+                                if !entry.plugin_kinds.is_empty() {
+                                    ui.add_space(4.0);
+                                    ui.label(egui::RichText::new("Types:").strong());
+                                    ui.label(egui::RichText::new(entry.plugin_kinds.join(", ")).size(12.0).color(egui::Color32::from_gray(180)));
+                                }
+                                ui.add_space(12.0);
+                                if ui.button("Load").clicked() {
+                                    action_load = Some(entry.path.clone());
+                                }
+                            });
                         }
                     } else {
                         columns[1].with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
+                            ui.add_space(4.0);
                             ui.label(
-                                RichText::new("Select a workspace to load.")
-                                    .color(egui::Color32::GRAY),
+                                RichText::new("No workspace selected")
+                                    .color(egui::Color32::from_gray(120)),
                             );
                         });
                     }
@@ -666,6 +692,8 @@ impl GuiApp {
                     ui_hz: self.logic_ui_hz,
                     max_integration_steps: draft.max_integration_steps,
                 }));
+            
+            self.show_info("Time scale", "Sampling rate updated");
         }
 
         self.workspace_settings_open = open;
