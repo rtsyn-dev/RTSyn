@@ -31,7 +31,8 @@ impl GuiApp {
             let viewport_id = egui::ViewportId::from_hash_of(("plotter", plugin_id));
             let builder = egui::ViewportBuilder::default()
                 .with_title(title.clone())
-                .with_inner_size([900.0, 520.0]);
+                .with_inner_size([900.0, 520.0])
+                .with_close_button(false);
 
             let plotter = self
             .plotter_manager.plotters
