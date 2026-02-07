@@ -57,3 +57,4 @@
 - [x] On cli a connection can be made on unexistent plugins
 - [x] Change the cli view card so it respects the variable type (int shouldnt show decimals). Also add a scroll bar if needed (but dont limit the size)
 - [x] If cli view is aiming to an unexistent plugin, show error
+- [ ] Change plugin config ID badge on plugin config menu so its the same as the plugin card

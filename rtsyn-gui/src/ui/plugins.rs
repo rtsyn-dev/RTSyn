@@ -373,12 +373,20 @@ impl GuiApp {
                                                     .default_open(true)
                                                     .show(ui, |ui| {
                                                         ui.add_space(4.0);
+                                                        let label_w = 140.0;
+                                                        let value_w = (ui.available_width() - label_w - 8.0).max(80.0);
                                                         
                                                         for var_name in &vars {
                                                             let (tx, rx) = mpsc::channel();
                                                             let _ = self.state_sync.logic_tx.send(LogicMessage::GetPluginVariable(plugin.id, var_name.clone(), tx));
                                                             
                                                             if let Ok(Some(value)) = rx.recv() {
+                                                                if plugin.kind == "csv_recorder"
+                                                                    && var_name == "columns"
+                                                                    && matches!(value, Value::Array(ref arr) if arr.is_empty())
+                                                                {
+                                                                    continue;
+                                                                }
                                                                 let field_info = ui_schema.as_ref()
                                                                     .and_then(|schema| schema.fields.iter().find(|f| f.key == *var_name));
                                                                 let label = field_info
@@ -388,12 +396,48 @@ impl GuiApp {
                                                                     .map(|field| matches!(field.field_type, rtsyn_plugin::ui::FieldType::FilePath { .. }))
                                                                     .unwrap_or(false);
                                                                 
-                                                                kv_row_wrapped(ui, label, 140.0, |ui| {
+                                                                kv_row_wrapped(ui, label, label_w, |ui| {
                                                                     match &value {
                                                                         Value::String(s) => {
                                                                             let mut text = s.clone();
-                                                                            let width = if is_filepath { 80.0 } else { 80.0 };
-                                                                            if ui.add(egui::TextEdit::singleline(&mut text).desired_width(width)).changed() {
+                                                                            if is_filepath {
+                                                                                if text.trim().is_empty() {
+                                                                                    text = Self::default_csv_path();
+                                                                                    let _ = self.state_sync.logic_tx.send(
+                                                                                        LogicMessage::SetPluginVariable(
+                                                                                            plugin.id,
+                                                                                            var_name.clone(),
+                                                                                            Value::String(text.clone()),
+                                                                                        ),
+                                                                                    );
+                                                                                    if let Value::Object(ref mut map) = plugin.config {
+                                                                                        map.insert("path".to_string(), Value::String(text.clone()));
+                                                                                        map.insert("path_autogen".to_string(), Value::Bool(true));
+                                                                                        plugin_changed = true;
+                                                                                    }
+                                                                                }
+                                                                                ui.vertical(|ui| {
+                                                                                    ui.add_enabled_ui(false, |ui| {
+                                                                                        ui.add_sized(
+                                                                                            [value_w, 0.0],
+                                                                                            egui::TextEdit::singleline(&mut text),
+                                                                                        );
+                                                                                    });
+                                                                                    if ui.add_sized([value_w, 0.0], egui::Button::new("Browse")).clicked() {
+                                                                                        self.csv_path_target_plugin_id = Some(plugin.id);
+                                                                                        let (tx, rx) = mpsc::channel();
+                                                                                        self.file_dialogs.csv_path_dialog_rx = Some(rx);
+                                                                                        spawn_file_dialog_thread(move || {
+                                                                                            let file = if has_rt_capabilities() {
+                                                                                                zenity_file_dialog("save", None)
+                                                                                            } else {
+                                                                                                rfd::FileDialog::new().save_file()
+                                                                                            };
+                                                                                            let _ = tx.send(file);
+                                                                                        });
+                                                                                    }
+                                                                                });
+                                                                            } else if ui.add_sized([value_w, 0.0], egui::TextEdit::singleline(&mut text)).changed() {
                                                                                 let new_text = text.clone();
                                                                                 let _ = self.state_sync.logic_tx.send(LogicMessage::SetPluginVariable(
                                                                                     plugin.id,
@@ -408,26 +452,10 @@ impl GuiApp {
                                                                                     plugin_changed = true;
                                                                                 }
                                                                             }
-                                                                            if is_filepath {
-                                                                                ui.add_space(2.0);
-                                                                                if ui.small_button("...").clicked() {
-                                                                                    self.csv_path_target_plugin_id = Some(plugin.id);
-                                                                                    let (tx, rx) = mpsc::channel();
-                                                                                    self.file_dialogs.csv_path_dialog_rx = Some(rx);
-                                                                                    spawn_file_dialog_thread(move || {
-                                                                                        let file = if has_rt_capabilities() {
-                                                                                            zenity_file_dialog("save", None)
-                                                                                        } else {
-                                                                                            rfd::FileDialog::new().save_file()
-                                                                                        };
-                                                                                        let _ = tx.send(file);
-                                                                                    });
-                                                                                }
-                                                                            }
                                                                         }
                                                                         Value::Bool(b) => {
                                                                             let mut checked = *b;
-                                                                            if ui.checkbox(&mut checked, "").changed() {
+                                                                            if ui.add_sized([value_w, 0.0], egui::Checkbox::new(&mut checked, "")).changed() {
                                                                                 let _ = self.state_sync.logic_tx.send(LogicMessage::SetPluginVariable(plugin.id, var_name.clone(), Value::Bool(checked)));
                                                                                 if let Value::Object(ref mut map) = plugin.config {
                                                                                     map.insert(var_name.clone(), Value::Bool(checked));
@@ -457,7 +485,10 @@ impl GuiApp {
                                                                                     (None, Some(mx)) => f64::NEG_INFINITY..=mx,
                                                                                     (None, None) => f64::NEG_INFINITY..=f64::INFINITY,
                                                                                 };
-                                                                                if ui.add(egui::DragValue::new(&mut val).speed(speed).clamp_range(range)).changed() {
+                                                                                if ui.add_sized([value_w, 0.0], egui::DragValue::new(&mut val).speed(speed).clamp_range(range)).changed() {
+                                                                                    if var_name == "window_multiplier" && val < 1.0 {
+                                                                                        val = 1.0;
+                                                                                    }
                                                                                     let _ = self.state_sync.logic_tx.send(LogicMessage::SetPluginVariable(plugin.id, var_name.clone(), Value::from(val)));
                                                                                     if let Value::Object(ref mut map) = plugin.config {
                                                                                         map.insert(var_name.clone(), Value::from(val));
@@ -484,7 +515,10 @@ impl GuiApp {
                                                                                     (None, Some(mx)) => i64::MIN..=mx,
                                                                                     (None, None) => i64::MIN..=i64::MAX,
                                                                                 };
-                                                                                if ui.add(egui::DragValue::new(&mut val).speed(speed).clamp_range(range)).changed() {
+                                                                                if ui.add_sized([value_w, 0.0], egui::DragValue::new(&mut val).speed(speed).clamp_range(range)).changed() {
+                                                                                    if var_name == "window_multiplier" && val < 1 {
+                                                                                        val = 1;
+                                                                                    }
                                                                                     let _ = self.state_sync.logic_tx.send(LogicMessage::SetPluginVariable(plugin.id, var_name.clone(), Value::from(val)));
                                                                                     if let Value::Object(ref mut map) = plugin.config {
                                                                                         map.insert(var_name.clone(), Value::from(val));
@@ -510,7 +544,7 @@ impl GuiApp {
                                                                                             ui.horizontal(|ui| {
                                                                                                 match &**item_type {
                                                                                                     rtsyn_plugin::ui::FieldType::Text { .. } => {
-                                                                                                        if ui.add(egui::TextEdit::singleline(&mut value).desired_width(140.0)).changed() {
+                                                                                                        if ui.add_sized([value_w, 0.0], egui::TextEdit::singleline(&mut value)).changed() {
                                                                                                             items[idx] = value.clone();
                                                                                                             list_changed = true;
                                                                                                         }
@@ -530,9 +564,11 @@ impl GuiApp {
                                                                                                 idx += 1;
                                                                                             }
                                                                                         }
-                                                                                        if ui.small_button(add_label).clicked() {
-                                                                                            items.push(String::new());
-                                                                                            list_changed = true;
+                                                                                        if !(plugin.kind == "csv_recorder" && var_name == "columns") {
+                                                                                            if ui.small_button(add_label).clicked() {
+                                                                                                items.push(String::new());
+                                                                                                list_changed = true;
+                                                                                            }
                                                                                         }
                                                                                     });
 
