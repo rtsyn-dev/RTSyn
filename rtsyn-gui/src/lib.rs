@@ -865,9 +865,65 @@ impl GuiApp {
     }
 
     fn apply_loads_started_on_load(&mut self) {
-        // All plugins start stopped by default (behavior.loads_started is queried at runtime if needed)
-        for plugin in &mut self.workspace_manager.workspace.plugins {
-            plugin.running = false;
+        let plugin_infos: Vec<(u64, String, Option<std::path::PathBuf>)> = self
+            .workspace_manager
+            .workspace
+            .plugins
+            .iter()
+            .map(|plugin| {
+                let library_path = plugin
+                    .config
+                    .get("library_path")
+                    .and_then(|v| v.as_str())
+                    .map(|v| std::path::PathBuf::from(v));
+                (plugin.id, plugin.kind.clone(), library_path)
+            })
+            .collect();
+
+        for (plugin_id, kind, library_path) in &plugin_infos {
+            self.ensure_plugin_behavior_cached_with_path(kind, library_path.as_ref());
+            let loads_started = self
+                .plugin_manager
+                .plugin_behaviors
+                .get(kind)
+                .map(|b| b.loads_started)
+                .unwrap_or(false);
+            if loads_started {
+                if let Some(plugin) = self
+                    .workspace_manager
+                    .workspace
+                    .plugins
+                    .iter_mut()
+                    .find(|p| p.id == *plugin_id)
+                {
+                    if !plugin.running {
+                        plugin.running = true;
+                    }
+                }
+            }
+        }
+    }
+
+    fn open_running_plotters(&mut self) {
+        let mut recompute = false;
+        for plugin in &self.workspace_manager.workspace.plugins {
+            if plugin.kind != "live_plotter" || !plugin.running {
+                continue;
+            }
+            let plotter = self
+                .plotter_manager
+                .plotters
+                .entry(plugin.id)
+                .or_insert_with(|| Arc::new(Mutex::new(LivePlotter::new(plugin.id))));
+            if let Ok(mut plotter) = plotter.lock() {
+                if !plotter.open {
+                    plotter.open = true;
+                    recompute = true;
+                }
+            }
+        }
+        if recompute {
+            self.recompute_plotter_ui_hz();
         }
     }
 }

@@ -18,10 +18,12 @@ impl GuiApp {
                 self.refresh_installed_library_paths();
                 self.inject_library_paths_into_workspace();
                 self.apply_loads_started_on_load();
+                self.open_running_plotters();
                 self.enforce_connection_dependent();
                 self.apply_workspace_settings();
                 self.sync_next_plugin_id();
                 self.plugin_manager.available_plugin_ids.clear();
+                self.mark_workspace_dirty();
                 self.show_info("Workspace", &format!("Workspace '{}' loaded", name));
             }
             Err(err) => {

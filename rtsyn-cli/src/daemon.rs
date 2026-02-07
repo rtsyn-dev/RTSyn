@@ -26,6 +26,14 @@ fn plugin_outputs(installed: &[InstalledPlugin], kind: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+fn plugin_library_path(installed: &[InstalledPlugin], kind: &str) -> Option<String> {
+    installed
+        .iter()
+        .find(|p| p.manifest.kind == kind)
+        .and_then(|p| p.library_path.as_ref())
+        .map(|p| p.to_string_lossy().to_string())
+}
+
 struct RuntimeQuery {
     logic_tx: mpsc::Sender<LogicMessage>,
 }
@@ -313,6 +321,27 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
                     state.catalog.refresh_library_paths();
                     state.catalog.inject_library_paths_into_workspace(&mut workspace);
                     state.catalog.sync_ids_from_workspace(&workspace);
+                    for plugin in &mut workspace.plugins {
+                        if plugin.running {
+                            continue;
+                        }
+                        let config_path = plugin
+                            .config
+                            .get("library_path")
+                            .and_then(|v| v.as_str())
+                            .map(|v| v.to_string());
+                        let library_path = config_path
+                            .or_else(|| plugin_library_path(&state.catalog.manager.installed_plugins, &plugin.kind));
+                        if let Some(behavior) = state.runtime_query.query_plugin_behavior(
+                            &plugin.kind,
+                            library_path.as_deref(),
+                            Duration::from_secs(1),
+                        ) {
+                            if behavior.loads_started {
+                                plugin.running = true;
+                            }
+                        }
+                    }
                     state.workspace_manager.workspace = workspace;
                     state.refresh_runtime();
                     DaemonResponse::Ok {

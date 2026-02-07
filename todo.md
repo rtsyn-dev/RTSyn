@@ -53,5 +53,5 @@
 - [ ] On workspace deletion, if its loaded it shall return to default workspace
 - [ ] Workspace created doesnt show the name
 - [ ] The gui and runtime in gui mode are a bit coulpled (high periods make the gui laggy)
-- [ ] On loading of workspaces, plugins doesnt auto start, this also happens in the gui, also they dont load correctly until start
+- [x] On loading of workspaces, plugins doesnt auto start, this also happens in the gui, also they dont load correctly until start
 - [x] On cli a connection can be made on unexistent plugins
