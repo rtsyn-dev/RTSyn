@@ -240,14 +240,14 @@ fn runtime_commands_match_plugin_commands() {
     assert!(output.contains("temp_runtime_plugin"));
 
     let output = Command::new(exe)
-        .args(["daemon", "runtime", "add", "temp_runtime_plugin"])
+        .args(["daemon", "runtime", "plugin", "add", "temp_runtime_plugin"])
         .output()
         .expect("add runtime plugin");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!stderr.contains("[RTSyn][ERROR]"));
 
     let output = Command::new(exe)
-        .args(["daemon", "runtime", "remove", "1"])
+        .args(["daemon", "runtime", "plugin", "remove", "1"])
         .output()
         .expect("remove runtime plugin");
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -286,28 +286,211 @@ fn runtime_list_reflects_workspace() {
     assert!(wait_for_daemon(exe));
 
     let output = Command::new(exe)
-        .args(["daemon", "runtime", "list"])
+        .args(["daemon", "runtime", "plugin", "list"])
         .output()
         .expect("list runtime plugins");
     let output = String::from_utf8_lossy(&output.stdout);
     assert!(output.contains("No runtime plugins"));
 
     let output = Command::new(exe)
-        .args(["daemon", "runtime", "add", "live_plotter"])
+        .args(["daemon", "runtime", "plugin", "add", "live_plotter"])
         .output()
         .expect("add runtime plugin");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!stderr.contains("[RTSyn][ERROR]"));
 
     let output = Command::new(exe)
-        .args(["daemon", "runtime", "list"])
+        .args(["daemon", "runtime", "plugin", "list"])
         .output()
         .expect("list runtime plugins after add");
     let output = String::from_utf8_lossy(&output.stdout);
     assert!(output.contains("(live_plotter)"));
 
     let _ = Command::new(exe)
-        .args(["daemon", "runtime", "remove", "1"])
+        .args(["daemon", "runtime", "plugin", "remove", "1"])
+        .status();
+
+    let _ = Command::new(exe).args(["daemon", "stop"]).status();
+    let _ = child.wait();
+
+    if let Some(data) = installed_db_backup {
+        let _ = std::fs::write(INSTALLED_DB, data);
+    } else {
+        let _ = std::fs::remove_file(INSTALLED_DB);
+    }
+}
+
+#[test]
+#[serial]
+fn runtime_settings_options_and_show() {
+    let exe = env!("CARGO_BIN_EXE_rtsyn");
+    let mut installed_db_backup: Option<Vec<u8>> = None;
+    if Path::new(INSTALLED_DB).exists() {
+        installed_db_backup = std::fs::read(INSTALLED_DB).ok();
+        let _ = std::fs::remove_file(INSTALLED_DB);
+    }
+    if std::path::Path::new(SOCKET_PATH).exists() {
+        if std::os::unix::net::UnixStream::connect(SOCKET_PATH).is_ok() {
+            let _ = Command::new(exe).args(["daemon", "stop"]).status();
+        }
+        let _ = std::fs::remove_file(SOCKET_PATH);
+    }
+
+    let mut child = Command::new(exe)
+        .args(["daemon", "run"])
+        .spawn()
+        .expect("run rtsyn daemon");
+    assert!(wait_for_daemon(exe));
+
+    let output = Command::new(exe)
+        .args(["daemon", "runtime", "settings", "options", "--json-query"])
+        .output()
+        .expect("runtime settings options");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"frequency_units\""));
+    assert!(stdout.contains("\"period_units\""));
+
+    let output = Command::new(exe)
+        .args(["daemon", "runtime", "settings", "show", "--json-query"])
+        .output()
+        .expect("runtime settings show");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"frequency_value\""));
+    assert!(stdout.contains("\"period_value\""));
+
+    let _ = Command::new(exe).args(["daemon", "stop"]).status();
+    let _ = child.wait();
+
+    if let Some(data) = installed_db_backup {
+        let _ = std::fs::write(INSTALLED_DB, data);
+    } else {
+        let _ = std::fs::remove_file(INSTALLED_DB);
+    }
+}
+
+#[test]
+#[serial]
+fn runtime_settings_syncs_frequency_and_period() {
+    let exe = env!("CARGO_BIN_EXE_rtsyn");
+    let mut installed_db_backup: Option<Vec<u8>> = None;
+    if Path::new(INSTALLED_DB).exists() {
+        installed_db_backup = std::fs::read(INSTALLED_DB).ok();
+        let _ = std::fs::remove_file(INSTALLED_DB);
+    }
+    if std::path::Path::new(SOCKET_PATH).exists() {
+        if std::os::unix::net::UnixStream::connect(SOCKET_PATH).is_ok() {
+            let _ = Command::new(exe).args(["daemon", "stop"]).status();
+        }
+        let _ = std::fs::remove_file(SOCKET_PATH);
+    }
+
+    let mut child = Command::new(exe)
+        .args(["daemon", "run"])
+        .spawn()
+        .expect("run rtsyn daemon");
+    assert!(wait_for_daemon(exe));
+
+    let status = Command::new(exe)
+        .args([
+            "daemon",
+            "runtime",
+            "settings",
+            "set",
+            "{\"frequency_value\":500,\"frequency_unit\":\"hz\"}",
+        ])
+        .status()
+        .expect("set runtime settings");
+    assert!(status.success());
+
+    let output = Command::new(exe)
+        .args(["daemon", "runtime", "settings", "show", "--json-query"])
+        .output()
+        .expect("show runtime settings");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"frequency_value\": 500.0"));
+    assert!(stdout.contains("\"period_value\": 2.0"));
+
+    let status = Command::new(exe)
+        .args([
+            "daemon",
+            "runtime",
+            "settings",
+            "set",
+            "{\"period_value\":4,\"period_unit\":\"ms\"}",
+        ])
+        .status()
+        .expect("set runtime settings period");
+    assert!(status.success());
+
+    let output = Command::new(exe)
+        .args(["daemon", "runtime", "settings", "show", "--json-query"])
+        .output()
+        .expect("show runtime settings period");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"period_value\": 4.0"));
+    assert!(stdout.contains("\"frequency_value\": 250.0"));
+
+    let _ = Command::new(exe).args(["daemon", "stop"]).status();
+    let _ = child.wait();
+
+    if let Some(data) = installed_db_backup {
+        let _ = std::fs::write(INSTALLED_DB, data);
+    } else {
+        let _ = std::fs::remove_file(INSTALLED_DB);
+    }
+}
+
+#[test]
+#[serial]
+fn runtime_plugin_set_updates_config() {
+    let exe = env!("CARGO_BIN_EXE_rtsyn");
+    let mut installed_db_backup: Option<Vec<u8>> = None;
+    if Path::new(INSTALLED_DB).exists() {
+        installed_db_backup = std::fs::read(INSTALLED_DB).ok();
+        let _ = std::fs::remove_file(INSTALLED_DB);
+    }
+    if std::path::Path::new(SOCKET_PATH).exists() {
+        if std::os::unix::net::UnixStream::connect(SOCKET_PATH).is_ok() {
+            let _ = Command::new(exe).args(["daemon", "stop"]).status();
+        }
+        let _ = std::fs::remove_file(SOCKET_PATH);
+    }
+
+    let mut child = Command::new(exe)
+        .args(["daemon", "run"])
+        .spawn()
+        .expect("run rtsyn daemon");
+    assert!(wait_for_daemon(exe));
+
+    let output = Command::new(exe)
+        .args(["daemon", "runtime", "plugin", "add", "performance_monitor"])
+        .output()
+        .expect("add runtime plugin");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains("[RTSyn][ERROR]"));
+
+    let status = Command::new(exe)
+        .args([
+            "daemon",
+            "runtime",
+            "plugin",
+            "set",
+            "1",
+            "{\"max_latency_us\":2000}",
+        ])
+        .status()
+        .expect("set runtime plugin variables");
+    assert!(status.success());
+
+    let output = Command::new(exe)
+        .args(["daemon", "runtime", "plugin", "show", "1"])
+        .output()
+        .expect("show runtime plugin");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("max_latency_us: 2000"));
+
+    let _ = Command::new(exe)
+        .args(["daemon", "runtime", "plugin", "remove", "1"])
         .status();
 
     let _ = Command::new(exe).args(["daemon", "stop"]).status();

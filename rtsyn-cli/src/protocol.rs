@@ -89,6 +89,7 @@ pub enum DaemonRequest {
     DaemonReload,
     RuntimeList,
     RuntimeShow { id: u64 },
+    RuntimeSetVariables { id: u64, json: String },
     RuntimeSettingsShow,
     RuntimeSettingsSet { json: String },
     RuntimeSettingsOptions,

@@ -616,6 +616,63 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
                 }
             }
         }
+        DaemonRequest::RuntimeSetVariables { id, json } => {
+            if let Some(plugin) = state
+                .workspace_manager
+                .workspace
+                .plugins
+                .iter_mut()
+                .find(|p| p.id == id)
+            {
+                match serde_json::from_str::<serde_json::Value>(&json) {
+                    Ok(value) => {
+                        if let Some(obj) = value.as_object() {
+                            let map_result = match plugin.config {
+                                serde_json::Value::Object(ref mut map) => Ok(map),
+                                _ => {
+                                    plugin.config =
+                                        serde_json::Value::Object(serde_json::Map::new());
+                                    match plugin.config {
+                                        serde_json::Value::Object(ref mut map) => Ok(map),
+                                        _ => Err("Failed to update plugin config".to_string()),
+                                    }
+                                }
+                            };
+
+                            match map_result {
+                                Ok(map) => {
+                                    for (key, val) in obj {
+                                        map.insert(key.clone(), val.clone());
+                                        let _ = state.runtime_query.logic_tx.send(
+                                            LogicMessage::SetPluginVariable(
+                                                id,
+                                                key.clone(),
+                                                val.clone(),
+                                            ),
+                                        );
+                                    }
+                                    DaemonResponse::Ok {
+                                        message: "Runtime variables updated".to_string(),
+                                    }
+                                }
+                                Err(message) => DaemonResponse::Error { message },
+                            }
+                        } else {
+                            DaemonResponse::Error {
+                                message: "Variables must be a JSON object".to_string(),
+                            }
+                        }
+                    }
+                    Err(err) => DaemonResponse::Error {
+                        message: format!("Invalid JSON: {err}"),
+                    },
+                }
+            } else {
+                DaemonResponse::Error {
+                    message: "Plugin not found in runtime".to_string(),
+                }
+            }
+        }
     };
 
     send_response(&mut stream, &response)?;

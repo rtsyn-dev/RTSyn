@@ -99,17 +99,26 @@ enum ConnectionCommands {
 
 #[derive(Subcommand)]
 enum RuntimeCommands {
+    Plugin {
+        #[command(subcommand)]
+        command: RuntimePluginCommands,
+    },
+    Settings {
+        #[command(subcommand)]
+        command: RuntimeSettingsCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum RuntimePluginCommands {
     Add { name: String },
     Remove { id: u64 },
     List {
         #[arg(long, alias = "jq")]
         json_query: bool,
     },
-    Settings {
-        #[command(subcommand)]
-        command: RuntimeSettingsCommands,
-    },
     Show { id: u64 },
+    Set { id: u64, json: String },
 }
 
 #[derive(Subcommand)]
@@ -333,11 +342,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let mut list_json_query = false;
                 let mut settings_json_query = false;
                 let request = match command {
-                    RuntimeCommands::Add { name } => DaemonRequest::PluginAdd { name },
-                    RuntimeCommands::Remove { id } => DaemonRequest::PluginRemove { id },
-                    RuntimeCommands::List { json_query } => {
-                        list_json_query = json_query;
-                        DaemonRequest::RuntimeList
+                    RuntimeCommands::Plugin { command } => match command {
+                        RuntimePluginCommands::Add { name } => DaemonRequest::PluginAdd { name },
+                        RuntimePluginCommands::Remove { id } => DaemonRequest::PluginRemove { id },
+                        RuntimePluginCommands::List { json_query } => {
+                            list_json_query = json_query;
+                            DaemonRequest::RuntimeList
+                        }
+                        RuntimePluginCommands::Show { id } => DaemonRequest::RuntimeShow { id },
+                        RuntimePluginCommands::Set { id, json } => {
+                            DaemonRequest::RuntimeSetVariables { id, json }
+                        }
                     },
                     RuntimeCommands::Settings { command } => match command {
                         RuntimeSettingsCommands::Show { json_query } => {
@@ -352,7 +367,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             DaemonRequest::RuntimeSettingsOptions
                         }
                     },
-                    RuntimeCommands::Show { id } => DaemonRequest::RuntimeShow { id },
                 };
                 match client::send_request(&request) {
                     Ok(response) => match response {
