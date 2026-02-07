@@ -425,7 +425,7 @@ impl GuiApp {
                 max_integration_steps: 10, // Default reasonable limit
             });
         let mut apply_clicked = false;
-        let response = egui::Window::new("Settings")
+        let response = egui::Window::new("Runtime settings")
             .open(&mut open)
             .resizable(false)
             .default_pos(default_pos)
@@ -693,7 +693,7 @@ impl GuiApp {
                     max_integration_steps: draft.max_integration_steps,
                 }));
             
-            self.show_info("Time scale", "Sampling rate updated");
+            self.show_info("Runtime settings", "Sampling rate updated");
         }
 
         self.workspace_settings.open = open;

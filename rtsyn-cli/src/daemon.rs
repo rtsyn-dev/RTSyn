@@ -1,4 +1,5 @@
 use crate::protocol::{ConnectionSummary, DaemonRequest, DaemonResponse, PluginSummary, WorkspaceSummary, RuntimePluginSummary, RuntimePluginState, DEFAULT_SOCKET_PATH};
+use crate::protocol::RuntimeSettingsOptions;
 use rtsyn_core::plugin::{is_extendable_inputs, PluginCatalog, PluginMetadataSource};
 use rtsyn_core::connection::{ensure_extendable_input_count, next_available_extendable_input_index};
 use rtsyn_core::workspace::WorkspaceManager;
@@ -48,6 +49,7 @@ struct DaemonState {
     workspace_manager: WorkspaceManager,
     runtime_query: RuntimeQuery,
     logic_state_rx: mpsc::Receiver<LogicState>,
+    logic_settings: rtsyn_runtime::runtime::LogicSettings,
 }
 
 impl DaemonState {
@@ -60,11 +62,20 @@ impl DaemonState {
         let mut catalog = PluginCatalog::new(install_db_path);
         let workspace_manager = WorkspaceManager::new(workspace_dir);
         catalog.sync_ids_from_workspace(&workspace_manager.workspace);
+        let logic_settings = rtsyn_runtime::runtime::LogicSettings {
+            cores: vec![0],
+            period_seconds: 0.001,
+            time_scale: 1000.0,
+            time_label: "time_ms".to_string(),
+            ui_hz: 60.0,
+            max_integration_steps: 10,
+        };
         Self {
             catalog,
             workspace_manager,
             runtime_query: RuntimeQuery { logic_tx },
             logic_state_rx,
+            logic_settings,
         }
     }
 
@@ -507,6 +518,41 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
                 })
                 .collect();
             DaemonResponse::RuntimeList { plugins }
+        }
+        DaemonRequest::RuntimeSettingsShow => DaemonResponse::RuntimeSettings {
+            settings: state.workspace_manager.workspace.settings.clone(),
+        },
+        DaemonRequest::RuntimeSettingsOptions => DaemonResponse::RuntimeSettingsOptions {
+            options: RuntimeSettingsOptions {
+                frequency_units: vec!["hz".to_string(), "khz".to_string(), "mhz".to_string()],
+                period_units: vec!["ns".to_string(), "us".to_string(), "ms".to_string(), "s".to_string()],
+                min_frequency_value: 1.0,
+                min_period_value: 1.0,
+                max_integration_steps_min: 1,
+                max_integration_steps_max: 100,
+            },
+        },
+        DaemonRequest::RuntimeSettingsSet { json } => {
+            match state.workspace_manager.apply_runtime_settings_json(&json) {
+                Ok(()) => match state.workspace_manager.runtime_settings() {
+                    Ok(runtime_settings) => {
+                        state.logic_settings.cores = runtime_settings.cores;
+                        state.logic_settings.period_seconds = runtime_settings.period_seconds;
+                        state.logic_settings.time_scale = runtime_settings.time_scale;
+                        state.logic_settings.time_label = runtime_settings.time_label;
+                        let _ = state
+                            .runtime_query
+                            .logic_tx
+                            .send(LogicMessage::UpdateSettings(state.logic_settings.clone()));
+                        state.refresh_runtime();
+                        DaemonResponse::Ok {
+                            message: "Runtime settings updated".to_string(),
+                        }
+                    }
+                    Err(err) => DaemonResponse::Error { message: err },
+                },
+                Err(err) => DaemonResponse::Error { message: err },
+            }
         }
         DaemonRequest::RuntimeShow { id } => {
             let mut latest_state: Option<LogicState> = None;

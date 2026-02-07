@@ -3000,6 +3000,7 @@ name = "rtsyn"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "libc",
  "log",
  "rtsyn-cli",
  "rtsyn-gui",

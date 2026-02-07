@@ -43,6 +43,16 @@ pub struct RuntimePluginState {
     pub internal_variables: Vec<(String, serde_json::Value)>,
     pub variables: Vec<(String, serde_json::Value)>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuntimeSettingsOptions {
+    pub frequency_units: Vec<String>,
+    pub period_units: Vec<String>,
+    pub min_frequency_value: f64,
+    pub min_period_value: f64,
+    pub max_integration_steps_min: usize,
+    pub max_integration_steps_max: usize,
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DaemonRequest {
@@ -79,6 +89,9 @@ pub enum DaemonRequest {
     DaemonReload,
     RuntimeList,
     RuntimeShow { id: u64 },
+    RuntimeSettingsShow,
+    RuntimeSettingsSet { json: String },
+    RuntimeSettingsOptions,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,4 +105,6 @@ pub enum DaemonResponse {
     ConnectionList { connections: Vec<ConnectionSummary> },
     RuntimeList { plugins: Vec<RuntimePluginSummary> },
     RuntimeShow { id: u64, kind: String, state: RuntimePluginState },
+    RuntimeSettings { settings: workspace::WorkspaceSettings },
+    RuntimeSettingsOptions { options: RuntimeSettingsOptions },
 }

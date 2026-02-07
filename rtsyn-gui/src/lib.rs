@@ -804,10 +804,6 @@ impl GuiApp {
     }
 
     fn current_workspace_settings(&self) -> WorkspaceSettings {
-        let timing_mode = match self.workspace_settings.tab {
-            WorkspaceTimingTab::Frequency => "frequency",
-            WorkspaceTimingTab::Period => "period",
-        };
         let frequency_unit = match self.frequency_unit {
             FrequencyUnit::Hz => "hz",
             FrequencyUnit::KHz => "khz",
@@ -826,7 +822,6 @@ impl GuiApp {
             .filter_map(|(idx, enabled)| if *enabled { Some(idx) } else { None })
             .collect();
         WorkspaceSettings {
-            timing_mode: timing_mode.to_string(),
             frequency_value: self.frequency_value,
             frequency_unit: frequency_unit.to_string(),
             period_value: self.period_value,
@@ -837,10 +832,7 @@ impl GuiApp {
 
     fn apply_workspace_settings(&mut self) {
         let settings = self.workspace_manager.workspace.settings.clone();
-        self.workspace_settings.tab = match settings.timing_mode.as_str() {
-            "period" => WorkspaceTimingTab::Period,
-            _ => WorkspaceTimingTab::Frequency,
-        };
+        self.workspace_settings.tab = WorkspaceTimingTab::Frequency;
         self.frequency_value = settings.frequency_value;
         self.frequency_unit = match settings.frequency_unit.as_str() {
             "khz" => FrequencyUnit::KHz,
@@ -949,11 +941,6 @@ impl eframe::App for GuiApp {
                         self.open_manage_workspaces();
                         ui.close_menu();
                     }
-                    if ui.button("Settings").clicked() {
-                        self.workspace_settings.open = true;
-                        self.pending_window_focus = Some(WindowFocus::WorkspaceSettings);
-                        ui.close_menu();
-                    }
                 });
 
                 ui.menu_button("Plugins", |ui| {
@@ -984,6 +971,14 @@ impl eframe::App for GuiApp {
                     if ui.button("Manage connections").clicked() {
                         self.windows.manage_connections_open = true;
                         self.pending_window_focus = Some(WindowFocus::ManageConnections);
+                        ui.close_menu();
+                    }
+                });
+
+                ui.menu_button("Runtime", |ui| {
+                    if ui.button("Settings").clicked() {
+                        self.workspace_settings.open = true;
+                        self.pending_window_focus = Some(WindowFocus::WorkspaceSettings);
                         ui.close_menu();
                     }
                 });

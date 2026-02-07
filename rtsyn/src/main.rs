@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 use rtsyn_gui::{run_gui, GuiConfig};
-use rtsyn_cli::{client, daemon, protocol::{DaemonRequest, DaemonResponse}};
+use rtsyn_cli::{client, daemon, protocol::{DaemonRequest, DaemonResponse, DEFAULT_SOCKET_PATH}};
+use std::process::{Command, Stdio};
 
 #[derive(Parser)]
 #[command(name = "rtsyn", version, about = "RTSyn MVP CLI")]
@@ -19,7 +20,10 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum DaemonCommands {
-    Run,
+    Run {
+        #[arg(long)]
+        detach: bool,
+    },
     Stop,
     Reload,
     Plugin {
@@ -101,7 +105,24 @@ enum RuntimeCommands {
         #[arg(long, alias = "jq")]
         json_query: bool,
     },
+    Settings {
+        #[command(subcommand)]
+        command: RuntimeSettingsCommands,
+    },
     Show { id: u64 },
+}
+
+#[derive(Subcommand)]
+enum RuntimeSettingsCommands {
+    Show {
+        #[arg(long, alias = "jq")]
+        json_query: bool,
+    },
+    Set { json: String },
+    Options {
+        #[arg(long, alias = "jq")]
+        json_query: bool,
+    },
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -112,8 +133,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             run_gui(GuiConfig::default())?;
         }
         Some(Commands::Daemon { command }) => match command {
-            DaemonCommands::Run => {
-                if let Err(err) = daemon::run_daemon() {
+            DaemonCommands::Run { detach } => {
+                if detach {
+                    if let Err(err) = spawn_detached_daemon() {
+                        eprintln!("[RTSyn][ERROR]: {err}");
+                    } else {
+                        println!("[RTSyn][INFO] Daemon started");
+                    }
+                } else if let Err(err) = daemon::run_daemon() {
                     eprintln!("[RTSyn][ERROR]: {err}");
                 }
             }
@@ -200,6 +227,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         DaemonResponse::ConnectionList { .. } => {}
                         DaemonResponse::RuntimeList { .. } => {}
                         DaemonResponse::RuntimeShow { .. } => {}
+                        DaemonResponse::RuntimeSettings { .. } => {}
+                        DaemonResponse::RuntimeSettingsOptions { .. } => {}
                     },
                     Err(err) => eprintln!("[RTSyn][ERROR]: {err}"),
                 }
@@ -302,12 +331,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             DaemonCommands::Runtime { command } => {
                 let mut list_json_query = false;
+                let mut settings_json_query = false;
                 let request = match command {
                     RuntimeCommands::Add { name } => DaemonRequest::PluginAdd { name },
                     RuntimeCommands::Remove { id } => DaemonRequest::PluginRemove { id },
                     RuntimeCommands::List { json_query } => {
                         list_json_query = json_query;
                         DaemonRequest::RuntimeList
+                    },
+                    RuntimeCommands::Settings { command } => match command {
+                        RuntimeSettingsCommands::Show { json_query } => {
+                            settings_json_query = json_query;
+                            DaemonRequest::RuntimeSettingsShow
+                        }
+                        RuntimeSettingsCommands::Set { json } => {
+                            DaemonRequest::RuntimeSettingsSet { json }
+                        }
+                        RuntimeSettingsCommands::Options { json_query } => {
+                            settings_json_query = json_query;
+                            DaemonRequest::RuntimeSettingsOptions
+                        }
                     },
                     RuntimeCommands::Show { id } => DaemonRequest::RuntimeShow { id },
                 };
@@ -358,6 +401,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
                         }
+                        DaemonResponse::RuntimeSettings { settings } => {
+                            if settings_json_query {
+                                let json = serde_json::to_string_pretty(&settings)
+                                    .unwrap_or_else(|_| "{}".to_string());
+                                println!("{json}");
+                                return Ok(());
+                            }
+                            println!("[RTSyn][INFO] Runtime settings:");
+                            println!("frequency_value: {}", settings.frequency_value);
+                            println!("frequency_unit: {}", settings.frequency_unit);
+                            println!("period_value: {}", settings.period_value);
+                            println!("period_unit: {}", settings.period_unit);
+                            println!("selected_cores: {:?}", settings.selected_cores);
+                        }
+                        DaemonResponse::RuntimeSettingsOptions { options } => {
+                            if settings_json_query {
+                                let json = serde_json::to_string_pretty(&options)
+                                    .unwrap_or_else(|_| "{}".to_string());
+                                println!("{json}");
+                                return Ok(());
+                            }
+                            println!("[RTSyn][INFO] Runtime settings options:");
+                            println!("frequency_units: {}", options.frequency_units.join(", "));
+                            println!("period_units: {}", options.period_units.join(", "));
+                            println!("min_frequency_value: {}", options.min_frequency_value);
+                            println!("min_period_value: {}", options.min_period_value);
+                            println!(
+                                "max_integration_steps: {}..={}",
+                                options.max_integration_steps_min, options.max_integration_steps_max
+                            );
+                        }
                         DaemonResponse::RuntimeShow { id, kind, state } => {
                             println!("[RTSyn][INFO] {id} - {kind}");
                             println!("Variables:");
@@ -401,4 +475,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     }
     Ok(())
+}
+
+fn spawn_detached_daemon() -> Result<(), String> {
+    let socket_path = std::path::Path::new(DEFAULT_SOCKET_PATH);
+    if socket_path.exists() {
+        if std::os::unix::net::UnixStream::connect(socket_path).is_ok() {
+            return Err("Daemon already running".to_string());
+        }
+        let _ = std::fs::remove_file(socket_path);
+    }
+
+    let exe = std::env::current_exe().map_err(|e| format!("Failed to get executable path: {e}"))?;
+    let mut cmd = Command::new(exe);
+    cmd.args(["daemon", "run"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            cmd.pre_exec(|| {
+                if libc::setsid() == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
+
+    cmd.spawn()
+        .map(|_| ())
+        .map_err(|e| format!("Failed to start daemon: {e}"))
 }

@@ -18,7 +18,6 @@ pub struct WorkspaceDefinition {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceSettings {
-    pub timing_mode: String,
     pub frequency_value: f64,
     pub frequency_unit: String,
     pub period_value: f64,
@@ -29,7 +28,6 @@ pub struct WorkspaceSettings {
 impl Default for WorkspaceSettings {
     fn default() -> Self {
         Self {
-            timing_mode: "frequency".to_string(),
             frequency_value: 1000.0,
             frequency_unit: "hz".to_string(),
             period_value: 1.0,
