@@ -452,6 +452,18 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
             send_response(&mut stream, &response)?;
             return Err("daemon_stop".to_string());
         }
+        DaemonRequest::DaemonReload => {
+            state.catalog.manager.load_installed_plugins();
+            state.catalog.refresh_library_paths();
+            state.catalog.scan_detected_plugins();
+            state.workspace = empty_workspace("default");
+            state.workspace_path = None;
+            state.catalog.sync_ids_from_workspace(&state.workspace);
+            state.refresh_runtime();
+            DaemonResponse::Ok {
+                message: "Daemon reloaded".to_string(),
+            }
+        }
     };
 
     send_response(&mut stream, &response)?;

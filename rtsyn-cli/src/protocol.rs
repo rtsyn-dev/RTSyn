@@ -61,6 +61,7 @@ pub enum DaemonRequest {
     },
     ConnectionRemoveIndex { index: usize },
     DaemonStop,
+    DaemonReload,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

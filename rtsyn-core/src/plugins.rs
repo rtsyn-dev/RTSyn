@@ -656,7 +656,7 @@ impl PluginCatalog {
 }
 
 pub fn is_extendable_inputs(kind: &str) -> bool {
-    matches!(kind, "csv_recorder" | "live_plotter" | "comedi_daq")
+    matches!(kind, "csv_recorder" | "live_plotter")
 }
 
 pub fn empty_workspace() -> WorkspaceDefinition {

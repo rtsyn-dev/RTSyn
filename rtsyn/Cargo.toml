@@ -11,6 +11,10 @@ rtsyn-gui = { path = "../rtsyn-gui" }
 rtsyn-cli = { path = "../rtsyn-cli" }
 log = { workspace = true }
 
+[dev-dependencies]
+tempfile = "3"
+serial_test = "3"
+
 [features]
 default = []
 preempt_rt = ["rtsyn-runtime/preempt_rt"]

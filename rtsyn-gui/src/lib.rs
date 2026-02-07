@@ -472,14 +472,14 @@ impl GuiApp {
         if let Some(cached) = self.plugin_manager.plugin_behaviors.get(kind) {
             return matches!(cached.extendable_inputs, rtsyn_plugin::ui::ExtendableInputs::Auto { .. } | rtsyn_plugin::ui::ExtendableInputs::Manual);
         }
-        false
+        rtsyn_core::plugins::is_extendable_inputs(kind)
     }
 
     fn auto_extend_inputs(&self, kind: &str) -> bool {
         if let Some(cached) = self.plugin_manager.plugin_behaviors.get(kind) {
             return matches!(cached.extendable_inputs, rtsyn_plugin::ui::ExtendableInputs::Auto { .. });
         }
-        false
+        matches!(kind, "csv_recorder" | "live_plotter")
     }
     
 

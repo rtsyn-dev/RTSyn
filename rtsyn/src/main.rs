@@ -21,7 +21,7 @@ enum Commands {
 enum DaemonCommands {
     Run,
     Stop,
-    Restart,
+    Reload,
     Plugin {
         #[command(subcommand)]
         command: PluginCommands,
@@ -108,11 +108,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Err(err) => eprintln!("[RTSyn][ERROR]: {err}"),
                 }
             }
-            DaemonCommands::Restart => {
-                let request = DaemonRequest::DaemonStop;
-                let _ = client::send_request(&request);
-                if let Err(err) = daemon::run_daemon() {
-                    eprintln!("[RTSyn][ERROR]: {err}");
+            DaemonCommands::Reload => {
+                let request = DaemonRequest::DaemonReload;
+                match client::send_request(&request) {
+                    Ok(response) => match response {
+                        DaemonResponse::Ok { message } => println!("[RTSyn][INFO] {message}"),
+                        DaemonResponse::Error { message } => eprintln!("[RTSyn][ERROR]: {message}"),
+                        _ => {}
+                    },
+                    Err(err) => eprintln!("[RTSyn][ERROR]: {err}"),
                 }
             }
             DaemonCommands::Plugin { command } => {
