@@ -437,6 +437,32 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                         Some(instance) => instance,
                         None => continue,
                     };
+                    internal_variable_values.insert(
+                        (plugin.id, "running".to_string()),
+                        serde_json::Value::from(is_running),
+                    );
+                    if matches!(plugin.kind.as_str(), "csv_recorder" | "live_plotter") {
+                        let config_input_count = plugin
+                            .config
+                            .get("input_count")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0) as usize;
+                        let columns_len = plugin
+                            .config
+                            .get("columns")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| arr.len())
+                            .unwrap_or(0);
+                        let input_count = if columns_len > config_input_count {
+                            columns_len
+                        } else {
+                            config_input_count
+                        };
+                        internal_variable_values.insert(
+                            (plugin.id, "input_count".to_string()),
+                            serde_json::Value::from(input_count as i64),
+                        );
+                    }
 
                     match instance {
                         RuntimePlugin::Dynamic(plugin_instance) => {
@@ -1056,6 +1082,32 @@ pub fn run_runtime_current(
                     Some(instance) => instance,
                     None => continue,
                 };
+                internal_variable_values.insert(
+                    (plugin.id, "running".to_string()),
+                    serde_json::Value::from(is_running),
+                );
+                if matches!(plugin.kind.as_str(), "csv_recorder" | "live_plotter") {
+                    let config_input_count = plugin
+                        .config
+                        .get("input_count")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as usize;
+                    let columns_len = plugin
+                        .config
+                        .get("columns")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| arr.len())
+                        .unwrap_or(0);
+                    let input_count = if columns_len > config_input_count {
+                        columns_len
+                    } else {
+                        config_input_count
+                    };
+                    internal_variable_values.insert(
+                        (plugin.id, "input_count".to_string()),
+                        serde_json::Value::from(input_count as i64),
+                    );
+                }
 
                 match instance {
                     RuntimePlugin::Dynamic(plugin_instance) => {

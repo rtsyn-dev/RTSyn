@@ -138,7 +138,7 @@ impl Plugin for PerformanceMonitorPlugin {
                 "realtime_violation".to_string(),
             ],
             inputs: Vec::new(),
-            variables: vec!["max_latency_us".to_string()],
+            variables: vec!["running".to_string()],
         })
     }
 

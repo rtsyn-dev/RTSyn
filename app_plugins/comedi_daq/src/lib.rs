@@ -470,7 +470,7 @@ impl Plugin for ComediDaqPlugin {
         Some(DisplaySchema {
             inputs: self.input_port_names.clone(),
             outputs: self.output_port_names.clone(),
-            variables: vec!["device_path".to_string(), "scan_devices".to_string()],
+            variables: vec!["running".to_string()],
         })
     }
 

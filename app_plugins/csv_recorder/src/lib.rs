@@ -233,12 +233,7 @@ impl Plugin for CsvRecorderedPlugin {
         Some(DisplaySchema {
             outputs: vec![],
             inputs: self.inputs.iter().map(|p| p.id.0.clone()).collect(),
-            variables: vec![
-                "separator".to_string(),
-                "include_time".to_string(),
-                "path".to_string(),
-                "columns".to_string(),
-            ],
+            variables: Vec::new(),
         })
     }
 

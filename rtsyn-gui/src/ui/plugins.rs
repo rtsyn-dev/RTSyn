@@ -91,7 +91,7 @@ impl GuiApp {
             .collect();
         let computed_outputs = self.state_sync.computed_outputs.clone();
         let input_values = self.state_sync.input_values.clone();
-        let _internal_variable_values = self.state_sync.internal_variable_values.clone();
+        let internal_variable_values = self.state_sync.internal_variable_values.clone();
         let viewer_values = self.state_sync.viewer_values.clone();
         let mut remove_id: Option<u64> = None;
         let mut pending_running: Vec<(u64, bool)> = Vec::new();
@@ -356,7 +356,17 @@ impl GuiApp {
                                             .unwrap_or((None, None));
                                         if let Some(schema) = display_schema.as_ref() {
                                                 // Variables section for app plugins
-                                                if !schema.variables.is_empty() && is_app_plugin {
+                                                let vars: Vec<String> = if is_app_plugin {
+                                                    ui_schema
+                                                        .as_ref()
+                                                        .map(|schema| {
+                                                            schema.fields.iter().map(|f| f.key.clone()).collect()
+                                                        })
+                                                        .unwrap_or_default()
+                                                } else {
+                                                    schema.variables.clone()
+                                                };
+                                                if !vars.is_empty() && is_app_plugin {
                                                     egui::CollapsingHeader::new(
                                                         RichText::new("\u{f0ae}  Variables").size(13.0).strong()
                                                     )
@@ -364,7 +374,7 @@ impl GuiApp {
                                                     .show(ui, |ui| {
                                                         ui.add_space(4.0);
                                                         
-                                                        for var_name in &schema.variables {
+                                                        for var_name in &vars {
                                                             let (tx, rx) = mpsc::channel();
                                                             let _ = self.state_sync.logic_tx.send(LogicMessage::GetPluginVariable(plugin.id, var_name.clone(), tx));
                                                             
@@ -601,6 +611,56 @@ impl GuiApp {
                                                                 format!("{value:.4}")
                                                             };
                                                             kv_row_wrapped(ui, output_name, 140.0, |ui| {
+                                                                ui.add_enabled_ui(false, |ui| {
+                                                                    ui.add_sized(
+                                                                        [80.0, 0.0],
+                                                                        egui::TextEdit::singleline(&mut value_text)
+                                                                    );
+                                                                });
+                                                            });
+                                                            ui.add_space(4.0);
+                                                        }
+                                                    });
+                                                }
+
+                                                if !schema.variables.is_empty() {
+                                                    egui::CollapsingHeader::new(
+                                                        RichText::new("\u{f085}  Internal variables").size(13.0).strong()
+                                                    )
+                                                    .default_open(true)
+                                                    .show(ui, |ui| {
+                                                        ui.add_space(4.0);
+                                                        for var_name in &schema.variables {
+                                                            let value = internal_variable_values
+                                                                .get(&(plugin.id, var_name.clone()))
+                                                                .cloned()
+                                                                .unwrap_or_else(|| {
+                                                                    if matches!(plugin.kind.as_str(), "csv_recorder" | "live_plotter") {
+                                                                        match var_name.as_str() {
+                                                                            "input_count" => serde_json::Value::from(0),
+                                                                            "running" => serde_json::Value::from(false),
+                                                                            _ => serde_json::Value::from(0.0),
+                                                                        }
+                                                                    } else {
+                                                                        serde_json::Value::from(0.0)
+                                                                    }
+                                                                });
+                                                            let mut value_text = match value {
+                                                                serde_json::Value::Bool(v) => v.to_string(),
+                                                                serde_json::Value::Number(ref num) => {
+                                                                    if let Some(i) = num.as_i64() {
+                                                                        i.to_string()
+                                                                    } else if let Some(u) = num.as_u64() {
+                                                                        u.to_string()
+                                                                    } else {
+                                                                        num.as_f64()
+                                                                            .map(|v| format!("{:.4}", v))
+                                                                            .unwrap_or_else(|| value.to_string())
+                                                                    }
+                                                                }
+                                                                _ => value.to_string(),
+                                                            };
+                                                            kv_row_wrapped(ui, var_name, 140.0, |ui| {
                                                                 ui.add_enabled_ui(false, |ui| {
                                                                     ui.add_sized(
                                                                         [80.0, 0.0],

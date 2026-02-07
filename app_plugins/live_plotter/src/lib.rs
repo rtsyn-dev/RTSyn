@@ -128,12 +128,7 @@ impl Plugin for LivePlotterPlugin {
         Some(DisplaySchema {
             outputs: vec![],
             inputs: self.inputs.iter().map(|p| p.id.0.clone()).collect(),
-            variables: vec![
-                "refresh_hz".to_string(),
-                "window_multiplier".to_string(),
-                "window_value".to_string(),
-                "amplitude".to_string(),
-            ],
+            variables: Vec::new(),
         })
     }
 
