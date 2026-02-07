@@ -469,6 +469,10 @@ fn runtime_plugin_set_updates_config() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!stderr.contains("[RTSyn][ERROR]"));
 
+    let _ = Command::new(exe)
+        .args(["daemon", "runtime", "plugin", "start", "1"])
+        .status();
+
     let status = Command::new(exe)
         .args([
             "daemon",
@@ -482,13 +486,195 @@ fn runtime_plugin_set_updates_config() {
         .expect("set runtime plugin variables");
     assert!(status.success());
 
-    let output = Command::new(exe)
-        .args(["daemon", "runtime", "plugin", "show", "1"])
-        .output()
-        .expect("show runtime plugin");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("max_latency_us: 2000"));
+    let mut found = false;
+    for _ in 0..20 {
+        let output = Command::new(exe)
+            .args(["daemon", "runtime", "plugin", "show", "1"])
+            .output()
+            .expect("show runtime plugin");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("[RTSyn][ERROR]") {
+            std::thread::sleep(Duration::from_millis(50));
+            continue;
+        }
+        if stdout.contains("max_latency_us: 2000") {
+            found = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(found);
 
+    let _ = Command::new(exe)
+        .args(["daemon", "runtime", "plugin", "remove", "1"])
+        .status();
+
+    let _ = Command::new(exe).args(["daemon", "stop"]).status();
+    let _ = child.wait();
+
+    if let Some(data) = installed_db_backup {
+        let _ = std::fs::write(INSTALLED_DB, data);
+    } else {
+        let _ = std::fs::remove_file(INSTALLED_DB);
+    }
+}
+
+#[test]
+#[serial]
+fn connection_add_validates_ports() {
+    let exe = env!("CARGO_BIN_EXE_rtsyn");
+    let mut installed_db_backup: Option<Vec<u8>> = None;
+    if Path::new(INSTALLED_DB).exists() {
+        installed_db_backup = std::fs::read(INSTALLED_DB).ok();
+        let _ = std::fs::remove_file(INSTALLED_DB);
+    }
+    if std::path::Path::new(SOCKET_PATH).exists() {
+        if std::os::unix::net::UnixStream::connect(SOCKET_PATH).is_ok() {
+            let _ = Command::new(exe).args(["daemon", "stop"]).status();
+        }
+        let _ = std::fs::remove_file(SOCKET_PATH);
+    }
+
+    let mut child = Command::new(exe)
+        .args(["daemon", "run"])
+        .spawn()
+        .expect("run rtsyn daemon");
+    assert!(wait_for_daemon(exe));
+
+    let _ = Command::new(exe)
+        .args(["daemon", "workspace", "delete", "test_connections"])
+        .status();
+    let status = Command::new(exe)
+        .args(["daemon", "workspace", "new", "test_connections"])
+        .status()
+        .expect("new workspace");
+    assert!(status.success());
+    let status = Command::new(exe)
+        .args(["daemon", "workspace", "load", "test_connections"])
+        .status()
+        .expect("load workspace");
+    assert!(status.success());
+
+    let output = Command::new(exe)
+        .args(["daemon", "runtime", "plugin", "add", "performance_monitor"])
+        .output()
+        .expect("add performance_monitor");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains("[RTSyn][ERROR]"));
+
+    let output = Command::new(exe)
+        .args(["daemon", "runtime", "plugin", "add", "live_plotter"])
+        .output()
+        .expect("add live_plotter");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains("[RTSyn][ERROR]"));
+
+    let output = Command::new(exe)
+        .args([
+            "daemon",
+            "connection",
+            "add",
+            "--from-plugin",
+            "1",
+            "--from-port",
+            "bad_port",
+            "--to-plugin",
+            "2",
+            "--to-port",
+            "in_0",
+        ])
+        .output()
+        .expect("invalid from port");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("[RTSyn][ERROR]"));
+
+    let output = Command::new(exe)
+        .args([
+            "daemon",
+            "connection",
+            "add",
+            "--from-plugin",
+            "1",
+            "--from-port",
+            "period_us",
+            "--to-plugin",
+            "2",
+            "--to-port",
+            "bad_port",
+        ])
+        .output()
+        .expect("invalid to port");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("[RTSyn][ERROR]"));
+
+    let output = Command::new(exe)
+        .args([
+            "daemon",
+            "connection",
+            "add",
+            "--from-plugin",
+            "1",
+            "--from-port",
+            "period_us",
+            "--to-plugin",
+            "2",
+            "--to-port",
+            "in",
+        ])
+        .output()
+        .expect("invalid extendable port");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("[RTSyn][ERROR]"));
+
+    let output = Command::new(exe)
+        .args([
+            "daemon",
+            "connection",
+            "add",
+            "--from-plugin",
+            "1",
+            "--from-port",
+            "period_us",
+            "--to-plugin",
+            "2",
+            "--to-port",
+            "in_1",
+        ])
+        .output()
+        .expect("invalid extendable port index");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("[RTSyn][ERROR]"));
+
+    let output = Command::new(exe)
+        .args([
+            "daemon",
+            "connection",
+            "add",
+            "--from-plugin",
+            "1",
+            "--from-port",
+            "period_us",
+            "--to-plugin",
+            "2",
+            "--to-port",
+            "in_0",
+        ])
+        .output()
+        .expect("valid connection");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains("[RTSyn][ERROR]"));
+
+    let output = Command::new(exe)
+        .args(["daemon", "connection", "list"])
+        .output()
+        .expect("list connections");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("1:period_us -> 2:in_0"));
+
+    let _ = Command::new(exe)
+        .args(["daemon", "runtime", "plugin", "remove", "2"])
+        .status();
     let _ = Command::new(exe)
         .args(["daemon", "runtime", "plugin", "remove", "1"])
         .status();

@@ -1,7 +1,7 @@
 use crate::protocol::{ConnectionSummary, DaemonRequest, DaemonResponse, PluginSummary, WorkspaceSummary, RuntimePluginSummary, RuntimePluginState, DEFAULT_SOCKET_PATH};
 use crate::protocol::RuntimeSettingsOptions;
-use rtsyn_core::plugin::{is_extendable_inputs, PluginCatalog, PluginMetadataSource};
-use rtsyn_core::connection::{ensure_extendable_input_count, next_available_extendable_input_index};
+use rtsyn_core::connection::next_available_extendable_input_index;
+use rtsyn_core::plugin::{is_extendable_inputs, InstalledPlugin, PluginCatalog, PluginMetadataSource};
 use rtsyn_core::workspace::WorkspaceManager;
 use rtsyn_runtime::runtime::{spawn_runtime, LogicMessage, LogicState};
 use std::io::{BufRead, BufReader, Write};
@@ -9,7 +9,22 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::Duration;
-use workspace::ConnectionDefinition;
+
+fn plugin_inputs(installed: &[InstalledPlugin], kind: &str) -> Vec<String> {
+    installed
+        .iter()
+        .find(|p| p.manifest.kind == kind)
+        .map(|p| p.metadata_inputs.clone())
+        .unwrap_or_default()
+}
+
+fn plugin_outputs(installed: &[InstalledPlugin], kind: &str) -> Vec<String> {
+    installed
+        .iter()
+        .find(|p| p.manifest.kind == kind)
+        .map(|p| p.metadata_outputs.clone())
+        .unwrap_or_default()
+}
 
 struct RuntimeQuery {
     logic_tx: mpsc::Sender<LogicMessage>,
@@ -417,49 +432,125 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
             to_port,
             kind,
         } => {
-            let mut to_port_string = to_port.clone();
-            if let Some(target) = state
+            let from_exists = state
                 .workspace_manager
                 .workspace
                 .plugins
                 .iter()
-                .find(|p| p.id == to_plugin)
-            {
-                if is_extendable_inputs(&target.kind) && to_port_string == "in" {
-                    let next_idx = next_available_extendable_input_index(
-                        &state.workspace_manager.workspace,
-                        to_plugin,
-                    );
-                    to_port_string = format!("in_{next_idx}");
+                .any(|p| p.id == from_plugin);
+            if !from_exists {
+                DaemonResponse::Error {
+                    message: "Source plugin not found in workspace".to_string(),
                 }
-            }
-
-            let connection = ConnectionDefinition {
-                from_plugin,
-                from_port,
-                to_plugin,
-                to_port: to_port_string.clone(),
-                kind,
-            };
-            match workspace::add_connection(
-                &mut state.workspace_manager.workspace.connections,
-                connection,
-                1,
-            ) {
-                Ok(()) => {
-                    if let Some(idx) = to_port_string.strip_prefix("in_").and_then(|v| v.parse::<usize>().ok()) {
-                        ensure_extendable_input_count(
-                            &mut state.workspace_manager.workspace,
+            } else {
+                let from_kind = state
+                    .workspace_manager
+                    .workspace
+                    .plugins
+                    .iter()
+                    .find(|p| p.id == from_plugin)
+                    .map(|p| p.kind.clone())
+                    .unwrap_or_default();
+                let to_plugin_def = state
+                    .workspace_manager
+                    .workspace
+                    .plugins
+                    .iter()
+                    .find(|p| p.id == to_plugin)
+                    .cloned();
+                let to_exists = to_plugin_def.is_some();
+                if !to_exists {
+                    DaemonResponse::Error {
+                        message: "Target plugin not found in workspace".to_string(),
+                    }
+                } else if from_port.trim().is_empty()
+                    || to_port.trim().is_empty()
+                    || kind.trim().is_empty()
+                {
+                    DaemonResponse::Error {
+                        message: "Connection fields cannot be empty".to_string(),
+                    }
+                } else {
+                    let installed = &state.catalog.manager.installed_plugins;
+                    let from_outputs = plugin_outputs(installed, &from_kind);
+                    if from_outputs.is_empty() {
+                        DaemonResponse::Error {
+                            message: "Source plugin outputs not available".to_string(),
+                        }
+                    } else if !from_outputs.iter().any(|p| p == &from_port) {
+                        DaemonResponse::Error {
+                            message: "Source port not found".to_string(),
+                        }
+                    } else {
+                        let to_kind = to_plugin_def
+                            .as_ref()
+                            .map(|p| p.kind.clone())
+                            .unwrap_or_default();
+                        let to_inputs = plugin_inputs(installed, &to_kind);
+                    if is_extendable_inputs(&to_kind) {
+                        let next_idx = next_available_extendable_input_index(
+                            &state.workspace_manager.workspace,
                             to_plugin,
-                            idx + 1,
                         );
-                    }
-                    state.refresh_runtime();
-                    DaemonResponse::Ok {
-                        message: "Connection added".to_string(),
+                        let next_port = format!("in_{next_idx}");
+                        if !to_inputs.iter().any(|p| p == &to_port) && to_port != next_port {
+                            DaemonResponse::Error {
+                                message:
+                                    "Target port must be the next in_<number> or an existing input"
+                                        .to_string(),
+                            }
+                        } else {
+                            match rtsyn_core::connection::add_connection(
+                                &mut state.workspace_manager.workspace,
+                                &state.catalog.manager.installed_plugins,
+                                from_plugin,
+                                &from_port,
+                                to_plugin,
+                                &to_port,
+                                &kind,
+                            ) {
+                                Ok(()) => {
+                                    state.refresh_runtime();
+                                    DaemonResponse::Ok {
+                                        message: "Connection added".to_string(),
+                                    }
+                                }
+                                Err(err) => DaemonResponse::Error {
+                                    message: format!("{err}"),
+                                },
+                            }
+                        }
+                    } else if to_inputs.is_empty() {
+                            DaemonResponse::Error {
+                                message: "Target plugin inputs not available".to_string(),
+                            }
+                        } else if !to_inputs.iter().any(|p| p == &to_port) {
+                            DaemonResponse::Error {
+                                message: "Target port not found".to_string(),
+                            }
+                        } else {
+                            match rtsyn_core::connection::add_connection(
+                                &mut state.workspace_manager.workspace,
+                                &state.catalog.manager.installed_plugins,
+                                from_plugin,
+                                &from_port,
+                                to_plugin,
+                                &to_port,
+                                &kind,
+                            ) {
+                                Ok(()) => {
+                                    state.refresh_runtime();
+                                    DaemonResponse::Ok {
+                                        message: "Connection added".to_string(),
+                                    }
+                                }
+                                Err(err) => DaemonResponse::Error {
+                                    message: format!("{err}"),
+                                },
+                            }
+                        }
                     }
                 }
-                Err(err) => DaemonResponse::Error { message: format!("{err}") },
             }
         }
         DaemonRequest::ConnectionRemove {

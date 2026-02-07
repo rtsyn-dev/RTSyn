@@ -54,4 +54,4 @@
 - [ ] Workspace created doesnt show the name
 - [ ] The gui and runtime in gui mode are a bit coulpled (high periods make the gui laggy)
 - [ ] On loading of Workspace plugins doesnt auto start, this also happens in the gui
-- [ ] On cli a connection can be made on unexistent plugins
+- [x] On cli a connection can be made on unexistent plugins
