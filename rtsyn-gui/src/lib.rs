@@ -3,12 +3,12 @@ use rtsyn_runtime::spawn_runtime;
 use eframe::{egui, egui::RichText};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::path::PathBuf;
 use std::process::{self, Command};
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use workspace::WorkspaceDefinition;
 
 // Helper to check if running with RT capabilities
 fn has_rt_capabilities() -> bool {
@@ -400,9 +400,28 @@ impl GuiApp {
                 self.uninstall_plugin(index);
             }
             ConfirmAction::DeleteWorkspace(path) => {
-                let _ = fs::remove_file(&path);
-                self.scan_workspaces();
-                self.show_info("Workspace", "Workspace deleted");
+                let name = WorkspaceDefinition::load_from_file(&path)
+                    .map(|ws| ws.name)
+                    .unwrap_or_else(|_| {
+                        path.file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("workspace")
+                            .replace('_', " ")
+                    });
+                match self.workspace_manager.delete_workspace(&name) {
+                    Ok(()) => {
+                        if self.workspace_manager.workspace_path.as_os_str().is_empty() {
+                            self.plotter_manager.plotters.clear();
+                            self.apply_workspace_settings();
+                            self.plugin_positions.clear();
+                        }
+                        self.scan_workspaces();
+                        self.show_info("Workspace", &format!("Workspace '{}' deleted", name));
+                    }
+                    Err(err) => {
+                        self.show_info("Workspace Error", &err);
+                    }
+                }
             }
         }
     }

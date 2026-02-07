@@ -54,7 +54,7 @@ impl GuiApp {
         
         self.plugin_manager.next_plugin_id = 1;
         self.plugin_manager.available_plugin_ids.clear();
-        self.show_info("Workspace", "Workspace created");
+        self.show_info("Workspace", &format!("Workspace '{}' created", name));
         self.scan_workspaces();
         true
     }
@@ -71,7 +71,7 @@ impl GuiApp {
             return false;
         }
         
-        self.show_info("Workspace", "Workspace saved");
+        self.show_info("Workspace", &format!("Workspace '{}' saved", name));
         self.scan_workspaces();
         true
     }
@@ -86,7 +86,8 @@ impl GuiApp {
             self.show_info("Workspace Error", &e);
             return;
         }
-        self.show_info("Workspace", "Workspace updated");
+        let display_name = self.workspace_manager.workspace.name.clone();
+        self.show_info("Workspace", &format!("Workspace '{}' updated", display_name));
         self.scan_workspaces();
     }
 
@@ -106,7 +107,7 @@ impl GuiApp {
                 if new_path != path {
                     let _ = fs::remove_file(path);
                 }
-                self.show_info("Workspace", "Workspace updated");
+                self.show_info("Workspace", &format!("Workspace '{}' updated", name));
                 updated = true;
             }
         }

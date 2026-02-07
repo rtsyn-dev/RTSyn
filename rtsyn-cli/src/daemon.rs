@@ -372,7 +372,7 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
                         .sync_ids_from_workspace(&state.workspace_manager.workspace);
                     state.refresh_runtime();
                     DaemonResponse::Ok {
-                        message: "Workspace created".to_string(),
+                        message: format!("Workspace '{}' created", name),
                     }
                 }
                 Err(err) => DaemonResponse::Error { message: err },
@@ -390,9 +390,13 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
             };
             match result {
                 Ok(()) => {
+                    let display_name = name
+                        .as_ref()
+                        .cloned()
+                        .unwrap_or_else(|| state.workspace_manager.workspace.name.clone());
                     state.refresh_runtime();
                     DaemonResponse::Ok {
-                        message: "Workspace saved".to_string(),
+                        message: format!("Workspace '{}' saved", display_name),
                     }
                 }
                 Err(err) => {
@@ -410,7 +414,7 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
                 Ok(()) => {
                     state.refresh_runtime();
                     DaemonResponse::Ok {
-                        message: "Workspace updated".to_string(),
+                        message: format!("Workspace '{}' updated", name),
                     }
                 }
                 Err(err) => DaemonResponse::Error { message: err },
@@ -419,9 +423,19 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
         DaemonRequest::WorkspaceDelete { name } => {
             match state.workspace_manager.delete_workspace(&name) {
                 Ok(()) => {
+                    if let Ok(runtime_settings) = state.workspace_manager.runtime_settings() {
+                        state.logic_settings.cores = runtime_settings.cores;
+                        state.logic_settings.period_seconds = runtime_settings.period_seconds;
+                        state.logic_settings.time_scale = runtime_settings.time_scale;
+                        state.logic_settings.time_label = runtime_settings.time_label;
+                        let _ = state
+                            .runtime_query
+                            .logic_tx
+                            .send(LogicMessage::UpdateSettings(state.logic_settings.clone()));
+                    }
                     state.refresh_runtime();
                     DaemonResponse::Ok {
-                        message: "Workspace deleted".to_string(),
+                        message: format!("Workspace '{}' deleted", name),
                     }
                 }
                 Err(err) => DaemonResponse::Error { message: err },
