@@ -115,6 +115,7 @@ pub enum DaemonResponse {
         kind: String,
         state: RuntimePluginState,
         samples: Vec<(u64, Vec<f64>)>,
+        series_names: Vec<String>,
         period_seconds: f64,
         time_scale: f64,
         time_label: String,

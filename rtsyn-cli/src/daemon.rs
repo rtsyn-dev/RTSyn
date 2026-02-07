@@ -676,15 +676,24 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
             let latest_state = state.last_logic_state.clone();
             let samples = state.plotter_history.get(&id).cloned().unwrap_or_default();
             match build_runtime_state(&state.workspace_manager, id, latest_state) {
-                Ok((kind, plugin_state, _)) => DaemonResponse::RuntimePluginView {
-                    id,
-                    kind,
-                    state: plugin_state,
-                    samples,
-                    period_seconds: state.logic_settings.period_seconds,
-                    time_scale: state.logic_settings.time_scale,
-                    time_label: state.logic_settings.time_label.clone(),
-                },
+                Ok((kind, plugin_state, _)) => {
+                    let series_names = build_plotter_series_names(
+                        &state.workspace_manager,
+                        &state.catalog.manager.installed_plugins,
+                        id,
+                        &samples,
+                    );
+                    DaemonResponse::RuntimePluginView {
+                        id,
+                        kind,
+                        state: plugin_state,
+                        samples,
+                        series_names,
+                        period_seconds: state.logic_settings.period_seconds,
+                        time_scale: state.logic_settings.time_scale,
+                        time_label: state.logic_settings.time_label.clone(),
+                    }
+                }
                 Err(message) => DaemonResponse::Error { message },
             }
         }
@@ -877,6 +886,66 @@ fn build_runtime_state(
             ))
         }
     }
+}
+
+fn build_plotter_series_names(
+    manager: &WorkspaceManager,
+    installed: &[rtsyn_core::plugin::InstalledPlugin],
+    plotter_id: u64,
+    samples: &[(u64, Vec<f64>)],
+) -> Vec<String> {
+    let plugin = manager.workspace.plugins.iter().find(|p| p.id == plotter_id);
+    let input_count = if let Some(plugin) = plugin {
+        plugin
+            .config
+            .get("input_count")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as usize
+    } else {
+        0
+    };
+    let mut input_count = input_count;
+    if input_count == 0 {
+        if let Some((_, values)) = samples.last() {
+            input_count = values.len();
+        }
+    }
+
+    let name_by_kind: std::collections::HashMap<String, String> = installed
+        .iter()
+        .map(|plugin| (plugin.manifest.kind.clone(), plugin.manifest.name.clone()))
+        .collect();
+    let plugin_display_name = |plugin_id: u64| {
+        manager
+            .workspace
+            .plugins
+            .iter()
+            .find(|plugin| plugin.id == plugin_id)
+            .map(|plugin| {
+                name_by_kind
+                    .get(&plugin.kind)
+                    .cloned()
+                    .unwrap_or_else(|| rtsyn_core::plugin::PluginManager::display_kind(&plugin.kind))
+            })
+            .unwrap_or_else(|| "plugin".to_string())
+    };
+
+    let mut names = Vec::with_capacity(input_count);
+    for idx in 0..input_count {
+        let port = format!("in_{idx}");
+        if let Some(conn) = manager
+            .workspace
+            .connections
+            .iter()
+            .find(|conn| conn.to_plugin == plotter_id && conn.to_port == port)
+        {
+            let source_name = plugin_display_name(conn.from_plugin);
+            names.push(format!("{source_name}({}):{}", conn.from_plugin, conn.from_port));
+        } else {
+            names.push(port);
+        }
+    }
+    names
 }
 
 fn normalize_plugin_key(input: &str) -> String {

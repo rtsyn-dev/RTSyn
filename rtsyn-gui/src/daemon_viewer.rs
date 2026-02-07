@@ -47,6 +47,7 @@ struct DaemonPluginView {
     time_scale: f64,
     time_label: String,
     samples: Vec<(u64, Vec<f64>)>,
+    series_names: Vec<String>,
 }
 
 struct DaemonPluginViewer {
@@ -55,11 +56,39 @@ struct DaemonPluginViewer {
     last_fetch: Instant,
     last_settings_fetch: Instant,
     view: Option<DaemonPluginView>,
+    display_state: Option<RuntimePluginState>,
+    display_kind: Option<String>,
+    display_running: Option<bool>,
     plotter: LivePlotter,
     error: Option<String>,
     running: Option<bool>,
     last_sample_tick: Option<u64>,
     last_refresh_hz: f64,
+}
+
+fn kv_row_wrapped(
+    ui: &mut egui::Ui,
+    label: &str,
+    label_w: f32,
+    value_ui: impl FnOnce(&mut egui::Ui),
+) {
+    ui.horizontal(|ui| {
+        let label_response = ui.allocate_ui_with_layout(
+            egui::vec2(label_w, 0.0),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                ui.add(egui::Label::new(label).wrap(true));
+            },
+        );
+
+        let used_width = label_response.response.rect.width();
+        if used_width < label_w {
+            ui.add_space(label_w - used_width);
+        }
+
+        ui.add_space(8.0);
+        value_ui(ui);
+    });
 }
 
 impl DaemonPluginViewer {
@@ -75,6 +104,9 @@ impl DaemonPluginViewer {
             running: None,
             last_sample_tick: None,
             last_refresh_hz: 60.0,
+            display_state: None,
+            display_kind: None,
+            display_running: None,
         }
     }
 
@@ -83,7 +115,16 @@ impl DaemonPluginViewer {
             &self.socket_path,
             &DaemonRequest::RuntimePluginView { id: self.plugin_id },
         ) {
-            Ok(DaemonResponse::RuntimePluginView { kind, state, samples, period_seconds, time_scale, time_label, .. }) => {
+            Ok(DaemonResponse::RuntimePluginView {
+                kind,
+                state,
+                samples,
+                series_names,
+                period_seconds,
+                time_scale,
+                time_label,
+                ..
+            }) => {
                 self.running = state
                     .internal_variables
                     .iter()
@@ -96,6 +137,7 @@ impl DaemonPluginViewer {
                     time_scale,
                     time_label,
                     samples,
+                    series_names,
                 });
                 self.error = None;
             }
@@ -154,6 +196,9 @@ impl DaemonPluginViewer {
         icon: &str,
         items: &[(String, serde_json::Value)],
     ) {
+        if items.is_empty() {
+            return;
+        }
         egui::CollapsingHeader::new(
             egui::RichText::new(format!("{icon}  {title}"))
                 .size(13.0)
@@ -166,17 +211,34 @@ impl DaemonPluginViewer {
                 .iter()
                 .filter(|(name, _)| name != "library_path")
                 .collect();
-            if filtered.is_empty() {
-                ui.label("(none)");
-            } else {
+            if !filtered.is_empty() {
                 for (name, value) in filtered {
-                    ui.label(format!("{name}: {value}"));
+                    let text = match value {
+                        serde_json::Value::Number(num) => num
+                            .as_f64()
+                            .map(|v| format!("{:.4}", v))
+                            .unwrap_or_else(|| value.to_string()),
+                        _ => value.to_string(),
+                    };
+                    let mut value_text = text;
+                    kv_row_wrapped(ui, name, 140.0, |ui| {
+                        ui.add_enabled_ui(false, |ui| {
+                            ui.add_sized(
+                                [80.0, 0.0],
+                                egui::TextEdit::singleline(&mut value_text),
+                            );
+                        });
+                    });
+                    ui.add_space(4.0);
                 }
             }
         });
     }
 
     fn render_section_numbers(ui: &mut egui::Ui, title: &str, icon: &str, items: &[(String, f64)]) {
+        if items.is_empty() {
+            return;
+        }
         egui::CollapsingHeader::new(
             egui::RichText::new(format!("{icon}  {title}"))
                 .size(13.0)
@@ -185,11 +247,51 @@ impl DaemonPluginViewer {
         .default_open(true)
         .show(ui, |ui| {
             ui.add_space(4.0);
-            if items.is_empty() {
-                ui.label("(none)");
-            } else {
+            if !items.is_empty() {
                 for (name, value) in items {
-                    ui.label(format!("{name}: {value}"));
+                    let mut value_text = if (value.fract() - 0.0).abs() < f64::EPSILON {
+                        format!("{value:.0}")
+                    } else {
+                        format!("{value:.4}")
+                    };
+                    kv_row_wrapped(ui, name, 140.0, |ui| {
+                        ui.add_enabled_ui(false, |ui| {
+                            ui.add_sized(
+                                [80.0, 0.0],
+                                egui::TextEdit::singleline(&mut value_text),
+                            );
+                        });
+                    });
+                    ui.add_space(4.0);
+                }
+            }
+        });
+    }
+
+    fn render_section_inputs(ui: &mut egui::Ui, title: &str, icon: &str, items: &[(String, f64)]) {
+        if items.is_empty() {
+            return;
+        }
+        egui::CollapsingHeader::new(
+            egui::RichText::new(format!("{icon}  {title}"))
+                .size(13.0)
+                .strong(),
+        )
+        .default_open(true)
+        .show(ui, |ui| {
+            ui.add_space(4.0);
+            if !items.is_empty() {
+                for (name, value) in items {
+                    let mut value_text = format!("{value:.4}");
+                    kv_row_wrapped(ui, name, 140.0, |ui| {
+                        ui.add_enabled_ui(false, |ui| {
+                            ui.add_sized(
+                                [80.0, 0.0],
+                                egui::TextEdit::singleline(&mut value_text),
+                            );
+                        });
+                    });
+                    ui.add_space(4.0);
                 }
             }
         });
@@ -245,26 +347,11 @@ impl DaemonPluginViewer {
                 ui.separator();
                 ui.add_space(4.0);
 
-                ui.scope(|ui| {
-                    let mut scroll_style = egui::style::ScrollStyle::solid();
-                    scroll_style.bar_width = 4.0;
-                    scroll_style.floating = true;
-                    scroll_style.floating_width = 2.0;
-                    scroll_style.floating_allocated_width = 2.0;
-                    ui.style_mut().spacing.scroll = scroll_style;
-
-                    egui::ScrollArea::vertical()
-                        .max_height(320.0)
-                        .drag_to_scroll(false)
-                        .show(ui, |ui| {
-                            ui.style_mut().spacing.item_spacing = egui::vec2(0.0, 6.0);
-
-                            Self::render_section_values(ui, "Variables", "\u{f013}", &view.state.variables);
-                            Self::render_section_numbers(ui, "Outputs", "\u{f08b}", &view.state.outputs);
-                            Self::render_section_numbers(ui, "Inputs", "\u{f090}", &view.state.inputs);
-                            Self::render_section_values(ui, "Internal variables", "\u{f085}", &view.state.internal_variables);
-                        });
-                });
+                ui.style_mut().spacing.item_spacing = egui::vec2(0.0, 6.0);
+                Self::render_section_values(ui, "Variables", "\u{f013}", &view.state.variables);
+                Self::render_section_numbers(ui, "Outputs", "\u{f08b}", &view.state.outputs);
+                Self::render_section_inputs(ui, "Inputs", "\u{f090}", &view.state.inputs);
+                Self::render_section_values(ui, "Internal variables", "\u{f085}", &view.state.internal_variables);
             });
         });
     }
@@ -273,11 +360,21 @@ impl DaemonPluginViewer {
 
 impl eframe::App for DaemonPluginViewer {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if self.last_fetch.elapsed() >= Duration::from_millis(50) {
+        let fetch_interval = if self.last_refresh_hz > 0.0 {
+            Duration::from_secs_f64(1.0 / self.last_refresh_hz.max(1.0))
+        } else {
+            Duration::from_millis(50)
+        };
+        if self.last_fetch.elapsed() >= fetch_interval {
             self.fetch_view();
             self.last_fetch = Instant::now();
         }
         if self.last_settings_fetch.elapsed() >= Duration::from_secs(1) {
+            if let Some(view) = self.view.as_ref() {
+                self.display_state = Some(view.state.clone());
+                self.display_kind = Some(view.kind.clone());
+                self.display_running = self.running;
+            }
             self.last_settings_fetch = Instant::now();
         }
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -317,8 +414,12 @@ impl eframe::App for DaemonPluginViewer {
                 let period_seconds = view.period_seconds;
                 self.plotter
                     .update_config(input_count, refresh_hz, window_ms, amplitude, period_seconds);
-                let series_names = (0..input_count).map(|i| format!("in_{i}")).collect();
-                self.plotter.set_series_names(series_names);
+                if !view.series_names.is_empty() {
+                    self.plotter.set_series_names(view.series_names.clone());
+                } else {
+                    let series_names = (0..input_count).map(|i| format!("in_{i}")).collect();
+                    self.plotter.set_series_names(series_names);
+                }
                 let time_scale = view.time_scale;
                 if let Some(latest_tick) = view.samples.last().map(|(tick, _)| *tick) {
                     if let Some(last_tick) = self.last_sample_tick {
@@ -343,12 +444,34 @@ impl eframe::App for DaemonPluginViewer {
                 if has_samples {
                     self.last_sample_tick = Some(latest_tick);
                 }
-                ui.add_space(8.0);
-                self.render_plugin_card(ui, view);
+                if let Some(state) = self.display_state.as_ref() {
+                    let display_view = DaemonPluginView {
+                        kind: self.display_kind.clone().unwrap_or_else(|| view.kind.clone()),
+                        state: state.clone(),
+                        period_seconds: view.period_seconds,
+                        time_scale: view.time_scale,
+                        time_label: view.time_label.clone(),
+                        samples: Vec::new(),
+                        series_names: Vec::new(),
+                    };
+                    ui.add_space(8.0);
+                    self.render_plugin_card(ui, &display_view);
+                }
                 ui.add_space(12.0);
                 self.plotter.render(ui, "", &view.time_label);
             } else {
-                self.render_plugin_card(ui, view);
+                if let Some(state) = self.display_state.as_ref() {
+                    let display_view = DaemonPluginView {
+                        kind: self.display_kind.clone().unwrap_or_else(|| view.kind.clone()),
+                        state: state.clone(),
+                        period_seconds: view.period_seconds,
+                        time_scale: view.time_scale,
+                        time_label: view.time_label.clone(),
+                        samples: Vec::new(),
+                        series_names: Vec::new(),
+                    };
+                    self.render_plugin_card(ui, &display_view);
+                }
             }
         });
     }
