@@ -1,55 +1,51 @@
 use clap::{Parser, Subcommand};
-use rtsyn_runtime::daemon::DaemonService;
 use rtsyn_gui::{run_gui, GuiConfig};
 use rtsyn_cli::{client, daemon, protocol::{DaemonRequest, DaemonResponse}};
-use std::time::Duration;
 
 #[derive(Parser)]
 #[command(name = "rtsyn", version, about = "RTSyn MVP CLI")]
 struct Cli {
-    /// Disable the GUI (GUI is the default)
-    #[arg(long)]
-    no_gui: bool,
     #[command(subcommand)]
     command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
 enum Commands {
-    Run {
-        #[arg(long, default_value_t = 1000)]
-        ticks: u64,
-        /// Run without GUI
-        #[arg(long)]
-        no_gui: bool,
-    },
     Daemon {
-        #[arg(long, default_value_t = 60)]
-        duration_seconds: u64,
-        #[arg(long)]
-        workspace: Option<String>,
+        #[command(subcommand)]
+        command: DaemonCommands,
     },
+}
+
+#[derive(Subcommand)]
+enum DaemonCommands {
+    Run,
     Plugin {
         #[command(subcommand)]
         command: PluginCommands,
+    },
+    Workspace {
+        #[command(subcommand)]
+        command: WorkspaceCommands,
     },
 }
 
 #[derive(Subcommand)]
 enum PluginCommands {
-    Add {
-        name: String,
-    },
-    Install {
-        path: String,
-    },
-    Remove {
-        id: u64,
-    },
-    Uninstall {
-        name: String,
-    },
+    Add { name: String },
+    Install { path: String },
+    Remove { id: u64 },
+    Uninstall { name: String },
     List,
+}
+
+#[derive(Subcommand)]
+enum WorkspaceCommands {
+    List,
+    Load { name: String },
+    New { name: String },
+    Save { name: Option<String> },
+    Edit { name: String },
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -57,50 +53,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match cli.command {
         None => {
-            if cli.no_gui {
-                daemon::run_daemon()?;
-                return Ok(());
-            }
             run_gui(GuiConfig::default())?;
         }
-        Some(Commands::Run { ticks, no_gui }) => {
-            if no_gui || cli.no_gui {
-                // Daemon mode - run without GUI
-                let daemon = DaemonService::new()?;
-                daemon.run_for_ticks(ticks)?;
-            } else {
-                // Legacy mode - run collection directly then GUI
-                let mut collection =
-                    rtsyn_runtime::Runtime::new(workspace::WorkspaceDefinition {
-                        name: "test".to_string(),
-                        description: String::new(),
-                        target_hz: 1000,
-                        plugins: Vec::new(),
-                        connections: Vec::new(),
-                        settings: workspace::WorkspaceSettings::default(),
-                    });
-                for _ in 0..ticks {
-                    collection.tick()?;
-                }
-                run_gui(GuiConfig::default())?;
-            }
-        }
-        Some(Commands::Daemon { duration_seconds, workspace }) => {
-            let daemon = DaemonService::new()?;
-            
-            if let Some(workspace_path) = workspace {
-                if let Ok(workspace_def) = workspace::WorkspaceDefinition::load_from_file(&workspace_path) {
-                    daemon.load_workspace(workspace_def);
-                } else {
-                    eprintln!("Failed to load workspace: {}", workspace_path);
-                    return Ok(());
+        Some(Commands::Daemon { command }) => match command {
+            DaemonCommands::Run => {
+                if let Err(err) = daemon::run_daemon() {
+                    eprintln!("[RTSyn][ERROR]: {err}");
                 }
             }
-            
-            daemon.run_for_duration(Duration::from_secs(duration_seconds))?;
-        }
-        Some(Commands::Plugin { command }) => {
-            let request = match command {
+            DaemonCommands::Plugin { command } => {
+                let request = match command {
                 PluginCommands::Add { name } => DaemonRequest::PluginAdd { name },
                 PluginCommands::Install { path } => {
                     let install_path = std::path::Path::new(&path);
@@ -110,7 +72,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         match std::fs::canonicalize(install_path) {
                             Ok(resolved) => resolved,
                             Err(err) => {
-                                eprintln!("Failed to resolve install path: {err}");
+                                eprintln!("[RTSyn][ERROR]: Failed to resolve install path: {err}");
                                 return Ok(());
                             }
                         }
@@ -124,11 +86,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 PluginCommands::List => DaemonRequest::PluginList,
             };
             match client::send_request(&request) {
-                Ok(response) => match response {
-                    DaemonResponse::Ok { message } => println!("{message}"),
-                    DaemonResponse::Error { message } => eprintln!("{message}"),
-                    DaemonResponse::PluginAdded { id } => println!("Plugin added with id {id}"),
-                    DaemonResponse::PluginList { plugins } => {
+                    Ok(response) => match response {
+                        DaemonResponse::Ok { message } => println!("{message}"),
+                        DaemonResponse::Error { message } => eprintln!("[RTSyn][ERROR]: {message}"),
+                        DaemonResponse::PluginAdded { id } => println!("Plugin added with id {id}"),
+                        DaemonResponse::PluginList { plugins } => {
                         if plugins.is_empty() {
                             println!("No plugins installed");
                         } else {
@@ -141,12 +103,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     println!("{} ({}) [{}] v{}", plugin.name, plugin.kind, removable, version);
                                 }
                             }
+                            }
                         }
-                    }
-                },
-                Err(err) => eprintln!("{err}"),
+                        DaemonResponse::WorkspaceList { .. } => {}
+                    },
+                    Err(err) => eprintln!("[RTSyn][ERROR]: {err}"),
+                }
             }
-        }
+            DaemonCommands::Workspace { command } => {
+                let request = match command {
+                    WorkspaceCommands::List => DaemonRequest::WorkspaceList,
+                    WorkspaceCommands::Load { name } => DaemonRequest::WorkspaceLoad { name },
+                    WorkspaceCommands::New { name } => DaemonRequest::WorkspaceNew { name },
+                    WorkspaceCommands::Save { name } => DaemonRequest::WorkspaceSave { name },
+                    WorkspaceCommands::Edit { name } => DaemonRequest::WorkspaceEdit { name },
+                };
+                match client::send_request(&request) {
+                    Ok(response) => match response {
+                        DaemonResponse::Ok { message } => println!("{message}"),
+                        DaemonResponse::Error { message } => eprintln!("[RTSyn][ERROR]: {message}"),
+                        DaemonResponse::WorkspaceList { workspaces } => {
+                            if workspaces.is_empty() {
+                                println!("No workspaces found");
+                            } else {
+                                for ws in workspaces {
+                                    let plugins = if ws.plugins == 1 { "plugin" } else { "plugins" };
+                                    println!("{} - {} {} ({})", ws.name, ws.plugins, plugins, ws.description);
+                                }
+                            }
+                        }
+                        _ => {}
+                    },
+                    Err(err) => eprintln!("[RTSyn][ERROR]: {err}"),
+                }
+            }
+        },
     }
     Ok(())
 }

@@ -1,15 +1,7 @@
 use std::path::PathBuf;
 
 pub(crate) use rtsyn_core::plugins::{DetectedPlugin, InstalledPlugin, PluginManifest};
-
-#[derive(Debug, Clone)]
-pub(crate) struct WorkspaceEntry {
-    pub(crate) name: String,
-    pub(crate) description: String,
-    pub(crate) plugins: usize,
-    pub(crate) plugin_kinds: Vec<String>,
-    pub(crate) path: PathBuf,
-}
+pub(crate) use rtsyn_core::workspaces::WorkspaceEntry;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum WorkspaceDialogMode {

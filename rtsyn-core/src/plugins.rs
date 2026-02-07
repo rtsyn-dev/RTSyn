@@ -535,6 +535,10 @@ impl PluginCatalog {
     pub fn list_installed(&self) -> &[InstalledPlugin] {
         &self.manager.installed_plugins
     }
+
+    pub fn refresh_library_paths(&mut self) {
+        self.manager.refresh_library_paths();
+    }
 }
 
 pub fn is_extendable_inputs(kind: &str) -> bool {
@@ -549,5 +553,37 @@ pub fn empty_workspace() -> WorkspaceDefinition {
         plugins: Vec::new(),
         connections: Vec::new(),
         settings: workspace::WorkspaceSettings::default(),
+    }
+}
+
+impl PluginCatalog {
+    pub fn inject_library_paths_into_workspace(&self, workspace: &mut WorkspaceDefinition) {
+        let mut paths_by_kind: HashMap<String, String> = HashMap::new();
+        for installed in &self.manager.installed_plugins {
+            if let Some(path) = installed.library_path.as_ref() {
+                if path.is_file() {
+                    paths_by_kind.insert(
+                        installed.manifest.kind.clone(),
+                        path.to_string_lossy().to_string(),
+                    );
+                }
+            }
+        }
+        if paths_by_kind.is_empty() {
+            return;
+        }
+        for plugin in &mut workspace.plugins {
+            if let Some(path) = paths_by_kind.get(&plugin.kind) {
+                if let Value::Object(ref mut map) = plugin.config {
+                    let needs_update = match map.get("library_path") {
+                        Some(Value::String(existing)) => existing.is_empty() || !Path::new(existing).is_file(),
+                        _ => true,
+                    };
+                    if needs_update {
+                        map.insert("library_path".to_string(), Value::String(path.to_string()));
+                    }
+                }
+            }
+        }
     }
 }

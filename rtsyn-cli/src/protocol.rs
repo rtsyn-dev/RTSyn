@@ -12,6 +12,14 @@ pub struct PluginSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceSummary {
+    pub name: String,
+    pub description: String,
+    pub plugins: usize,
+    pub plugin_kinds: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DaemonRequest {
     PluginList,
@@ -19,6 +27,11 @@ pub enum DaemonRequest {
     PluginUninstall { name: String },
     PluginAdd { name: String },
     PluginRemove { id: u64 },
+    WorkspaceList,
+    WorkspaceLoad { name: String },
+    WorkspaceNew { name: String },
+    WorkspaceSave { name: Option<String> },
+    WorkspaceEdit { name: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,4 +41,5 @@ pub enum DaemonResponse {
     Error { message: String },
     PluginList { plugins: Vec<PluginSummary> },
     PluginAdded { id: u64 },
+    WorkspaceList { workspaces: Vec<WorkspaceSummary> },
 }
