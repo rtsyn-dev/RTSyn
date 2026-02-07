@@ -3004,6 +3004,7 @@ dependencies = [
  "rtsyn-cli",
  "rtsyn-gui",
  "rtsyn-runtime",
+ "serde_json",
  "serial_test",
  "tempfile",
  "workspace",

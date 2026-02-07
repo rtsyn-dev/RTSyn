@@ -10,6 +10,7 @@ workspace = { path = "../workspace" }
 rtsyn-gui = { path = "../rtsyn-gui" }
 rtsyn-cli = { path = "../rtsyn-cli" }
 log = { workspace = true }
+serde_json = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"

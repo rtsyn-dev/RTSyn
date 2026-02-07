@@ -233,9 +233,9 @@ fn runtime_commands_match_plugin_commands() {
     assert!(!stderr.contains("[RTSyn][ERROR]"));
 
     let output = Command::new(exe)
-        .args(["daemon", "runtime", "available"])
+        .args(["daemon", "plugin", "list"])
         .output()
-        .expect("list runtime available plugins");
+        .expect("list available plugins");
     let output = String::from_utf8_lossy(&output.stdout);
     assert!(output.contains("temp_runtime_plugin"));
 

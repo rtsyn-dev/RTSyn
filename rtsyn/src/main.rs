@@ -48,7 +48,10 @@ enum PluginCommands {
     Rebuild { name: String },
     Remove { id: u64 },
     Uninstall { name: String },
-    List,
+    List {
+        #[arg(long, alias = "jq")]
+        json_query: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -92,9 +95,11 @@ enum ConnectionCommands {
 #[derive(Subcommand)]
 enum RuntimeCommands {
     Add { name: String },
-    Available,
     Remove { id: u64 },
-    List,
+    List {
+        #[arg(long, alias = "jq")]
+        json_query: bool,
+    },
     Show { id: u64 },
 }
 
@@ -134,6 +139,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             DaemonCommands::Plugin { command } => {
+                let mut list_json_query = false;
                 let request = match command {
                     PluginCommands::Add { name } => DaemonRequest::PluginAdd { name },
                     PluginCommands::Install { path } => {
@@ -157,14 +163,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     PluginCommands::Rebuild { name } => DaemonRequest::PluginRebuild { name },
                     PluginCommands::Remove { id } => DaemonRequest::PluginRemove { id },
                     PluginCommands::Uninstall { name } => DaemonRequest::PluginUninstall { name },
-                    PluginCommands::List => DaemonRequest::PluginList,
+                    PluginCommands::List { json_query } => {
+                        list_json_query = json_query;
+                        DaemonRequest::PluginList
+                    }
                 };
             match client::send_request(&request) {
                     Ok(response) => match response {
-                        DaemonResponse::Ok { message } => println!("{message}"),
+                        DaemonResponse::Ok { message } => println!("[RTSyn][INFO] {message}"),
                         DaemonResponse::Error { message } => eprintln!("[RTSyn][ERROR]: {message}"),
                         DaemonResponse::PluginAdded { id } => println!("[RTSyn][INFO] Plugin added with id {id}"),
                         DaemonResponse::PluginList { plugins } => {
+                            if list_json_query {
+                                let json = serde_json::to_string_pretty(&plugins)
+                                    .unwrap_or_else(|_| "[]".to_string());
+                                println!("{json}");
+                                return Ok(());
+                            }
                             if plugins.is_empty() {
                                 println!("[RTSyn][INFO] No plugins installed");
                             } else {
@@ -285,11 +300,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             DaemonCommands::Runtime { command } => {
+                let mut list_json_query = false;
                 let request = match command {
                     RuntimeCommands::Add { name } => DaemonRequest::PluginAdd { name },
-                    RuntimeCommands::Available => DaemonRequest::PluginList,
                     RuntimeCommands::Remove { id } => DaemonRequest::PluginRemove { id },
-                    RuntimeCommands::List => DaemonRequest::RuntimeList,
+                    RuntimeCommands::List { json_query } => {
+                        list_json_query = json_query;
+                        DaemonRequest::RuntimeList
+                    },
                     RuntimeCommands::Show { id } => DaemonRequest::RuntimeShow { id },
                 };
                 match client::send_request(&request) {
@@ -324,6 +342,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
                         DaemonResponse::RuntimeList { plugins } => {
+                            if list_json_query {
+                                let json = serde_json::to_string_pretty(&plugins)
+                                    .unwrap_or_else(|_| "[]".to_string());
+                                println!("{json}");
+                                return Ok(());
+                            }
                             if plugins.is_empty() {
                                 println!("[RTSyn][INFO] No runtime plugins");
                             } else {
