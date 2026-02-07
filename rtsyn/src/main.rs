@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 use rtsyn_runtime::daemon::DaemonService;
-use gui::{run_gui, GuiConfig};
+use rtsyn_gui::{run_gui, GuiConfig};
 use std::time::Duration;
 
 #[derive(Parser)]

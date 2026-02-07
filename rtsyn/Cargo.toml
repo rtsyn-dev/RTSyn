@@ -7,11 +7,11 @@ edition = "2021"
 clap = { version = "4", features = ["derive"] }
 rtsyn-runtime = { path = "../rtsyn-runtime" }
 workspace = { path = "../workspace" }
-gui = { path = "../gui" }
+rtsyn-gui = { path = "../rtsyn-gui" }
 log = { workspace = true }
 
 [features]
 default = []
 preempt_rt = ["rtsyn-runtime/preempt_rt"]
 xenomai = ["rtsyn-runtime/xenomai"]
-comedi = ["rtsyn-runtime/comedi", "gui/comedi"]
+comedi = ["rtsyn-runtime/comedi", "rtsyn-gui/comedi"]

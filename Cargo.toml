@@ -3,7 +3,7 @@ members = [
   "connection",
   # "rtsyn-plugin",
   "workspace",
-  "gui",
+  "rtsyn-gui",
   "rtsyn",
   "rtsyn-runtime",
   "app_plugins/csv_recorder",
@@ -15,7 +15,7 @@ default-members = [
   "connection",
   "workspace",
   "rtsyn-runtime",
-  "gui",
+  "rtsyn-gui",
   "rtsyn",
 ]
 resolver = "2"

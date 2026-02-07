@@ -49,3 +49,4 @@
 - [x] Cant add different outputs to different inputs between same plugins when a connection is already made
 - [x] Visual bug on some plugins where the x is not on top right and the grey top part is not as wide as the plugin
 - [x] When all inputs connections deleted, close the live plotter
+- [ ] Fix csv recorder path button
