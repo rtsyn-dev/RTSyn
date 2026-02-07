@@ -2990,8 +2990,40 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "log",
+ "rtsyn-cli",
  "rtsyn-gui",
  "rtsyn-runtime",
+ "workspace",
+]
+
+[[package]]
+name = "rtsyn-cli"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "rtsyn-core",
+ "rtsyn-runtime",
+ "rtsyn_plugin",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "workspace",
+]
+
+[[package]]
+name = "rtsyn-core"
+version = "0.1.0"
+dependencies = [
+ "comedi_daq_plugin",
+ "csv_recorder_plugin",
+ "live_plotter_plugin",
+ "log",
+ "performance_monitor_plugin",
+ "rtsyn_plugin",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "toml",
  "workspace",
 ]
 
@@ -3010,6 +3042,7 @@ dependencies = [
  "performance_monitor_plugin",
  "plotters",
  "rfd",
+ "rtsyn-core",
  "rtsyn-runtime",
  "rtsyn_plugin",
  "serde",

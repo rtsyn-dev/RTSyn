@@ -1,28 +1,6 @@
-use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct PluginManifest {
-    pub(crate) name: String,
-    pub(crate) kind: String,
-    pub(crate) version: Option<String>,
-    pub(crate) description: Option<String>,
-    pub(crate) library: Option<String>,
-}
-
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct InstalledPlugin {
-    pub(crate) manifest: PluginManifest,
-    pub(crate) path: PathBuf,
-    pub(crate) library_path: Option<PathBuf>,
-    pub(crate) removable: bool,
-    pub(crate) metadata_inputs: Vec<String>,
-    pub(crate) metadata_outputs: Vec<String>,
-    pub(crate) metadata_variables: Vec<(String, f64)>,
-    pub(crate) display_schema: Option<rtsyn_plugin::ui::DisplaySchema>,
-    pub(crate) ui_schema: Option<rtsyn_plugin::ui::UISchema>,
-}
+pub(crate) use rtsyn_core::plugins::{DetectedPlugin, InstalledPlugin, PluginManifest};
 
 #[derive(Debug, Clone)]
 pub(crate) struct WorkspaceEntry {
@@ -86,12 +64,6 @@ pub(crate) enum ConnectionEditMode {
 pub(crate) enum ConnectionEditTab {
     Inputs,
     Outputs,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct DetectedPlugin {
-    pub(crate) manifest: PluginManifest,
-    pub(crate) path: PathBuf,
 }
 
 #[derive(Debug, Clone, Copy)]

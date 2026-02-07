@@ -8,6 +8,7 @@ clap = { version = "4", features = ["derive"] }
 rtsyn-runtime = { path = "../rtsyn-runtime" }
 workspace = { path = "../workspace" }
 rtsyn-gui = { path = "../rtsyn-gui" }
+rtsyn-cli = { path = "../rtsyn-cli" }
 log = { workspace = true }
 
 [features]
