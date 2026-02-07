@@ -1,5 +1,6 @@
 use crate::protocol::{ConnectionSummary, DaemonRequest, DaemonResponse, PluginSummary, WorkspaceSummary, DEFAULT_SOCKET_PATH};
 use rtsyn_core::plugins::{is_extendable_inputs, PluginCatalog, PluginMetadataSource};
+use rtsyn_core::connections::{ensure_extendable_input_count, next_available_extendable_input_index};
 use rtsyn_core::workspaces::{empty_workspace, scan_workspace_entries, workspace_file_path, load_workspace, save_workspace, rename_workspace_file};
 use rtsyn_runtime::runtime::{spawn_runtime, LogicMessage};
 use std::io::{BufRead, BufReader, Write};
@@ -97,8 +98,15 @@ pub fn run_daemon_at(socket_path: &str) -> Result<(), String> {
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
-                if let Err(err) = handle_client(stream, &mut state) {
-                    eprintln!("[RTSyn][ERROR]: Daemon client error: {err}");
+                match handle_client(stream, &mut state) {
+                    Ok(()) => {}
+                    Err(err) if err == "daemon_stop" => {
+                        let _ = std::fs::remove_file(socket_path);
+                        return Ok(());
+                    }
+                    Err(err) => {
+                        eprintln!("[RTSyn][ERROR]: Daemon client error: {err}");
+                    }
                 }
             }
             Err(err) => {
@@ -164,6 +172,15 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
                     },
                     Err(err) => DaemonResponse::Error { message: err },
                 }
+            }
+        }
+        DaemonRequest::PluginReinstall { name } => {
+            let key = normalize_plugin_key(&name);
+            match state.catalog.reinstall_plugin_by_kind(&key, &state.runtime_query) {
+                Ok(()) => DaemonResponse::Ok {
+                    message: "Plugin reinstalled".to_string(),
+                },
+                Err(err) => DaemonResponse::Error { message: err },
             }
         }
         DaemonRequest::PluginUninstall { name } => {
@@ -365,7 +382,7 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
             let mut to_port_string = to_port.clone();
             if let Some(target) = state.workspace.plugins.iter().find(|p| p.id == to_plugin) {
                 if is_extendable_inputs(&target.kind) && to_port_string == "in" {
-                    let next_idx = next_extendable_input_index(&state.workspace, to_plugin);
+                    let next_idx = next_available_extendable_input_index(&state.workspace, to_plugin);
                     to_port_string = format!("in_{next_idx}");
                 }
             }
@@ -428,6 +445,13 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
                 }
             }
         }
+        DaemonRequest::DaemonStop => {
+            let response = DaemonResponse::Ok {
+                message: "Daemon stopping".to_string(),
+            };
+            send_response(&mut stream, &response)?;
+            return Err("daemon_stop".to_string());
+        }
     };
 
     send_response(&mut stream, &response)?;
@@ -452,51 +476,4 @@ fn normalize_plugin_key(input: &str) -> String {
         }
     }
     trimmed.to_string()
-}
-
-fn next_extendable_input_index(workspace: &WorkspaceDefinition, plugin_id: u64) -> usize {
-    let mut max_idx: Option<usize> = None;
-    for conn in workspace.connections.iter().filter(|c| c.to_plugin == plugin_id) {
-        if let Some(idx) = conn.to_port.strip_prefix("in_").and_then(|v| v.parse::<usize>().ok()) {
-            max_idx = Some(max_idx.map(|v| v.max(idx)).unwrap_or(idx));
-        }
-    }
-    max_idx.map(|v| v + 1).unwrap_or(0)
-}
-
-fn ensure_extendable_input_count(workspace: &mut WorkspaceDefinition, plugin_id: u64, required: usize) {
-    let Some(plugin) = workspace.plugins.iter_mut().find(|p| p.id == plugin_id) else {
-        return;
-    };
-    if !is_extendable_inputs(&plugin.kind) {
-        return;
-    }
-    let Some(map) = plugin.config.as_object_mut() else {
-        return;
-    };
-    let current = map
-        .get("input_count")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as usize;
-    if required > current {
-        map.insert("input_count".to_string(), serde_json::Value::from(required as u64));
-    }
-    if plugin.kind == "csv_recorder" {
-        let mut columns: Vec<String> = map
-            .get("columns")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .map(|v| v.as_str().unwrap_or("").to_string())
-                    .collect()
-            })
-            .unwrap_or_default();
-        while columns.len() < required {
-            columns.push(String::new());
-        }
-        map.insert(
-            "columns".to_string(),
-            serde_json::Value::Array(columns.into_iter().map(serde_json::Value::from).collect()),
-        );
-    }
 }

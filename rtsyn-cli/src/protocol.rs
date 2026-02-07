@@ -36,6 +36,7 @@ pub enum DaemonRequest {
     PluginList,
     PluginInstall { path: String },
     PluginUninstall { name: String },
+    PluginReinstall { name: String },
     PluginAdd { name: String },
     PluginRemove { id: u64 },
     WorkspaceList,
@@ -59,6 +60,7 @@ pub enum DaemonRequest {
         to_port: String,
     },
     ConnectionRemoveIndex { index: usize },
+    DaemonStop,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

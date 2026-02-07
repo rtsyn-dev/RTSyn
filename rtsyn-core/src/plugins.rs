@@ -251,6 +251,98 @@ impl PluginManager {
             .collect::<Vec<_>>()
             .join(" ")
     }
+
+    pub fn refresh_installed_plugin(
+        &mut self,
+        kind: &str,
+        path: &Path,
+        metadata: &impl PluginMetadataSource,
+    ) -> Result<(), String> {
+        self.plugin_behaviors.remove(kind);
+
+        if path.as_os_str().is_empty() {
+            return Ok(());
+        }
+
+        let manifest_path = path.join("plugin.toml");
+        let data = std::fs::read_to_string(&manifest_path)
+            .map_err(|err| format!("Failed to read plugin.toml: {err}"))?;
+        let manifest: PluginManifest =
+            toml::from_str(&data).map_err(|err| format!("Failed to parse plugin.toml: {err}"))?;
+
+        let library_path = PluginManager::resolve_library_path(&manifest, path);
+
+        if let Some(installed) = self
+            .installed_plugins
+            .iter_mut()
+            .find(|plugin| plugin.manifest.kind == kind)
+        {
+            installed.manifest = manifest;
+            if let Some(ref lib_path) = library_path {
+                let lib_path_str = lib_path.to_string_lossy();
+                if let Some((inputs, outputs, vars, display_schema, ui_schema)) =
+                    metadata.query_plugin_metadata(lib_path_str.as_ref(), Duration::from_secs(2))
+                {
+                    installed.metadata_inputs = inputs;
+                    installed.metadata_outputs = outputs;
+                    installed.metadata_variables = vars;
+                    installed.display_schema = display_schema;
+                    installed.ui_schema = ui_schema;
+                }
+            }
+            if installed.display_schema.is_none()
+                && (!installed.metadata_outputs.is_empty() || !installed.metadata_variables.is_empty())
+            {
+                installed.display_schema = Some(DisplaySchema {
+                    outputs: installed.metadata_outputs.clone(),
+                    inputs: Vec::new(),
+                    variables: installed
+                        .metadata_variables
+                        .iter()
+                        .map(|(name, _)| name.clone())
+                        .collect(),
+                });
+            }
+            installed.path = path.to_path_buf();
+            installed.library_path = library_path;
+        } else {
+            let (metadata_inputs, metadata_outputs, metadata_variables, mut display_schema, ui_schema) =
+                if let Some(ref lib_path) = library_path {
+                    let lib_path_str = lib_path.to_string_lossy();
+                    match metadata.query_plugin_metadata(lib_path_str.as_ref(), Duration::from_secs(2)) {
+                        Some((inputs, outputs, vars, display_schema, ui_schema)) => {
+                            (inputs, outputs, vars, display_schema, ui_schema)
+                        }
+                        None => (vec![], vec![], vec![], None, None),
+                    }
+                } else {
+                    (vec![], vec![], vec![], None, None)
+                };
+            if display_schema.is_none()
+                && (!metadata_outputs.is_empty() || !metadata_variables.is_empty())
+            {
+                display_schema = Some(DisplaySchema {
+                    outputs: metadata_outputs.clone(),
+                    inputs: Vec::new(),
+                    variables: metadata_variables.iter().map(|(name, _)| name.clone()).collect(),
+                });
+            }
+            self.installed_plugins.push(InstalledPlugin {
+                manifest,
+                path: path.to_path_buf(),
+                library_path,
+                removable: false,
+                metadata_inputs,
+                metadata_outputs,
+                metadata_variables,
+                display_schema,
+                ui_schema,
+            });
+        }
+
+        self.persist_installed_plugins();
+        Ok(())
+    }
 }
 
 pub struct PluginCatalog {
@@ -388,6 +480,28 @@ impl PluginCatalog {
         self.manager.installed_plugins.remove(index);
         self.manager.persist_installed_plugins();
         Ok(plugin)
+    }
+
+    pub fn reinstall_plugin_by_kind(
+        &mut self,
+        kind_or_name: &str,
+        metadata: &impl PluginMetadataSource,
+    ) -> Result<(), String> {
+        let index = self
+            .manager
+            .installed_plugins
+            .iter()
+            .position(|p| {
+                p.manifest.kind == kind_or_name || p.manifest.name.eq_ignore_ascii_case(kind_or_name)
+            })
+            .ok_or_else(|| "Plugin not installed".to_string())?;
+        let path = self.manager.installed_plugins[index].path.clone();
+        if path.as_os_str().is_empty() {
+            return Err("Plugin path is not set".to_string());
+        }
+        let kind = self.manager.installed_plugins[index].manifest.kind.clone();
+        self.manager
+            .refresh_installed_plugin(&kind, &path, metadata)
     }
 
     pub fn remove_plugins_by_kind_from_workspace(

@@ -2,11 +2,52 @@ use crate::state::{DetectedPlugin, InstalledPlugin, PluginManifest};
 use crate::plugin_manager::PluginManager;
 use crate::GuiApp;
 use rtsyn_runtime::runtime::LogicMessage;
+use rtsyn_core::plugins::PluginMetadataSource;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 use std::sync::mpsc;
+use std::time::Duration;
+
+struct GuiMetadataSource<'a> {
+    logic_tx: &'a mpsc::Sender<LogicMessage>,
+}
+
+impl PluginMetadataSource for GuiMetadataSource<'_> {
+    fn query_plugin_metadata(
+        &self,
+        library_path: &str,
+        timeout: Duration,
+    ) -> Option<(
+        Vec<String>,
+        Vec<String>,
+        Vec<(String, f64)>,
+        Option<rtsyn_plugin::ui::DisplaySchema>,
+        Option<rtsyn_plugin::ui::UISchema>,
+    )> {
+        let (tx, rx) = mpsc::channel();
+        let _ = self
+            .logic_tx
+            .send(LogicMessage::QueryPluginMetadata(library_path.to_string(), tx));
+        rx.recv_timeout(timeout).ok().flatten()
+    }
+
+    fn query_plugin_behavior(
+        &self,
+        kind: &str,
+        library_path: Option<&str>,
+        timeout: Duration,
+    ) -> Option<rtsyn_plugin::ui::PluginBehavior> {
+        let (tx, rx) = mpsc::channel();
+        let _ = self.logic_tx.send(LogicMessage::QueryPluginBehavior(
+            kind.to_string(),
+            library_path.map(|s| s.to_string()),
+            tx,
+        ));
+        rx.recv_timeout(timeout).ok().flatten()
+    }
+}
 
 impl GuiApp {
     pub(crate) fn scan_detected_plugins(&mut self) {
@@ -280,7 +321,6 @@ impl GuiApp {
     }
 
     pub(crate) fn refresh_installed_plugin(&mut self, kind: String, path: &Path) {
-        self.plugin_manager.plugin_behaviors.remove(&kind);
         let plugin_ids: Vec<u64> = self.workspace_manager.workspace.plugins.iter().filter(|p| p.kind == kind).map(|p| p.id).collect();
         
         for id in &plugin_ids {
@@ -298,85 +338,17 @@ impl GuiApp {
             self.status = "Plugin refreshed".to_string();
             return;
         }
-        
-        let manifest_path = path.join("plugin.toml");
-        let data = match fs::read_to_string(&manifest_path) {
-            Ok(content) => content,
-            Err(err) => {
-                self.status = format!("Failed to read plugin.toml: {err}");
-                return;
-            }
+        let metadata = GuiMetadataSource {
+            logic_tx: &self.state_sync.logic_tx,
         };
-
-        let manifest: PluginManifest = match toml::from_str(&data) {
-            Ok(parsed) => parsed,
-            Err(err) => {
-                self.status = format!("Failed to parse plugin.toml: {err}");
-                return;
-            }
-        };
-
-        let library_path = PluginManager::resolve_library_path(&manifest, path);
-        if let Some(installed) = self.plugin_manager.installed_plugins.iter_mut().find(|plugin| plugin.manifest.kind == kind) {
-            installed.manifest = manifest;
-            let (tx, rx) = mpsc::channel();
-            if let Some(ref lib_path) = library_path {
-                let _ = self.state_sync.logic_tx.send(LogicMessage::QueryPluginMetadata(lib_path.to_string_lossy().to_string(), tx));
-                if let Ok(Some((inputs, outputs, vars, display_schema, ui_schema))) = rx.recv() {
-                    installed.metadata_inputs = inputs;
-                    installed.metadata_outputs = outputs;
-                    installed.metadata_variables = vars;
-                    installed.display_schema = display_schema;
-                    installed.ui_schema = ui_schema;
-                }
-            }
-            if installed.display_schema.is_none()
-                && (!installed.metadata_outputs.is_empty() || !installed.metadata_variables.is_empty())
-            {
-                installed.display_schema = Some(rtsyn_plugin::ui::DisplaySchema {
-                    outputs: installed.metadata_outputs.clone(),
-                    inputs: Vec::new(),
-                    variables: installed
-                        .metadata_variables
-                        .iter()
-                        .map(|(name, _)| name.clone())
-                        .collect(),
-                });
-            }
-            installed.path = path.to_path_buf();
-            installed.library_path = library_path;
-        } else {
-            let (metadata_inputs, metadata_outputs, metadata_variables, mut display_schema, ui_schema) = if let Some(ref lib_path) = library_path {
-                let (tx, rx) = mpsc::channel();
-                let _ = self.state_sync.logic_tx.send(LogicMessage::QueryPluginMetadata(lib_path.to_string_lossy().to_string(), tx));
-                if let Ok(Some((inputs, outputs, vars, display_schema, ui_schema))) = rx.recv() {
-                    (inputs, outputs, vars, display_schema, ui_schema)
-                } else {
-                    (vec![], vec![], vec![], None, None)
-                }
-            } else {
-                (vec![], vec![], vec![], None, None)
-            };
-            if display_schema.is_none() && (!metadata_outputs.is_empty() || !metadata_variables.is_empty()) {
-                display_schema = Some(rtsyn_plugin::ui::DisplaySchema {
-                    outputs: metadata_outputs.clone(),
-                    inputs: Vec::new(),
-                    variables: metadata_variables.iter().map(|(name, _)| name.clone()).collect(),
-                });
-            }
-            self.plugin_manager.installed_plugins.push(InstalledPlugin {
-                manifest,
-                path: path.to_path_buf(),
-                library_path,
-                removable: false,
-                metadata_inputs,
-                metadata_outputs,
-                metadata_variables,
-                display_schema,
-                ui_schema,
-            });
+        if let Err(err) = self
+            .plugin_manager
+            .refresh_installed_plugin(&kind, path, &metadata)
+        {
+            self.status = err;
+            return;
         }
-        self.persist_installed_plugins();
+        self.status = "Plugin refreshed".to_string();
     }
 
     pub(crate) fn refresh_installed_library_paths(&mut self) {
