@@ -1,3 +1,3 @@
-pub mod plugins;
-pub mod workspaces;
-pub mod connections;
+pub mod plugin;
+pub mod workspace;
+pub mod connection;

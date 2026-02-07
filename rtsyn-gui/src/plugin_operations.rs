@@ -1,6 +1,6 @@
 use crate::GuiApp;
 use rtsyn_runtime::runtime::LogicMessage;
-use rtsyn_core::plugins::PluginMetadataSource;
+use rtsyn_core::plugin::PluginMetadataSource;
 use std::path::Path;
 use std::sync::mpsc;
 use std::time::Duration;

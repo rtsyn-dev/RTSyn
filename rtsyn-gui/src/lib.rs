@@ -95,9 +95,9 @@ use file_dialogs::FileDialogManager;
 use notifications::Notification;
 use plotter::LivePlotter;
 use plotter_manager::PlotterManager;
-use rtsyn_core::plugins::PluginManager;
+use rtsyn_core::plugin::PluginManager;
 use state_sync::StateSync;
-use rtsyn_core::workspaces::WorkspaceManager;
+use rtsyn_core::workspace::WorkspaceManager;
 use state::{
     WorkspaceTimingTab, ConfirmAction,
     FrequencyUnit, PeriodUnit,
@@ -469,7 +469,7 @@ impl GuiApp {
         if let Some(cached) = self.plugin_manager.plugin_behaviors.get(kind) {
             return matches!(cached.extendable_inputs, rtsyn_plugin::ui::ExtendableInputs::Auto { .. } | rtsyn_plugin::ui::ExtendableInputs::Manual);
         }
-        rtsyn_core::plugins::is_extendable_inputs(kind)
+        rtsyn_core::plugin::is_extendable_inputs(kind)
     }
 
     fn auto_extend_inputs(&self, kind: &str) -> bool {

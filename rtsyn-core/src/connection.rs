@@ -1,4 +1,4 @@
-use crate::plugins::{is_extendable_inputs, plugin_display_name, InstalledPlugin};
+use crate::plugin::{is_extendable_inputs, plugin_display_name, InstalledPlugin};
 use serde_json::Value;
 use workspace::{ConnectionDefinition, ConnectionRuleError, WorkspaceDefinition};
 

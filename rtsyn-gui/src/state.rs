@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-pub(crate) use rtsyn_core::plugins::{InstalledPlugin, PluginManifest};
+pub(crate) use rtsyn_core::plugin::{InstalledPlugin, PluginManifest};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum WorkspaceDialogMode {

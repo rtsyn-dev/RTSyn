@@ -1,5 +1,5 @@
 use crate::{BuildAction, BuildResult, GuiApp, spawn_file_dialog_thread};
-use rtsyn_core::plugins::PluginManager;
+use rtsyn_core::plugin::PluginManager;
 use rtsyn_runtime::LogicMessage;
 use std::sync::mpsc;
 

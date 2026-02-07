@@ -1,7 +1,7 @@
 use crate::protocol::{ConnectionSummary, DaemonRequest, DaemonResponse, PluginSummary, WorkspaceSummary, RuntimePluginSummary, RuntimePluginState, DEFAULT_SOCKET_PATH};
-use rtsyn_core::plugins::{is_extendable_inputs, PluginCatalog, PluginMetadataSource};
-use rtsyn_core::connections::{ensure_extendable_input_count, next_available_extendable_input_index};
-use rtsyn_core::workspaces::WorkspaceManager;
+use rtsyn_core::plugin::{is_extendable_inputs, PluginCatalog, PluginMetadataSource};
+use rtsyn_core::connection::{ensure_extendable_input_count, next_available_extendable_input_index};
+use rtsyn_core::workspace::WorkspaceManager;
 use rtsyn_runtime::runtime::{spawn_runtime, LogicMessage, LogicState};
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};

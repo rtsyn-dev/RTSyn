@@ -1,4 +1,4 @@
-use rtsyn_core::plugins::{PluginCatalog, PluginMetadataSource};
+use rtsyn_core::plugin::{PluginCatalog, PluginMetadataSource};
 use std::path::PathBuf;
 use std::time::Duration;
 use workspace::WorkspaceDefinition;

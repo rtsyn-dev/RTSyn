@@ -1,4 +1,4 @@
-use rtsyn_core::workspaces::WorkspaceManager;
+use rtsyn_core::workspace::WorkspaceManager;
 
 #[test]
 fn workspace_file_path_sanitizes_name() {
