@@ -1,5 +1,5 @@
-use crate::protocol::{DaemonRequest, DaemonResponse, PluginSummary, WorkspaceSummary, DEFAULT_SOCKET_PATH};
-use rtsyn_core::plugins::{PluginCatalog, PluginMetadataSource};
+use crate::protocol::{ConnectionSummary, DaemonRequest, DaemonResponse, PluginSummary, WorkspaceSummary, DEFAULT_SOCKET_PATH};
+use rtsyn_core::plugins::{is_extendable_inputs, PluginCatalog, PluginMetadataSource};
 use rtsyn_core::workspaces::{empty_workspace, scan_workspace_entries, workspace_file_path, load_workspace, save_workspace, rename_workspace_file};
 use rtsyn_runtime::runtime::{spawn_runtime, LogicMessage};
 use std::io::{BufRead, BufReader, Write};
@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::Duration;
 use workspace::WorkspaceDefinition;
+use workspace::ConnectionDefinition;
 
 struct RuntimeQuery {
     logic_tx: mpsc::Sender<LogicMessage>,
@@ -211,7 +212,9 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
             let entries = scan_workspace_entries(&state.workspace_dir);
             let workspaces = entries
                 .into_iter()
-                .map(|entry| WorkspaceSummary {
+                .enumerate()
+                .map(|(index, entry)| WorkspaceSummary {
+                    index,
                     name: entry.name,
                     description: entry.description,
                     plugins: entry.plugins,
@@ -317,6 +320,114 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
                 },
             }
         }
+        DaemonRequest::ConnectionList => {
+            let connections = state
+                .workspace
+                .connections
+                .iter()
+                .enumerate()
+                .map(|(index, conn)| ConnectionSummary {
+                    index,
+                    from_plugin: conn.from_plugin,
+                    from_port: conn.from_port.clone(),
+                    to_plugin: conn.to_plugin,
+                    to_port: conn.to_port.clone(),
+                    kind: conn.kind.clone(),
+                })
+                .collect();
+            DaemonResponse::ConnectionList { connections }
+        }
+        DaemonRequest::ConnectionShow { plugin_id } => {
+            let connections = state
+                .workspace
+                .connections
+                .iter()
+                .enumerate()
+                .filter(|(_, conn)| conn.from_plugin == plugin_id || conn.to_plugin == plugin_id)
+                .map(|(index, conn)| ConnectionSummary {
+                    index,
+                    from_plugin: conn.from_plugin,
+                    from_port: conn.from_port.clone(),
+                    to_plugin: conn.to_plugin,
+                    to_port: conn.to_port.clone(),
+                    kind: conn.kind.clone(),
+                })
+                .collect();
+            DaemonResponse::ConnectionList { connections }
+        }
+        DaemonRequest::ConnectionAdd {
+            from_plugin,
+            from_port,
+            to_plugin,
+            to_port,
+            kind,
+        } => {
+            let mut to_port_string = to_port.clone();
+            if let Some(target) = state.workspace.plugins.iter().find(|p| p.id == to_plugin) {
+                if is_extendable_inputs(&target.kind) && to_port_string == "in" {
+                    let next_idx = next_extendable_input_index(&state.workspace, to_plugin);
+                    to_port_string = format!("in_{next_idx}");
+                }
+            }
+
+            let connection = ConnectionDefinition {
+                from_plugin,
+                from_port,
+                to_plugin,
+                to_port: to_port_string.clone(),
+                kind,
+            };
+            match workspace::add_connection(&mut state.workspace.connections, connection, 1) {
+                Ok(()) => {
+                    if let Some(idx) = to_port_string.strip_prefix("in_").and_then(|v| v.parse::<usize>().ok()) {
+                        ensure_extendable_input_count(&mut state.workspace, to_plugin, idx + 1);
+                    }
+                    state.refresh_runtime();
+                    DaemonResponse::Ok {
+                        message: "Connection added".to_string(),
+                    }
+                }
+                Err(err) => DaemonResponse::Error { message: format!("{err}") },
+            }
+        }
+        DaemonRequest::ConnectionRemove {
+            from_plugin,
+            from_port,
+            to_plugin,
+            to_port,
+        } => {
+            let index = state.workspace.connections.iter().position(|conn| {
+                conn.from_plugin == from_plugin
+                    && conn.from_port == from_port
+                    && conn.to_plugin == to_plugin
+                    && conn.to_port == to_port
+            });
+            match index {
+                Some(idx) => {
+                    state.workspace.connections.remove(idx);
+                    state.refresh_runtime();
+                    DaemonResponse::Ok {
+                        message: "Connection removed".to_string(),
+                    }
+                }
+                None => DaemonResponse::Error {
+                    message: "Connection not found".to_string(),
+                },
+            }
+        }
+        DaemonRequest::ConnectionRemoveIndex { index } => {
+            if index >= state.workspace.connections.len() {
+                DaemonResponse::Error {
+                    message: "Invalid connection index".to_string(),
+                }
+            } else {
+                state.workspace.connections.remove(index);
+                state.refresh_runtime();
+                DaemonResponse::Ok {
+                    message: "Connection removed".to_string(),
+                }
+            }
+        }
     };
 
     send_response(&mut stream, &response)?;
@@ -341,4 +452,51 @@ fn normalize_plugin_key(input: &str) -> String {
         }
     }
     trimmed.to_string()
+}
+
+fn next_extendable_input_index(workspace: &WorkspaceDefinition, plugin_id: u64) -> usize {
+    let mut max_idx: Option<usize> = None;
+    for conn in workspace.connections.iter().filter(|c| c.to_plugin == plugin_id) {
+        if let Some(idx) = conn.to_port.strip_prefix("in_").and_then(|v| v.parse::<usize>().ok()) {
+            max_idx = Some(max_idx.map(|v| v.max(idx)).unwrap_or(idx));
+        }
+    }
+    max_idx.map(|v| v + 1).unwrap_or(0)
+}
+
+fn ensure_extendable_input_count(workspace: &mut WorkspaceDefinition, plugin_id: u64, required: usize) {
+    let Some(plugin) = workspace.plugins.iter_mut().find(|p| p.id == plugin_id) else {
+        return;
+    };
+    if !is_extendable_inputs(&plugin.kind) {
+        return;
+    }
+    let Some(map) = plugin.config.as_object_mut() else {
+        return;
+    };
+    let current = map
+        .get("input_count")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+    if required > current {
+        map.insert("input_count".to_string(), serde_json::Value::from(required as u64));
+    }
+    if plugin.kind == "csv_recorder" {
+        let mut columns: Vec<String> = map
+            .get("columns")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .map(|v| v.as_str().unwrap_or("").to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+        while columns.len() < required {
+            columns.push(String::new());
+        }
+        map.insert(
+            "columns".to_string(),
+            serde_json::Value::Array(columns.into_iter().map(serde_json::Value::from).collect()),
+        );
+    }
 }

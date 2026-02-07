@@ -28,6 +28,10 @@ enum DaemonCommands {
         #[command(subcommand)]
         command: WorkspaceCommands,
     },
+    Connection {
+        #[command(subcommand)]
+        command: ConnectionCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -46,6 +50,35 @@ enum WorkspaceCommands {
     New { name: String },
     Save { name: Option<String> },
     Edit { name: String },
+}
+
+#[derive(Subcommand)]
+enum ConnectionCommands {
+    List,
+    Show { plugin_id: u64 },
+    Add {
+        #[arg(long)]
+        from_plugin: u64,
+        #[arg(long)]
+        from_port: String,
+        #[arg(long)]
+        to_plugin: u64,
+        #[arg(long)]
+        to_port: String,
+        #[arg(long, default_value = "shared_memory")]
+        kind: String,
+    },
+    Remove {
+        #[arg(long)]
+        from_plugin: u64,
+        #[arg(long)]
+        from_port: String,
+        #[arg(long)]
+        to_plugin: u64,
+        #[arg(long)]
+        to_port: String,
+    },
+    RemoveIndex { index: usize },
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -106,6 +139,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
                         DaemonResponse::WorkspaceList { .. } => {}
+                        DaemonResponse::ConnectionList { .. } => {}
                     },
                     Err(err) => eprintln!("[RTSyn][ERROR]: {err}"),
                 }
@@ -128,7 +162,74 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             } else {
                                 for ws in workspaces {
                                     let plugins = if ws.plugins == 1 { "plugin" } else { "plugins" };
-                                    println!("{} - {} {} ({})", ws.name, ws.plugins, plugins, ws.description);
+                                    println!(
+                                        "[{}] {} - {} {} ({})",
+                                        ws.index,
+                                        ws.name,
+                                        ws.plugins,
+                                        plugins,
+                                        ws.description
+                                    );
+                                }
+                            }
+                        }
+                        _ => {}
+                    },
+                    Err(err) => eprintln!("[RTSyn][ERROR]: {err}"),
+                }
+            }
+            DaemonCommands::Connection { command } => {
+                let request = match command {
+                    ConnectionCommands::List => DaemonRequest::ConnectionList,
+                    ConnectionCommands::Show { plugin_id } => {
+                        DaemonRequest::ConnectionShow { plugin_id }
+                    }
+                    ConnectionCommands::Add {
+                        from_plugin,
+                        from_port,
+                        to_plugin,
+                        to_port,
+                        kind,
+                    } => DaemonRequest::ConnectionAdd {
+                        from_plugin,
+                        from_port,
+                        to_plugin,
+                        to_port,
+                        kind,
+                    },
+                    ConnectionCommands::Remove {
+                        from_plugin,
+                        from_port,
+                        to_plugin,
+                        to_port,
+                    } => DaemonRequest::ConnectionRemove {
+                        from_plugin,
+                        from_port,
+                        to_plugin,
+                        to_port,
+                    },
+                    ConnectionCommands::RemoveIndex { index } => {
+                        DaemonRequest::ConnectionRemoveIndex { index }
+                    }
+                };
+                match client::send_request(&request) {
+                    Ok(response) => match response {
+                        DaemonResponse::Ok { message } => println!("{message}"),
+                        DaemonResponse::Error { message } => eprintln!("[RTSyn][ERROR]: {message}"),
+                        DaemonResponse::ConnectionList { connections } => {
+                            if connections.is_empty() {
+                                println!("No connections found");
+                            } else {
+                                for conn in connections {
+                                    println!(
+                                        "[{}] {}:{} -> {}:{} ({})",
+                                        conn.index,
+                                        conn.from_plugin,
+                                        conn.from_port,
+                                        conn.to_plugin,
+                                        conn.to_port,
+                                        conn.kind
+                                    );
                                 }
                             }
                         }

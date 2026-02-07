@@ -23,3 +23,6 @@ performance_monitor_plugin = { path = "../app_plugins/performance_monitor" }
 comedi_daq_plugin = { path = "../app_plugins/comedi_daq", optional = true }
 
 toml = "0.8"
+
+[dev-dependencies]
+tempfile = "3"
