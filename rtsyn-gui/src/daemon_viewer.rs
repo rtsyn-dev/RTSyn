@@ -213,14 +213,20 @@ impl DaemonPluginViewer {
                 .collect();
             if !filtered.is_empty() {
                 for (name, value) in filtered {
-                    let text = match value {
-                        serde_json::Value::Number(num) => num
-                            .as_f64()
-                            .map(|v| format!("{:.4}", v))
-                            .unwrap_or_else(|| value.to_string()),
+                    let mut value_text = match value {
+                        serde_json::Value::Number(num) => {
+                            if let Some(i) = num.as_i64() {
+                                i.to_string()
+                            } else if let Some(u) = num.as_u64() {
+                                u.to_string()
+                            } else {
+                                num.as_f64()
+                                    .map(|v| format!("{:.4}", v))
+                                    .unwrap_or_else(|| value.to_string())
+                            }
+                        }
                         _ => value.to_string(),
                     };
-                    let mut value_text = text;
                     kv_row_wrapped(ui, name, 140.0, |ui| {
                         ui.add_enabled_ui(false, |ui| {
                             ui.add_sized(
@@ -348,10 +354,14 @@ impl DaemonPluginViewer {
                 ui.add_space(4.0);
 
                 ui.style_mut().spacing.item_spacing = egui::vec2(0.0, 6.0);
-                Self::render_section_values(ui, "Variables", "\u{f013}", &view.state.variables);
-                Self::render_section_numbers(ui, "Outputs", "\u{f08b}", &view.state.outputs);
-                Self::render_section_inputs(ui, "Inputs", "\u{f090}", &view.state.inputs);
-                Self::render_section_values(ui, "Internal variables", "\u{f085}", &view.state.internal_variables);
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        Self::render_section_values(ui, "Variables", "\u{f013}", &view.state.variables);
+                        Self::render_section_numbers(ui, "Outputs", "\u{f08b}", &view.state.outputs);
+                        Self::render_section_inputs(ui, "Inputs", "\u{f090}", &view.state.inputs);
+                        Self::render_section_values(ui, "Internal variables", "\u{f085}", &view.state.internal_variables);
+                    });
             });
         });
     }
@@ -397,17 +407,39 @@ impl eframe::App for DaemonPluginViewer {
                 });
             });
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            if let Some(err) = self.error.as_ref() {
+        if let Some(err) = self.error.as_ref() {
+            egui::CentralPanel::default().show(ctx, |ui| {
                 ui.colored_label(egui::Color32::LIGHT_RED, err);
-                return;
-            }
-            let Some(view) = self.view.as_ref() else {
+            });
+            return;
+        }
+        let Some(view) = self.view.as_ref() else {
+            egui::CentralPanel::default().show(ctx, |ui| {
                 ui.label("Waiting for runtime data...");
-                return;
-            };
+            });
+            return;
+        };
 
-            if view.kind == "live_plotter" {
+        if view.kind == "live_plotter" {
+            if let Some(state) = self.display_state.as_ref() {
+                let display_view = DaemonPluginView {
+                    kind: self.display_kind.clone().unwrap_or_else(|| view.kind.clone()),
+                    state: state.clone(),
+                    period_seconds: view.period_seconds,
+                    time_scale: view.time_scale,
+                    time_label: view.time_label.clone(),
+                    samples: Vec::new(),
+                    series_names: Vec::new(),
+                };
+                egui::SidePanel::left("viewer_card")
+                    .default_width(320.0)
+                    .resizable(false)
+                    .show(ctx, |ui| {
+                        self.render_plugin_card(ui, &display_view);
+                    });
+            }
+
+            egui::CentralPanel::default().show(ctx, |ui| {
                 let (input_count, refresh_hz, window_ms, amplitude) =
                     Self::plotter_config(&view.state, &view.samples);
                 self.last_refresh_hz = refresh_hz;
@@ -444,35 +476,23 @@ impl eframe::App for DaemonPluginViewer {
                 if has_samples {
                     self.last_sample_tick = Some(latest_tick);
                 }
-                if let Some(state) = self.display_state.as_ref() {
-                    let display_view = DaemonPluginView {
-                        kind: self.display_kind.clone().unwrap_or_else(|| view.kind.clone()),
-                        state: state.clone(),
-                        period_seconds: view.period_seconds,
-                        time_scale: view.time_scale,
-                        time_label: view.time_label.clone(),
-                        samples: Vec::new(),
-                        series_names: Vec::new(),
-                    };
-                    ui.add_space(8.0);
-                    self.render_plugin_card(ui, &display_view);
-                }
-                ui.add_space(12.0);
                 self.plotter.render(ui, "", &view.time_label);
-            } else {
-                if let Some(state) = self.display_state.as_ref() {
-                    let display_view = DaemonPluginView {
-                        kind: self.display_kind.clone().unwrap_or_else(|| view.kind.clone()),
-                        state: state.clone(),
-                        period_seconds: view.period_seconds,
-                        time_scale: view.time_scale,
-                        time_label: view.time_label.clone(),
-                        samples: Vec::new(),
-                        series_names: Vec::new(),
-                    };
+            });
+        } else {
+            if let Some(state) = self.display_state.as_ref() {
+                let display_view = DaemonPluginView {
+                    kind: self.display_kind.clone().unwrap_or_else(|| view.kind.clone()),
+                    state: state.clone(),
+                    period_seconds: view.period_seconds,
+                    time_scale: view.time_scale,
+                    time_label: view.time_label.clone(),
+                    samples: Vec::new(),
+                    series_names: Vec::new(),
+                };
+                egui::CentralPanel::default().show(ctx, |ui| {
                     self.render_plugin_card(ui, &display_view);
-                }
+                });
             }
-        });
+        }
     }
 }

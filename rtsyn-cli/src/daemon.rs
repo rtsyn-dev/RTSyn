@@ -343,6 +343,16 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
                         }
                     }
                     state.workspace_manager.workspace = workspace;
+                    if let Ok(runtime_settings) = state.workspace_manager.runtime_settings() {
+                        state.logic_settings.cores = runtime_settings.cores;
+                        state.logic_settings.period_seconds = runtime_settings.period_seconds;
+                        state.logic_settings.time_scale = runtime_settings.time_scale;
+                        state.logic_settings.time_label = runtime_settings.time_label;
+                        let _ = state
+                            .runtime_query
+                            .logic_tx
+                            .send(LogicMessage::UpdateSettings(state.logic_settings.clone()));
+                    }
                     state.refresh_runtime();
                     DaemonResponse::Ok {
                         message: format!("Workspace '{}' loaded", name),
@@ -695,7 +705,12 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
         DaemonRequest::RuntimeShow { id } => {
             state.drain_logic_states();
             let latest_state = state.last_logic_state.clone();
-            match build_runtime_state(&state.workspace_manager, id, latest_state) {
+            match build_runtime_state(
+                &state.workspace_manager,
+                &state.catalog.manager.installed_plugins,
+                id,
+                latest_state,
+            ) {
                 Ok((kind, state, _)) => DaemonResponse::RuntimeShow { id, kind, state },
                 Err(message) => DaemonResponse::Error { message },
             }
@@ -704,7 +719,12 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
             state.drain_logic_states();
             let latest_state = state.last_logic_state.clone();
             let samples = state.plotter_history.get(&id).cloned().unwrap_or_default();
-            match build_runtime_state(&state.workspace_manager, id, latest_state) {
+            match build_runtime_state(
+                &state.workspace_manager,
+                &state.catalog.manager.installed_plugins,
+                id,
+                latest_state,
+            ) {
                 Ok((kind, plugin_state, _)) => {
                     let series_names = build_plotter_series_names(
                         &state.workspace_manager,
@@ -866,6 +886,7 @@ fn send_response(stream: &mut impl Write, response: &DaemonResponse) -> Result<(
 
 fn build_runtime_state(
     manager: &WorkspaceManager,
+    installed: &[rtsyn_core::plugin::InstalledPlugin],
     id: u64,
     latest_state: Option<LogicState>,
 ) -> Result<(String, RuntimePluginState, Vec<(u64, Vec<f64>)>), String> {
@@ -896,10 +917,21 @@ fn build_runtime_state(
                 .map(|((_, name), value)| (name.clone(), *value))
                 .collect();
             inputs.sort_by(|a, b| a.0.cmp(&b.0));
+            let allowed_internal: Option<std::collections::HashSet<String>> = installed
+                .iter()
+                .find(|p| p.manifest.kind == kind)
+                .and_then(|p| p.display_schema.as_ref())
+                .map(|schema| schema.variables.iter().cloned().collect());
             let mut internals: Vec<(String, serde_json::Value)> = latest_state
                 .internal_variable_values
                 .iter()
-                .filter(|((pid, _), _)| *pid == id)
+                .filter(|((pid, name), _)| {
+                    *pid == id
+                        && allowed_internal
+                            .as_ref()
+                            .map(|set| set.contains(name))
+                            .unwrap_or(true)
+                })
                 .map(|((_, name), value)| (name.clone(), value.clone()))
                 .collect();
             internals.sort_by(|a, b| a.0.cmp(&b.0));

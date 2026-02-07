@@ -549,6 +549,15 @@ fn spawn_daemon_viewer(plugin_id: u64) -> Result<(), String> {
     if std::os::unix::net::UnixStream::connect(DEFAULT_SOCKET_PATH).is_err() {
         return Err("Daemon is not running".to_string());
     }
+    match client::send_request(&DaemonRequest::RuntimeShow { id: plugin_id }) {
+        Ok(DaemonResponse::Error { message }) => {
+            if message.contains("Plugin not found") {
+                return Err("Plugin not found in runtime".to_string());
+            }
+        }
+        Ok(_) => {}
+        Err(err) => return Err(err),
+    }
     let exe = std::env::current_exe().map_err(|e| format!("Failed to get executable path: {e}"))?;
     Command::new(exe)
         .env("RTSYN_DAEMON_VIEW_PLUGIN_ID", plugin_id.to_string())

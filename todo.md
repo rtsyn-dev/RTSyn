@@ -55,5 +55,5 @@
 - [ ] The gui and runtime in gui mode are a bit coulpled (high periods make the gui laggy)
 - [x] On loading of workspaces, plugins doesnt auto start, this also happens in the gui, also they dont load correctly until start
 - [x] On cli a connection can be made on unexistent plugins
-- [ ] Change the cli view card so it respects the variable type (int shouldnt show decimals). Also add a scroll bar if needed (but dont limit the size)
-- [ ] Change the cli view so ti also can edit the plugin
+- [x] Change the cli view card so it respects the variable type (int shouldnt show decimals). Also add a scroll bar if needed (but dont limit the size)
+- [x] If cli view is aiming to an unexistent plugin, show error
