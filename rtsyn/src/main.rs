@@ -61,6 +61,7 @@ enum WorkspaceCommands {
     New { name: String },
     Save { name: Option<String> },
     Edit { name: String },
+    Delete { name: String },
 }
 
 #[derive(Subcommand)]
@@ -210,6 +211,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     WorkspaceCommands::New { name } => DaemonRequest::WorkspaceNew { name },
                     WorkspaceCommands::Save { name } => DaemonRequest::WorkspaceSave { name },
                     WorkspaceCommands::Edit { name } => DaemonRequest::WorkspaceEdit { name },
+                    WorkspaceCommands::Delete { name } => DaemonRequest::WorkspaceDelete { name },
                 };
                 match client::send_request(&request) {
                     Ok(response) => match response {
@@ -223,8 +225,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 for ws in workspaces {
                                     let plugins = if ws.plugins == 1 { "plugin" } else { "plugins" };
                                     println!(
-                                        "[{}] {} - {} {} ({})",
-                                        ws.index,
+                                        "{} - {} {} ({})",
                                         ws.name,
                                         ws.plugins,
                                         plugins,

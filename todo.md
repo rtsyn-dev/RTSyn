@@ -50,3 +50,5 @@
 - [x] Visual bug on some plugins where the x is not on top right and the grey top part is not as wide as the plugin
 - [x] When all inputs connections deleted, close the live plotter
 - [ ] Fix csv recorder path button
+- [ ] On workspace deletion, if its loaded it shall return to default workspace
+- [ ] Workspace created doesnt show the name

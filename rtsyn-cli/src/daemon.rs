@@ -1,14 +1,13 @@
 use crate::protocol::{ConnectionSummary, DaemonRequest, DaemonResponse, PluginSummary, WorkspaceSummary, RuntimePluginSummary, RuntimePluginState, DEFAULT_SOCKET_PATH};
 use rtsyn_core::plugins::{is_extendable_inputs, PluginCatalog, PluginMetadataSource};
 use rtsyn_core::connections::{ensure_extendable_input_count, next_available_extendable_input_index};
-use rtsyn_core::workspaces::{empty_workspace, scan_workspace_entries, workspace_file_path, load_workspace, save_workspace, rename_workspace_file};
+use rtsyn_core::workspaces::WorkspaceManager;
 use rtsyn_runtime::runtime::{spawn_runtime, LogicMessage, LogicState};
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::Duration;
-use workspace::WorkspaceDefinition;
 use workspace::ConnectionDefinition;
 
 struct RuntimeQuery {
@@ -46,9 +45,7 @@ impl PluginMetadataSource for RuntimeQuery {
 
 struct DaemonState {
     catalog: PluginCatalog,
-    workspace: WorkspaceDefinition,
-    workspace_path: Option<PathBuf>,
-    workspace_dir: PathBuf,
+    workspace_manager: WorkspaceManager,
     runtime_query: RuntimeQuery,
     logic_state_rx: mpsc::Receiver<LogicState>,
 }
@@ -61,13 +58,11 @@ impl DaemonState {
         logic_state_rx: mpsc::Receiver<LogicState>,
     ) -> Self {
         let mut catalog = PluginCatalog::new(install_db_path);
-        let workspace = empty_workspace("default");
-        catalog.sync_ids_from_workspace(&workspace);
+        let workspace_manager = WorkspaceManager::new(workspace_dir);
+        catalog.sync_ids_from_workspace(&workspace_manager.workspace);
         Self {
             catalog,
-            workspace,
-            workspace_path: None,
-            workspace_dir,
+            workspace_manager,
             runtime_query: RuntimeQuery { logic_tx },
             logic_state_rx,
         }
@@ -77,7 +72,7 @@ impl DaemonState {
         let _ = self
             .runtime_query
             .logic_tx
-            .send(LogicMessage::UpdateWorkspace(self.workspace.clone()));
+            .send(LogicMessage::UpdateWorkspace(self.workspace_manager.workspace.clone()));
     }
 }
 
@@ -205,7 +200,10 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
             Ok(plugin) => {
                 let removed_ids = state
                     .catalog
-                    .remove_plugins_by_kind_from_workspace(&plugin.manifest.kind, &mut state.workspace);
+                    .remove_plugins_by_kind_from_workspace(
+                        &plugin.manifest.kind,
+                        &mut state.workspace_manager.workspace,
+                    );
                 if !removed_ids.is_empty() {
                     state.refresh_runtime();
                 }
@@ -220,7 +218,11 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
             let key = normalize_plugin_key(&name);
             match state
                 .catalog
-                .add_installed_plugin_to_workspace(&key, &mut state.workspace, &state.runtime_query)
+                .add_installed_plugin_to_workspace(
+                    &key,
+                    &mut state.workspace_manager.workspace,
+                    &state.runtime_query,
+                )
         {
             Ok(id) => {
                 state.refresh_runtime();
@@ -231,7 +233,7 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
         },
         DaemonRequest::PluginRemove { id } => match state
             .catalog
-            .remove_plugin_from_workspace(id, &mut state.workspace)
+            .remove_plugin_from_workspace(id, &mut state.workspace_manager.workspace)
         {
             Ok(()) => {
                 state.refresh_runtime();
@@ -242,8 +244,11 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
             Err(err) => DaemonResponse::Error { message: err },
         },
         DaemonRequest::WorkspaceList => {
-            let entries = scan_workspace_entries(&state.workspace_dir);
-            let workspaces = entries
+            state.workspace_manager.scan_workspaces();
+            let workspaces = state
+                .workspace_manager
+                .workspace_entries
+                .clone()
                 .into_iter()
                 .enumerate()
                 .map(|(index, entry)| WorkspaceSummary {
@@ -257,14 +262,14 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
             DaemonResponse::WorkspaceList { workspaces }
         }
         DaemonRequest::WorkspaceLoad { name } => {
-            let path = workspace_file_path(&state.workspace_dir, &name);
-            match load_workspace(&path) {
-                Ok(mut workspace) => {
+            let path = state.workspace_manager.workspace_file_path(&name);
+            match state.workspace_manager.load_workspace(&path) {
+                Ok(()) => {
+                    let mut workspace = state.workspace_manager.workspace.clone();
                     state.catalog.refresh_library_paths();
                     state.catalog.inject_library_paths_into_workspace(&mut workspace);
                     state.catalog.sync_ids_from_workspace(&workspace);
-                    state.workspace = workspace;
-                    state.workspace_path = Some(path);
+                    state.workspace_manager.workspace = workspace;
                     state.refresh_runtime();
                     DaemonResponse::Ok {
                         message: format!("Workspace '{}' loaded", name),
@@ -274,87 +279,74 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
             }
         }
         DaemonRequest::WorkspaceNew { name } => {
-            let path = workspace_file_path(&state.workspace_dir, &name);
-            if path.exists() {
-                DaemonResponse::Error {
-                    message: "Workspace already exists".to_string(),
-                }
-            } else {
-            let workspace = empty_workspace(&name);
-                if let Some(parent) = path.parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                match save_workspace(&workspace, &path) {
-                    Ok(()) => {
-                        state.catalog.sync_ids_from_workspace(&workspace);
-                        state.workspace = workspace;
-                        state.workspace_path = Some(path);
-                        state.refresh_runtime();
-                        DaemonResponse::Ok {
-                            message: "Workspace created".to_string(),
-                        }
+            match state
+                .workspace_manager
+                .create_workspace(&name, "")
+            {
+                Ok(()) => {
+                    state
+                        .catalog
+                        .sync_ids_from_workspace(&state.workspace_manager.workspace);
+                    state.refresh_runtime();
+                    DaemonResponse::Ok {
+                        message: "Workspace created".to_string(),
                     }
-                    Err(err) => DaemonResponse::Error { message: err },
                 }
+                Err(err) => DaemonResponse::Error { message: err },
             }
         }
         DaemonRequest::WorkspaceSave { name } => {
-            let target_path = match name.as_ref() {
-                Some(name) => Some(workspace_file_path(&state.workspace_dir, name)),
-                None => state.workspace_path.clone(),
+            let result = match name.as_ref() {
+                Some(name) => {
+                    let description = state.workspace_manager.workspace.description.clone();
+                    state
+                        .workspace_manager
+                        .save_workspace_as(name, &description)
+                }
+                None => state.workspace_manager.save_workspace_overwrite_current(),
             };
-            match target_path {
-                Some(target_path) => {
-                    if let Some(parent) = target_path.parent() {
-                        let _ = std::fs::create_dir_all(parent);
-                    }
-                    let mut workspace = state.workspace.clone();
-                    if let Some(name) = name {
-                        workspace.name = name.clone();
-                    }
-                    match save_workspace(&workspace, &target_path) {
-                        Ok(()) => {
-                            state.workspace = workspace;
-                            state.workspace_path = Some(target_path);
-                            state.refresh_runtime();
-                            DaemonResponse::Ok {
-                                message: "Workspace saved".to_string(),
-                            }
-                        }
-                        Err(err) => DaemonResponse::Error { message: err },
+            match result {
+                Ok(()) => {
+                    state.refresh_runtime();
+                    DaemonResponse::Ok {
+                        message: "Workspace saved".to_string(),
                     }
                 }
-                None => DaemonResponse::Error {
-                    message: "No workspace loaded. Use 'rtsyn daemon workspace save <name>' to save the current workspace.".to_string(),
-                },
+                Err(err) => {
+                    let message = if name.is_none() && err == "No workspace path set" {
+                        "No workspace loaded. Use 'rtsyn daemon workspace save <name>' to save the current workspace.".to_string()
+                    } else {
+                        err
+                    };
+                    DaemonResponse::Error { message }
+                }
             }
         }
         DaemonRequest::WorkspaceEdit { name } => {
-            match state.workspace_path.clone() {
-                Some(current_path) => {
-                    let new_path = workspace_file_path(&state.workspace_dir, &name);
-                    let mut workspace = state.workspace.clone();
-                    workspace.name = name.clone();
-                    match save_workspace(&workspace, &new_path) {
-                        Ok(()) => {
-                            let _ = rename_workspace_file(&current_path, &new_path);
-                            state.workspace = workspace;
-                            state.workspace_path = Some(new_path);
-                            state.refresh_runtime();
-                            DaemonResponse::Ok {
-                                message: "Workspace updated".to_string(),
-                            }
-                        }
-                        Err(err) => DaemonResponse::Error { message: err },
+            match state.workspace_manager.rename_workspace(&name) {
+                Ok(()) => {
+                    state.refresh_runtime();
+                    DaemonResponse::Ok {
+                        message: "Workspace updated".to_string(),
                     }
                 }
-                None => DaemonResponse::Error {
-                    message: "No workspace loaded to edit".to_string(),
-                },
+                Err(err) => DaemonResponse::Error { message: err },
+            }
+        }
+        DaemonRequest::WorkspaceDelete { name } => {
+            match state.workspace_manager.delete_workspace(&name) {
+                Ok(()) => {
+                    state.refresh_runtime();
+                    DaemonResponse::Ok {
+                        message: "Workspace deleted".to_string(),
+                    }
+                }
+                Err(err) => DaemonResponse::Error { message: err },
             }
         }
         DaemonRequest::ConnectionList => {
             let connections = state
+                .workspace_manager
                 .workspace
                 .connections
                 .iter()
@@ -372,6 +364,7 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
         }
         DaemonRequest::ConnectionShow { plugin_id } => {
             let connections = state
+                .workspace_manager
                 .workspace
                 .connections
                 .iter()
@@ -396,9 +389,18 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
             kind,
         } => {
             let mut to_port_string = to_port.clone();
-            if let Some(target) = state.workspace.plugins.iter().find(|p| p.id == to_plugin) {
+            if let Some(target) = state
+                .workspace_manager
+                .workspace
+                .plugins
+                .iter()
+                .find(|p| p.id == to_plugin)
+            {
                 if is_extendable_inputs(&target.kind) && to_port_string == "in" {
-                    let next_idx = next_available_extendable_input_index(&state.workspace, to_plugin);
+                    let next_idx = next_available_extendable_input_index(
+                        &state.workspace_manager.workspace,
+                        to_plugin,
+                    );
                     to_port_string = format!("in_{next_idx}");
                 }
             }
@@ -410,10 +412,18 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
                 to_port: to_port_string.clone(),
                 kind,
             };
-            match workspace::add_connection(&mut state.workspace.connections, connection, 1) {
+            match workspace::add_connection(
+                &mut state.workspace_manager.workspace.connections,
+                connection,
+                1,
+            ) {
                 Ok(()) => {
                     if let Some(idx) = to_port_string.strip_prefix("in_").and_then(|v| v.parse::<usize>().ok()) {
-                        ensure_extendable_input_count(&mut state.workspace, to_plugin, idx + 1);
+                        ensure_extendable_input_count(
+                            &mut state.workspace_manager.workspace,
+                            to_plugin,
+                            idx + 1,
+                        );
                     }
                     state.refresh_runtime();
                     DaemonResponse::Ok {
@@ -429,7 +439,12 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
             to_plugin,
             to_port,
         } => {
-            let index = state.workspace.connections.iter().position(|conn| {
+            let index = state
+                .workspace_manager
+                .workspace
+                .connections
+                .iter()
+                .position(|conn| {
                 conn.from_plugin == from_plugin
                     && conn.from_port == from_port
                     && conn.to_plugin == to_plugin
@@ -437,7 +452,7 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
             });
             match index {
                 Some(idx) => {
-                    state.workspace.connections.remove(idx);
+                    state.workspace_manager.workspace.connections.remove(idx);
                     state.refresh_runtime();
                     DaemonResponse::Ok {
                         message: "Connection removed".to_string(),
@@ -449,12 +464,12 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
             }
         }
         DaemonRequest::ConnectionRemoveIndex { index } => {
-            if index >= state.workspace.connections.len() {
+            if index >= state.workspace_manager.workspace.connections.len() {
                 DaemonResponse::Error {
                     message: "Invalid connection index".to_string(),
                 }
             } else {
-                state.workspace.connections.remove(index);
+                state.workspace_manager.workspace.connections.remove(index);
                 state.refresh_runtime();
                 DaemonResponse::Ok {
                     message: "Connection removed".to_string(),
@@ -472,9 +487,9 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
             state.catalog.manager.load_installed_plugins();
             state.catalog.refresh_library_paths();
             state.catalog.scan_detected_plugins();
-            state.workspace = empty_workspace("default");
-            state.workspace_path = None;
-            state.catalog.sync_ids_from_workspace(&state.workspace);
+            let workspace_dir = state.workspace_manager.workspace_dir().to_path_buf();
+            state.workspace_manager = WorkspaceManager::new(workspace_dir);
+            state.catalog.sync_ids_from_workspace(&state.workspace_manager.workspace);
             state.refresh_runtime();
             DaemonResponse::Ok {
                 message: "Daemon reloaded".to_string(),
@@ -482,6 +497,7 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
         }
         DaemonRequest::RuntimeList => {
             let plugins = state
+                .workspace_manager
                 .workspace
                 .plugins
                 .iter()
@@ -497,7 +513,12 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
             while let Ok(state_msg) = state.logic_state_rx.try_recv() {
                 latest_state = Some(state_msg);
             }
-            let plugin = state.workspace.plugins.iter().find(|p| p.id == id);
+            let plugin = state
+                .workspace_manager
+                .workspace
+                .plugins
+                .iter()
+                .find(|p| p.id == id);
             match (plugin, latest_state) {
                 (None, _) => DaemonResponse::Error {
                     message: "Plugin not found in runtime".to_string(),

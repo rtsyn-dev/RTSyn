@@ -58,6 +58,7 @@ pub enum DaemonRequest {
     WorkspaceNew { name: String },
     WorkspaceSave { name: Option<String> },
     WorkspaceEdit { name: String },
+    WorkspaceDelete { name: String },
     ConnectionList,
     ConnectionShow { plugin_id: u64 },
     ConnectionAdd {

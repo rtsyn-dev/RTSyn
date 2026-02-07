@@ -40,24 +40,15 @@ impl GuiApp {
             self.status = "Connection fields cannot be empty".to_string();
             return;
         }
-        let mut to_port_string = to_port.to_string();
-        if let Some(target) = self.workspace_manager.workspace.plugins.iter().find(|p| p.id == to_plugin) {
-            if self.is_extendable_inputs(&target.kind) && to_port_string == "in" {
-                let next_idx = self.next_available_extendable_input_index(to_plugin);
-                to_port_string = format!("in_{next_idx}");
-            }
-        }
-        let input_idx = to_port_string.strip_prefix("in_").and_then(|v| v.parse::<usize>().ok());
-        let default_column = input_idx.map(|idx| self.default_csv_column(to_plugin, idx));
-
-        let connection = ConnectionDefinition {
+        if let Err(err) = core_connections::add_connection(
+            &mut self.workspace_manager.workspace,
+            &self.plugin_manager.installed_plugins,
             from_plugin,
-            from_port: from_port.to_string(),
+            from_port,
             to_plugin,
-            to_port: to_port_string,
-            kind: kind.to_string(),
-        };
-        if let Err(err) = workspace::add_connection(&mut self.workspace_manager.workspace.connections, connection, 1) {
+            to_port,
+            kind,
+        ) {
             let message = match err {
                 ConnectionRuleError::SelfConnection => "Cannot connect a plugin to itself.",
                 ConnectionRuleError::InputLimitExceeded => "Input already has a connection.",
@@ -65,32 +56,6 @@ impl GuiApp {
             };
             self.show_info("Connections", message);
             return;
-        }
-        if let Some(idx) = input_idx {
-            if let Some(target) = self.workspace_manager.workspace.plugins.iter().find(|p| p.id == to_plugin) {
-                if self.is_extendable_inputs(&target.kind) {
-                    self.ensure_extendable_input_count(to_plugin, idx + 1);
-                }
-            }
-        }
-        if let (Some(idx), Some(default_name)) = (input_idx, default_column) {
-            if let Some(plugin) = self.workspace_manager.workspace.plugins.iter_mut().find(|p| p.id == to_plugin) {
-                if plugin.kind == "csv_recorder" {
-                    if let Value::Object(ref mut map) = plugin.config {
-                        let input_count = map.get("input_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                        let mut columns: Vec<String> = map.get("columns").and_then(|v| v.as_array()).map(|arr| arr.iter().map(|v| v.as_str().unwrap_or("").to_string()).collect()).unwrap_or_default();
-                        if columns.len() < input_count {
-                            for _ in columns.len()..input_count {
-                                columns.push(String::new());
-                            }
-                        }
-                        if idx < columns.len() && columns[idx].is_empty() {
-                            columns[idx] = default_name;
-                            map.insert("columns".to_string(), Value::Array(columns.into_iter().map(Value::from).collect()));
-                        }
-                    }
-                }
-            }
         }
         self.status = "Connection added".to_string();
         self.enforce_connection_dependent();
@@ -106,23 +71,15 @@ impl GuiApp {
             self.show_info("Connections", "Connection fields cannot be empty");
             return;
         }
-        let mut to_port_string = to_port.clone();
-        if let Some(target) = self.workspace_manager.workspace.plugins.iter().find(|p| p.id == to_plugin) {
-            if self.is_extendable_inputs(&target.kind) && to_port_string == "in" {
-                let next_idx = self.next_available_extendable_input_index(to_plugin);
-                to_port_string = format!("in_{next_idx}");
-            }
-        }
-        let input_idx = to_port_string.strip_prefix("in_").and_then(|v| v.parse::<usize>().ok());
-        let default_column = input_idx.map(|idx| self.default_csv_column(to_plugin, idx));
-        let connection = ConnectionDefinition {
+        if let Err(err) = core_connections::add_connection(
+            &mut self.workspace_manager.workspace,
+            &self.plugin_manager.installed_plugins,
             from_plugin,
-            from_port,
+            &from_port,
             to_plugin,
-            to_port: to_port_string,
-            kind,
-        };
-        if let Err(err) = workspace::add_connection(&mut self.workspace_manager.workspace.connections, connection, 1) {
+            &to_port,
+            &kind,
+        ) {
             let message = match err {
                 ConnectionRuleError::SelfConnection => "Cannot connect a plugin to itself.",
                 ConnectionRuleError::InputLimitExceeded => "Input already has a connection.",
@@ -130,30 +87,6 @@ impl GuiApp {
             };
             self.show_info("Connections", message);
             return;
-        }
-        if let (Some(idx), Some(default_name)) = (input_idx, default_column) {
-            if let Some(plugin) = self.workspace_manager.workspace.plugins.iter().find(|p| p.id == to_plugin) {
-                if self.is_extendable_inputs(&plugin.kind) {
-                    self.ensure_extendable_input_count(to_plugin, idx + 1);
-                }
-            }
-            if let Some(plugin) = self.workspace_manager.workspace.plugins.iter_mut().find(|p| p.id == to_plugin) {
-                if plugin.kind == "csv_recorder" {
-                    if let Value::Object(ref mut map) = plugin.config {
-                        let input_count = map.get("input_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                        let mut columns: Vec<String> = map.get("columns").and_then(|v| v.as_array()).map(|arr| arr.iter().map(|v| v.as_str().unwrap_or("").to_string()).collect()).unwrap_or_default();
-                        if columns.len() < input_count {
-                            for _ in columns.len()..input_count {
-                                columns.push(String::new());
-                            }
-                        }
-                        if idx < columns.len() && columns[idx].is_empty() {
-                            columns[idx] = default_name;
-                            map.insert("columns".to_string(), Value::Array(columns.into_iter().map(Value::from).collect()));
-                        }
-                    }
-                }
-            }
         }
         self.mark_workspace_dirty();
         self.enforce_connection_dependent();
@@ -374,14 +307,6 @@ impl GuiApp {
             }
             map.insert("columns".to_string(), Value::Array(columns.into_iter().map(Value::from).collect()));
         }
-    }
-
-    pub(crate) fn ensure_extendable_input_count(&mut self, plugin_id: u64, required_count: usize) {
-        core_connections::ensure_extendable_input_count(
-            &mut self.workspace_manager.workspace,
-            plugin_id,
-            required_count,
-        );
     }
 
     pub(crate) fn sync_extendable_input_count(&mut self, plugin_id: u64) {

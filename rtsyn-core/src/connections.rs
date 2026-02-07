@@ -1,6 +1,6 @@
-use crate::plugins::is_extendable_inputs;
+use crate::plugins::{is_extendable_inputs, plugin_display_name, InstalledPlugin};
 use serde_json::Value;
-use workspace::WorkspaceDefinition;
+use workspace::{ConnectionDefinition, ConnectionRuleError, WorkspaceDefinition};
 
 pub fn extendable_input_index(port: &str) -> Option<usize> {
     if port == "in" {
@@ -141,4 +141,105 @@ pub fn sync_extendable_input_count(workspace: &mut WorkspaceDefinition, plugin_i
             Value::Array(columns.into_iter().map(Value::from).collect()),
         );
     }
+}
+
+pub fn default_csv_column(
+    workspace: &WorkspaceDefinition,
+    installed: &[InstalledPlugin],
+    recorder_id: u64,
+    input_idx: usize,
+) -> String {
+    let port = format!("in_{input_idx}");
+    if let Some(conn) = workspace
+        .connections
+        .iter()
+        .find(|conn| conn.to_plugin == recorder_id && conn.to_port == port)
+    {
+        let source_name = plugin_display_name(installed, workspace, conn.from_plugin)
+            .replace(' ', "_")
+            .to_lowercase();
+        let port = conn.from_port.to_lowercase();
+        return format!("{source_name}_{}_{}", conn.from_plugin, port);
+    }
+    let recorder_name = plugin_display_name(installed, workspace, recorder_id)
+        .replace(' ', "_")
+        .to_lowercase();
+    format!("{recorder_name}_{}_{}", recorder_id, port.to_lowercase())
+}
+
+pub fn add_connection(
+    workspace: &mut WorkspaceDefinition,
+    installed: &[InstalledPlugin],
+    from_plugin: u64,
+    from_port: &str,
+    to_plugin: u64,
+    to_port: &str,
+    kind: &str,
+) -> Result<(), ConnectionRuleError> {
+    if from_plugin == to_plugin {
+        return Err(ConnectionRuleError::SelfConnection);
+    }
+
+    let mut to_port_string = to_port.to_string();
+    if let Some(target) = workspace.plugins.iter().find(|p| p.id == to_plugin) {
+        if is_extendable_inputs(&target.kind) && to_port_string == "in" {
+            let next_idx = next_available_extendable_input_index(workspace, to_plugin);
+            to_port_string = format!("in_{next_idx}");
+        }
+    }
+    let input_idx = to_port_string
+        .strip_prefix("in_")
+        .and_then(|v| v.parse::<usize>().ok());
+    let default_column = input_idx.map(|idx| default_csv_column(workspace, installed, to_plugin, idx));
+
+    let connection = ConnectionDefinition {
+        from_plugin,
+        from_port: from_port.to_string(),
+        to_plugin,
+        to_port: to_port_string,
+        kind: kind.to_string(),
+    };
+    workspace::add_connection(&mut workspace.connections, connection, 1)?;
+
+    if let Some(idx) = input_idx {
+        if let Some(target) = workspace.plugins.iter().find(|p| p.id == to_plugin) {
+            if is_extendable_inputs(&target.kind) {
+                ensure_extendable_input_count(workspace, to_plugin, idx + 1);
+            }
+        }
+    }
+    if let (Some(idx), Some(default_name)) = (input_idx, default_column) {
+        if let Some(plugin) = workspace.plugins.iter_mut().find(|p| p.id == to_plugin) {
+            if plugin.kind == "csv_recorder" {
+                if let Value::Object(ref mut map) = plugin.config {
+                    let input_count = map
+                        .get("input_count")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as usize;
+                    let mut columns: Vec<String> = map
+                        .get("columns")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .map(|v| v.as_str().unwrap_or("").to_string())
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    if columns.len() < input_count {
+                        for _ in columns.len()..input_count {
+                            columns.push(String::new());
+                        }
+                    }
+                    if idx < columns.len() && columns[idx].is_empty() {
+                        columns[idx] = default_name;
+                        map.insert(
+                            "columns".to_string(),
+                            Value::Array(columns.into_iter().map(Value::from).collect()),
+                        );
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }

@@ -1,5 +1,5 @@
 use crate::{BuildAction, BuildResult, GuiApp, spawn_file_dialog_thread};
-use crate::plugin_manager::PluginManager;
+use rtsyn_core::plugins::PluginManager;
 use rtsyn_runtime::LogicMessage;
 use std::sync::mpsc;
 
@@ -180,7 +180,7 @@ impl GuiApp {
             match action {
                 BuildAction::Install { path, removable, persist } => {
                     self.install_plugin_from_folder(path, removable, persist);
-                    self.plugin_manager.scan_detected_plugins();
+                    self.scan_detected_plugins();
                     return;
                 }
                 BuildAction::Reinstall { kind, path } => {

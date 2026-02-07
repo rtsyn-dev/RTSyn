@@ -85,22 +85,19 @@ mod file_dialogs;
 mod notifications;
 mod plotter;
 mod plotter_manager;
-mod plugin_manager;
 mod state;
 mod state_sync;
 mod ui;
 mod ui_state;
 mod utils;
-mod workspace_manager;
-mod workspace_utils;
 
 use file_dialogs::FileDialogManager;
 use notifications::Notification;
 use plotter::LivePlotter;
 use plotter_manager::PlotterManager;
-use plugin_manager::PluginManager;
+use rtsyn_core::plugins::PluginManager;
 use state_sync::StateSync;
-use workspace_manager::WorkspaceManager;
+use rtsyn_core::workspaces::WorkspaceManager;
 use state::{
     WorkspaceTimingTab, ConfirmAction,
     FrequencyUnit, PeriodUnit,
@@ -554,28 +551,6 @@ impl GuiApp {
                     .unwrap_or_else(|| Self::display_kind(&plugin.kind))
             })
             .unwrap_or_else(|| "plugin".to_string())
-    }
-
-    fn default_csv_column(&self, recorder_id: u64, input_idx: usize) -> String {
-        let port = format!("in_{input_idx}");
-        if let Some(conn) = self
-            .workspace_manager.workspace
-            .connections
-            .iter()
-            .find(|conn| conn.to_plugin == recorder_id && conn.to_port == port)
-        {
-            let source_name = self
-                .plugin_display_name(conn.from_plugin)
-                .replace(' ', "_")
-                .to_lowercase();
-            let port = conn.from_port.to_lowercase();
-            return format!("{source_name}_{}_{}", conn.from_plugin, port);
-        }
-        let recorder_name = self
-            .plugin_display_name(recorder_id)
-            .replace(' ', "_")
-            .to_lowercase();
-        format!("{recorder_name}_{}_{}", recorder_id, port.to_lowercase())
     }
 
     fn default_csv_path() -> String {
