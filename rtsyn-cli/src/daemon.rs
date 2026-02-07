@@ -1,8 +1,8 @@
-use crate::protocol::{ConnectionSummary, DaemonRequest, DaemonResponse, PluginSummary, WorkspaceSummary, DEFAULT_SOCKET_PATH};
+use crate::protocol::{ConnectionSummary, DaemonRequest, DaemonResponse, PluginSummary, WorkspaceSummary, RuntimePluginSummary, RuntimePluginState, DEFAULT_SOCKET_PATH};
 use rtsyn_core::plugins::{is_extendable_inputs, PluginCatalog, PluginMetadataSource};
 use rtsyn_core::connections::{ensure_extendable_input_count, next_available_extendable_input_index};
 use rtsyn_core::workspaces::{empty_workspace, scan_workspace_entries, workspace_file_path, load_workspace, save_workspace, rename_workspace_file};
-use rtsyn_runtime::runtime::{spawn_runtime, LogicMessage};
+use rtsyn_runtime::runtime::{spawn_runtime, LogicMessage, LogicState};
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
@@ -50,10 +50,16 @@ struct DaemonState {
     workspace_path: Option<PathBuf>,
     workspace_dir: PathBuf,
     runtime_query: RuntimeQuery,
+    logic_state_rx: mpsc::Receiver<LogicState>,
 }
 
 impl DaemonState {
-    fn new(install_db_path: PathBuf, workspace_dir: PathBuf, logic_tx: mpsc::Sender<LogicMessage>) -> Self {
+    fn new(
+        install_db_path: PathBuf,
+        workspace_dir: PathBuf,
+        logic_tx: mpsc::Sender<LogicMessage>,
+        logic_state_rx: mpsc::Receiver<LogicState>,
+    ) -> Self {
         let mut catalog = PluginCatalog::new(install_db_path);
         let workspace = empty_workspace("default");
         catalog.sync_ids_from_workspace(&workspace);
@@ -63,6 +69,7 @@ impl DaemonState {
             workspace_path: None,
             workspace_dir,
             runtime_query: RuntimeQuery { logic_tx },
+            logic_state_rx,
         }
     }
 
@@ -85,11 +92,11 @@ pub fn run_daemon_at(socket_path: &str) -> Result<(), String> {
         }
         let _ = std::fs::remove_file(socket_path);
     }
-    let (logic_tx, _logic_state_rx) = spawn_runtime().map_err(|e| e.to_string())?;
+    let (logic_tx, logic_state_rx) = spawn_runtime().map_err(|e| e.to_string())?;
 
     let install_db_path = PathBuf::from("app_plugins").join("installed_plugins.json");
     let workspace_dir = PathBuf::from("app_workspaces");
-    let mut state = DaemonState::new(install_db_path, workspace_dir, logic_tx.clone());
+    let mut state = DaemonState::new(install_db_path, workspace_dir, logic_tx.clone(), logic_state_rx);
     state.refresh_runtime();
 
     let listener = UnixListener::bind(socket_path)
@@ -179,6 +186,15 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
             match state.catalog.reinstall_plugin_by_kind(&key, &state.runtime_query) {
                 Ok(()) => DaemonResponse::Ok {
                     message: "Plugin reinstalled".to_string(),
+                },
+                Err(err) => DaemonResponse::Error { message: err },
+            }
+        }
+        DaemonRequest::PluginRebuild { name } => {
+            let key = normalize_plugin_key(&name);
+            match state.catalog.rebuild_plugin_by_kind(&key) {
+                Ok(()) => DaemonResponse::Ok {
+                    message: "Plugin rebuilt".to_string(),
                 },
                 Err(err) => DaemonResponse::Error { message: err },
             }
@@ -462,6 +478,75 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
             state.refresh_runtime();
             DaemonResponse::Ok {
                 message: "Daemon reloaded".to_string(),
+            }
+        }
+        DaemonRequest::RuntimeList => {
+            let plugins = state
+                .workspace
+                .plugins
+                .iter()
+                .map(|plugin| RuntimePluginSummary {
+                    id: plugin.id,
+                    kind: plugin.kind.clone(),
+                })
+                .collect();
+            DaemonResponse::RuntimeList { plugins }
+        }
+        DaemonRequest::RuntimeShow { id } => {
+            let mut latest_state: Option<LogicState> = None;
+            while let Ok(state_msg) = state.logic_state_rx.try_recv() {
+                latest_state = Some(state_msg);
+            }
+            let plugin = state.workspace.plugins.iter().find(|p| p.id == id);
+            match (plugin, latest_state) {
+                (None, _) => DaemonResponse::Error {
+                    message: "Plugin not found in runtime".to_string(),
+                },
+                (_, None) => DaemonResponse::Error {
+                    message: "No runtime state available".to_string(),
+                },
+                (Some(plugin), Some(latest_state)) => {
+                    let kind = plugin.kind.clone();
+                    let mut variables: Vec<(String, serde_json::Value)> = match plugin.config {
+                        serde_json::Value::Object(ref map) => map
+                            .iter()
+                            .map(|(k, v)| (k.clone(), v.clone()))
+                            .collect(),
+                        _ => Vec::new(),
+                    };
+                    variables.sort_by(|a, b| a.0.cmp(&b.0));
+                    let mut outputs: Vec<(String, f64)> = latest_state
+                        .outputs
+                        .iter()
+                        .filter(|((pid, _), _)| *pid == id)
+                        .map(|((_, name), value)| (name.clone(), *value))
+                        .collect();
+                    outputs.sort_by(|a, b| a.0.cmp(&b.0));
+                    let mut inputs: Vec<(String, f64)> = latest_state
+                        .input_values
+                        .iter()
+                        .filter(|((pid, _), _)| *pid == id)
+                        .map(|((_, name), value)| (name.clone(), *value))
+                        .collect();
+                    inputs.sort_by(|a, b| a.0.cmp(&b.0));
+                    let mut internals: Vec<(String, serde_json::Value)> = latest_state
+                        .internal_variable_values
+                        .iter()
+                        .filter(|((pid, _), _)| *pid == id)
+                        .map(|((_, name), value)| (name.clone(), value.clone()))
+                        .collect();
+                    internals.sort_by(|a, b| a.0.cmp(&b.0));
+                    DaemonResponse::RuntimeShow {
+                        id,
+                        kind,
+                        state: RuntimePluginState {
+                            outputs,
+                            inputs,
+                            internal_variables: internals,
+                            variables,
+                        },
+                    }
+                }
             }
         }
     };

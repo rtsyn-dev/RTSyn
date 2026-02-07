@@ -34,6 +34,10 @@ enum DaemonCommands {
         #[command(subcommand)]
         command: ConnectionCommands,
     },
+    Runtime {
+        #[command(subcommand)]
+        command: RuntimeCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -41,6 +45,7 @@ enum PluginCommands {
     Add { name: String },
     Install { path: String },
     Reinstall { name: String },
+    Rebuild { name: String },
     Remove { id: u64 },
     Uninstall { name: String },
     List,
@@ -82,6 +87,15 @@ enum ConnectionCommands {
         to_port: String,
     },
     RemoveIndex { index: usize },
+}
+
+#[derive(Subcommand)]
+enum RuntimeCommands {
+    Add { name: String },
+    Available,
+    Remove { id: u64 },
+    List,
+    Show { id: u64 },
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -140,6 +154,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     }
                     PluginCommands::Reinstall { name } => DaemonRequest::PluginReinstall { name },
+                    PluginCommands::Rebuild { name } => DaemonRequest::PluginRebuild { name },
                     PluginCommands::Remove { id } => DaemonRequest::PluginRemove { id },
                     PluginCommands::Uninstall { name } => DaemonRequest::PluginUninstall { name },
                     PluginCommands::List => DaemonRequest::PluginList,
@@ -153,19 +168,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             if plugins.is_empty() {
                                 println!("[RTSyn][INFO] No plugins installed");
                             } else {
+                                println!("[RTSyn][INFO] List of available plugins:");
                                 for plugin in plugins {
                                     let version = plugin.version.unwrap_or_else(|| "unknown".to_string());
                                     let removable = if plugin.removable { "removable" } else { "bundled" };
                                     if let Some(path) = plugin.path {
-                                        println!("[RTSyn][INFO] {} ({}) [{}] {}", plugin.name, plugin.kind, removable, path);
+                                        println!("{} ({}) [{}] {}", plugin.name, plugin.kind, removable, path);
                                     } else {
-                                        println!("[RTSyn][INFO] {} ({}) [{}] v{}", plugin.name, plugin.kind, removable, version);
+                                        println!("{} ({}) [{}] v{}", plugin.name, plugin.kind, removable, version);
                                     }
                                 }
                             }
                         }
                         DaemonResponse::WorkspaceList { .. } => {}
                         DaemonResponse::ConnectionList { .. } => {}
+                        DaemonResponse::RuntimeList { .. } => {}
+                        DaemonResponse::RuntimeShow { .. } => {}
                     },
                     Err(err) => eprintln!("[RTSyn][ERROR]: {err}"),
                 }
@@ -186,10 +204,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             if workspaces.is_empty() {
                                 println!("[RTSyn][INFO] No workspaces found");
                             } else {
+                                println!("[RTSyn][INFO] List of workspaces:");
                                 for ws in workspaces {
                                     let plugins = if ws.plugins == 1 { "plugin" } else { "plugins" };
                                     println!(
-                                        "[RTSyn][INFO] [{}] {} - {} {} ({})",
+                                        "[{}] {} - {} {} ({})",
                                         ws.index,
                                         ws.name,
                                         ws.plugins,
@@ -246,9 +265,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             if connections.is_empty() {
                                 println!("[RTSyn][INFO] No connections found");
                             } else {
+                                println!("[RTSyn][INFO] List of connections:");
                                 for conn in connections {
                                     println!(
-                                        "[RTSyn][INFO] [{}] {}:{} -> {}:{} ({})",
+                                        "[{}] {}:{} -> {}:{} ({})",
                                         conn.index,
                                         conn.from_plugin,
                                         conn.from_port,
@@ -256,6 +276,95 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         conn.to_port,
                                         conn.kind
                                     );
+                                }
+                            }
+                        }
+                        _ => {}
+                    },
+                    Err(err) => eprintln!("[RTSyn][ERROR]: {err}"),
+                }
+            }
+            DaemonCommands::Runtime { command } => {
+                let request = match command {
+                    RuntimeCommands::Add { name } => DaemonRequest::PluginAdd { name },
+                    RuntimeCommands::Available => DaemonRequest::PluginList,
+                    RuntimeCommands::Remove { id } => DaemonRequest::PluginRemove { id },
+                    RuntimeCommands::List => DaemonRequest::RuntimeList,
+                    RuntimeCommands::Show { id } => DaemonRequest::RuntimeShow { id },
+                };
+                match client::send_request(&request) {
+                    Ok(response) => match response {
+                        DaemonResponse::Ok { message } => println!("[RTSyn][INFO] {message}"),
+                        DaemonResponse::Error { message } => eprintln!("[RTSyn][ERROR]: {message}"),
+                        DaemonResponse::PluginAdded { id } => {
+                            println!("[RTSyn][INFO] Plugin added with id {id}")
+                        }
+                        DaemonResponse::PluginList { plugins } => {
+                            if plugins.is_empty() {
+                                println!("[RTSyn][INFO] No plugins installed");
+                            } else {
+                                println!("[RTSyn][INFO] List of available plugins:");
+                                for plugin in plugins {
+                                    let version =
+                                        plugin.version.unwrap_or_else(|| "unknown".to_string());
+                                    let removable =
+                                        if plugin.removable { "removable" } else { "bundled" };
+                                    if let Some(path) = plugin.path {
+                                        println!(
+                                            "{} ({}) [{}] {}",
+                                            plugin.name, plugin.kind, removable, path
+                                        );
+                                    } else {
+                                        println!(
+                                            "{} ({}) [{}] v{}",
+                                            plugin.name, plugin.kind, removable, version
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        DaemonResponse::RuntimeList { plugins } => {
+                            if plugins.is_empty() {
+                                println!("[RTSyn][INFO] No runtime plugins");
+                            } else {
+                                println!("[RTSyn][INFO] Runtime plugins:");
+                                for plugin in plugins {
+                                    println!("{} ({})", plugin.id, plugin.kind);
+                                }
+                            }
+                        }
+                        DaemonResponse::RuntimeShow { id, kind, state } => {
+                            println!("[RTSyn][INFO] {id} - {kind}");
+                            println!("Variables:");
+                            if state.variables.is_empty() {
+                                println!("\t(none)");
+                            } else {
+                                for (name, value) in state.variables {
+                                    println!("\t{name}: {value}");
+                                }
+                            }
+                            println!("Outputs:");
+                            if state.outputs.is_empty() {
+                                println!("\t(none)");
+                            } else {
+                                for (name, value) in state.outputs {
+                                    println!("\t{name}: {value}");
+                                }
+                            }
+                            println!("Inputs:");
+                            if state.inputs.is_empty() {
+                                println!("\t(none)");
+                            } else {
+                                for (name, value) in state.inputs {
+                                    println!("\t{name}: {value}");
+                                }
+                            }
+                            println!("Internal variables:");
+                            if state.internal_variables.is_empty() {
+                                println!("\t(none)");
+                            } else {
+                                for (name, value) in state.internal_variables {
+                                    println!("\t{name}: {value}");
                                 }
                             }
                         }

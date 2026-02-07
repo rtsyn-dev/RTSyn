@@ -214,6 +214,30 @@ impl PluginManager {
         std::env::current_dir().ok()
     }
 
+    pub fn plugin_api_source_path() -> Option<PathBuf> {
+        Self::workspace_root()
+            .map(|root| root.join("..").join("rtsyn-plugin").join("src").join("lib.rs"))
+    }
+
+    pub fn library_is_outdated(library_path: &Path) -> bool {
+        let Ok(lib_meta) = std::fs::metadata(library_path) else {
+            return true;
+        };
+        let Ok(lib_mtime) = lib_meta.modified() else {
+            return false;
+        };
+        let Some(api_path) = Self::plugin_api_source_path() else {
+            return false;
+        };
+        let Ok(api_meta) = std::fs::metadata(api_path) else {
+            return false;
+        };
+        let Ok(api_mtime) = api_meta.modified() else {
+            return false;
+        };
+        api_mtime > lib_mtime
+    }
+
     pub fn scan_detected_plugins(&mut self) {
         self.detected_plugins.clear();
 
@@ -500,8 +524,35 @@ impl PluginCatalog {
             return Err("Plugin path is not set".to_string());
         }
         let kind = self.manager.installed_plugins[index].manifest.kind.clone();
+        if self.manager.installed_plugins[index].removable {
+            if !PluginManager::build_plugin(&path) {
+                return Err("Plugin rebuild failed".to_string());
+            }
+        }
         self.manager
             .refresh_installed_plugin(&kind, &path, metadata)
+    }
+
+    pub fn rebuild_plugin_by_kind(&mut self, kind_or_name: &str) -> Result<(), String> {
+        let index = self
+            .manager
+            .installed_plugins
+            .iter()
+            .position(|p| {
+                p.manifest.kind == kind_or_name || p.manifest.name.eq_ignore_ascii_case(kind_or_name)
+            })
+            .ok_or_else(|| "Plugin not installed".to_string())?;
+        let path = self.manager.installed_plugins[index].path.clone();
+        if path.as_os_str().is_empty() {
+            return Err("Plugin path is not set".to_string());
+        }
+        if !self.manager.installed_plugins[index].removable {
+            return Err("Bundled plugins cannot be rebuilt".to_string());
+        }
+        if !PluginManager::build_plugin(&path) {
+            return Err("Plugin rebuild failed".to_string());
+        }
+        Ok(())
     }
 
     pub fn remove_plugins_by_kind_from_workspace(
@@ -545,6 +596,12 @@ impl PluginCatalog {
             config_map.insert(name.clone(), Value::from(*value));
         }
         if let Some(library_path) = &installed.library_path {
+            if installed.removable && PluginManager::library_is_outdated(library_path) {
+                return Err(
+                    "Plugin library is out of date. Rebuild or reinstall the plugin."
+                        .to_string(),
+                );
+            }
             let lib_path_str = library_path.to_string_lossy();
             if let Some((_, _, variables, _, _)) = metadata.query_plugin_metadata(
                 lib_path_str.as_ref(),

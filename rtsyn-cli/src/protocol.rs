@@ -31,12 +31,26 @@ pub struct ConnectionSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuntimePluginSummary {
+    pub id: u64,
+    pub kind: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuntimePluginState {
+    pub outputs: Vec<(String, f64)>,
+    pub inputs: Vec<(String, f64)>,
+    pub internal_variables: Vec<(String, serde_json::Value)>,
+    pub variables: Vec<(String, serde_json::Value)>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DaemonRequest {
     PluginList,
     PluginInstall { path: String },
     PluginUninstall { name: String },
     PluginReinstall { name: String },
+    PluginRebuild { name: String },
     PluginAdd { name: String },
     PluginRemove { id: u64 },
     WorkspaceList,
@@ -62,6 +76,8 @@ pub enum DaemonRequest {
     ConnectionRemoveIndex { index: usize },
     DaemonStop,
     DaemonReload,
+    RuntimeList,
+    RuntimeShow { id: u64 },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,4 +89,6 @@ pub enum DaemonResponse {
     PluginAdded { id: u64 },
     WorkspaceList { workspaces: Vec<WorkspaceSummary> },
     ConnectionList { connections: Vec<ConnectionSummary> },
+    RuntimeList { plugins: Vec<RuntimePluginSummary> },
+    RuntimeShow { id: u64, kind: String, state: RuntimePluginState },
 }
