@@ -3058,6 +3058,7 @@ dependencies = [
  "performance_monitor_plugin",
  "plotters",
  "rfd",
+ "rtsyn-cli",
  "rtsyn-core",
  "rtsyn-runtime",
  "rtsyn_plugin",

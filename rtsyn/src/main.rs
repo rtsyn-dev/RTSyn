@@ -119,6 +119,10 @@ enum RuntimePluginCommands {
     },
     Show { id: u64 },
     Set { id: u64, json: String },
+    View { id: u64 },
+    Start { id: u64 },
+    Stop { id: u64 },
+    Restart { id: u64 },
 }
 
 #[derive(Subcommand)]
@@ -236,6 +240,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         DaemonResponse::ConnectionList { .. } => {}
                         DaemonResponse::RuntimeList { .. } => {}
                         DaemonResponse::RuntimeShow { .. } => {}
+                        DaemonResponse::RuntimePluginView { .. } => {}
                         DaemonResponse::RuntimeSettings { .. } => {}
                         DaemonResponse::RuntimeSettingsOptions { .. } => {}
                     },
@@ -352,6 +357,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         RuntimePluginCommands::Show { id } => DaemonRequest::RuntimeShow { id },
                         RuntimePluginCommands::Set { id, json } => {
                             DaemonRequest::RuntimeSetVariables { id, json }
+                        }
+                        RuntimePluginCommands::View { id } => {
+                            if let Err(err) = spawn_daemon_viewer(id) {
+                                eprintln!("[RTSyn][ERROR]: {err}");
+                            }
+                            return Ok(());
+                        }
+                        RuntimePluginCommands::Start { id } => {
+                            DaemonRequest::RuntimePluginStart { id }
+                        }
+                        RuntimePluginCommands::Stop { id } => {
+                            DaemonRequest::RuntimePluginStop { id }
+                        }
+                        RuntimePluginCommands::Restart { id } => {
+                            DaemonRequest::RuntimePluginRestart { id }
                         }
                     },
                     RuntimeCommands::Settings { command } => match command {
@@ -523,4 +543,20 @@ fn spawn_detached_daemon() -> Result<(), String> {
     cmd.spawn()
         .map(|_| ())
         .map_err(|e| format!("Failed to start daemon: {e}"))
+}
+
+fn spawn_daemon_viewer(plugin_id: u64) -> Result<(), String> {
+    if std::os::unix::net::UnixStream::connect(DEFAULT_SOCKET_PATH).is_err() {
+        return Err("Daemon is not running".to_string());
+    }
+    let exe = std::env::current_exe().map_err(|e| format!("Failed to get executable path: {e}"))?;
+    Command::new(exe)
+        .env("RTSYN_DAEMON_VIEW_PLUGIN_ID", plugin_id.to_string())
+        .env("RTSYN_DAEMON_SOCKET", DEFAULT_SOCKET_PATH)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("Failed to open viewer: {e}"))
 }

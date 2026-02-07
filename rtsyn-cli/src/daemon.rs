@@ -50,6 +50,8 @@ struct DaemonState {
     runtime_query: RuntimeQuery,
     logic_state_rx: mpsc::Receiver<LogicState>,
     logic_settings: rtsyn_runtime::runtime::LogicSettings,
+    last_logic_state: Option<LogicState>,
+    plotter_history: std::collections::HashMap<u64, Vec<(u64, Vec<f64>)>>,
 }
 
 impl DaemonState {
@@ -76,6 +78,8 @@ impl DaemonState {
             runtime_query: RuntimeQuery { logic_tx },
             logic_state_rx,
             logic_settings,
+            last_logic_state: None,
+            plotter_history: std::collections::HashMap::new(),
         }
     }
 
@@ -84,6 +88,20 @@ impl DaemonState {
             .runtime_query
             .logic_tx
             .send(LogicMessage::UpdateWorkspace(self.workspace_manager.workspace.clone()));
+    }
+
+    fn drain_logic_states(&mut self) {
+        while let Ok(state_msg) = self.logic_state_rx.try_recv() {
+            for (plugin_id, samples) in &state_msg.plotter_samples {
+                let entry = self.plotter_history.entry(*plugin_id).or_default();
+                entry.extend(samples.iter().cloned());
+                if entry.len() > 5000 {
+                    let excess = entry.len() - 5000;
+                    entry.drain(0..excess);
+                }
+            }
+            self.last_logic_state = Some(state_msg);
+        }
     }
 }
 
@@ -555,64 +573,94 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
             }
         }
         DaemonRequest::RuntimeShow { id } => {
-            let mut latest_state: Option<LogicState> = None;
-            while let Ok(state_msg) = state.logic_state_rx.try_recv() {
-                latest_state = Some(state_msg);
+            state.drain_logic_states();
+            let latest_state = state.last_logic_state.clone();
+            match build_runtime_state(&state.workspace_manager, id, latest_state) {
+                Ok((kind, state, _)) => DaemonResponse::RuntimeShow { id, kind, state },
+                Err(message) => DaemonResponse::Error { message },
             }
-            let plugin = state
+        }
+        DaemonRequest::RuntimePluginView { id } => {
+            state.drain_logic_states();
+            let latest_state = state.last_logic_state.clone();
+            let samples = state.plotter_history.get(&id).cloned().unwrap_or_default();
+            match build_runtime_state(&state.workspace_manager, id, latest_state) {
+                Ok((kind, plugin_state, _)) => DaemonResponse::RuntimePluginView {
+                    id,
+                    kind,
+                    state: plugin_state,
+                    samples,
+                    period_seconds: state.logic_settings.period_seconds,
+                    time_scale: state.logic_settings.time_scale,
+                    time_label: state.logic_settings.time_label.clone(),
+                },
+                Err(message) => DaemonResponse::Error { message },
+            }
+        }
+        DaemonRequest::RuntimePluginStart { id } => {
+            if let Some(plugin) = state
+                .workspace_manager
+                .workspace
+                .plugins
+                .iter_mut()
+                .find(|p| p.id == id)
+            {
+                plugin.running = true;
+                let _ = state
+                    .runtime_query
+                    .logic_tx
+                    .send(LogicMessage::SetPluginRunning(id, true));
+                state.refresh_runtime();
+                DaemonResponse::Ok {
+                    message: "Plugin started".to_string(),
+                }
+            } else {
+                DaemonResponse::Error {
+                    message: "Plugin not found in runtime".to_string(),
+                }
+            }
+        }
+        DaemonRequest::RuntimePluginStop { id } => {
+            if let Some(plugin) = state
+                .workspace_manager
+                .workspace
+                .plugins
+                .iter_mut()
+                .find(|p| p.id == id)
+            {
+                plugin.running = false;
+                let _ = state
+                    .runtime_query
+                    .logic_tx
+                    .send(LogicMessage::SetPluginRunning(id, false));
+                state.refresh_runtime();
+                DaemonResponse::Ok {
+                    message: "Plugin stopped".to_string(),
+                }
+            } else {
+                DaemonResponse::Error {
+                    message: "Plugin not found in runtime".to_string(),
+                }
+            }
+        }
+        DaemonRequest::RuntimePluginRestart { id } => {
+            let exists = state
                 .workspace_manager
                 .workspace
                 .plugins
                 .iter()
-                .find(|p| p.id == id);
-            match (plugin, latest_state) {
-                (None, _) => DaemonResponse::Error {
+                .any(|p| p.id == id);
+            if !exists {
+                DaemonResponse::Error {
                     message: "Plugin not found in runtime".to_string(),
-                },
-                (_, None) => DaemonResponse::Error {
-                    message: "No runtime state available".to_string(),
-                },
-                (Some(plugin), Some(latest_state)) => {
-                    let kind = plugin.kind.clone();
-                    let mut variables: Vec<(String, serde_json::Value)> = match plugin.config {
-                        serde_json::Value::Object(ref map) => map
-                            .iter()
-                            .map(|(k, v)| (k.clone(), v.clone()))
-                            .collect(),
-                        _ => Vec::new(),
-                    };
-                    variables.sort_by(|a, b| a.0.cmp(&b.0));
-                    let mut outputs: Vec<(String, f64)> = latest_state
-                        .outputs
-                        .iter()
-                        .filter(|((pid, _), _)| *pid == id)
-                        .map(|((_, name), value)| (name.clone(), *value))
-                        .collect();
-                    outputs.sort_by(|a, b| a.0.cmp(&b.0));
-                    let mut inputs: Vec<(String, f64)> = latest_state
-                        .input_values
-                        .iter()
-                        .filter(|((pid, _), _)| *pid == id)
-                        .map(|((_, name), value)| (name.clone(), *value))
-                        .collect();
-                    inputs.sort_by(|a, b| a.0.cmp(&b.0));
-                    let mut internals: Vec<(String, serde_json::Value)> = latest_state
-                        .internal_variable_values
-                        .iter()
-                        .filter(|((pid, _), _)| *pid == id)
-                        .map(|((_, name), value)| (name.clone(), value.clone()))
-                        .collect();
-                    internals.sort_by(|a, b| a.0.cmp(&b.0));
-                    DaemonResponse::RuntimeShow {
-                        id,
-                        kind,
-                        state: RuntimePluginState {
-                            outputs,
-                            inputs,
-                            internal_variables: internals,
-                            variables,
-                        },
-                    }
+                }
+            } else {
+                let _ = state
+                    .runtime_query
+                    .logic_tx
+                    .send(LogicMessage::RestartPlugin(id));
+                DaemonResponse::Ok {
+                    message: "Plugin restarted".to_string(),
                 }
             }
         }
@@ -685,6 +733,59 @@ fn send_response(stream: &mut impl Write, response: &DaemonResponse) -> Result<(
         .write_all(format!("{payload}\n").as_bytes())
         .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+fn build_runtime_state(
+    manager: &WorkspaceManager,
+    id: u64,
+    latest_state: Option<LogicState>,
+) -> Result<(String, RuntimePluginState, Vec<(u64, Vec<f64>)>), String> {
+    let plugin = manager.workspace.plugins.iter().find(|p| p.id == id);
+    match (plugin, latest_state) {
+        (None, _) => Err("Plugin not found in runtime".to_string()),
+        (_, None) => Err("No runtime state available".to_string()),
+        (Some(plugin), Some(latest_state)) => {
+            let kind = plugin.kind.clone();
+            let mut variables: Vec<(String, serde_json::Value)> = match plugin.config {
+                serde_json::Value::Object(ref map) => {
+                    map.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+                }
+                _ => Vec::new(),
+            };
+            variables.sort_by(|a, b| a.0.cmp(&b.0));
+            let mut outputs: Vec<(String, f64)> = latest_state
+                .outputs
+                .iter()
+                .filter(|((pid, _), _)| *pid == id)
+                .map(|((_, name), value)| (name.clone(), *value))
+                .collect();
+            outputs.sort_by(|a, b| a.0.cmp(&b.0));
+            let mut inputs: Vec<(String, f64)> = latest_state
+                .input_values
+                .iter()
+                .filter(|((pid, _), _)| *pid == id)
+                .map(|((_, name), value)| (name.clone(), *value))
+                .collect();
+            inputs.sort_by(|a, b| a.0.cmp(&b.0));
+            let mut internals: Vec<(String, serde_json::Value)> = latest_state
+                .internal_variable_values
+                .iter()
+                .filter(|((pid, _), _)| *pid == id)
+                .map(|((_, name), value)| (name.clone(), value.clone()))
+                .collect();
+            internals.sort_by(|a, b| a.0.cmp(&b.0));
+            Ok((
+                kind,
+                RuntimePluginState {
+                    outputs,
+                    inputs,
+                    internal_variables: internals,
+                    variables,
+                },
+                Vec::new(),
+            ))
+        }
+    }
 }
 
 fn normalize_plugin_key(input: &str) -> String {

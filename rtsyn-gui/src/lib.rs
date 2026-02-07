@@ -90,6 +90,7 @@ mod state_sync;
 mod ui;
 mod ui_state;
 mod utils;
+mod daemon_viewer;
 
 use file_dialogs::FileDialogManager;
 use notifications::Notification;
@@ -171,6 +172,13 @@ pub(crate) struct WorkspaceSettingsDraft {
 }
 
 pub fn run_gui(config: GuiConfig) -> Result<(), GuiError> {
+    if let Ok(id_str) = std::env::var("RTSYN_DAEMON_VIEW_PLUGIN_ID") {
+        if let Ok(plugin_id) = id_str.parse::<u64>() {
+            let socket_path = std::env::var("RTSYN_DAEMON_SOCKET")
+                .unwrap_or_else(|_| "/tmp/rtsyn-daemon.sock".to_string());
+            return daemon_viewer::run_daemon_plugin_viewer(config, plugin_id, socket_path);
+        }
+    }
     let (logic_tx, logic_state_rx) = match spawn_runtime() {
         Ok(tuple) => tuple,
         Err(err) => {

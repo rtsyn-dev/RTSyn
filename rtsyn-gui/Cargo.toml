@@ -12,6 +12,7 @@ plotters = { version = "0.3", default-features = false, features = ["bitmap_back
 workspace = { path = "../workspace" }
 rtsyn-runtime = { path = "../rtsyn-runtime" }
 rtsyn-core = { path = "../rtsyn-core" }
+rtsyn-cli = { path = "../rtsyn-cli" }
 rtsyn_plugin = { workspace = true }
 serde = { workspace = true }
 toml = "0.8"
