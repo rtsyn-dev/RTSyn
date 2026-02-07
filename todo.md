@@ -10,7 +10,7 @@
 - [ ] Allow changing the color of the plotter lines and names
 - [ ] When confirmation dialog is shown, the connections on background dissapear visually while is shown.
 - [ ] When you right click on empty space (not plugin or window), a menu with Add plugin must appear
-- [ ] Fix warning `warning: the following packages contain code that will be rejected by a future version of Rust: ashpd v0.8.1`
+- [x] Fix warning `warning: the following packages contain code that will be rejected by a future version of Rust: ashpd v0.8.1`
 - [x] Click to highlight the connections must be ON the plugin (right now, if you click a window over the plugin they highlight). Instead of one click, do te connection highlighting activation and deactivation with double click.
 - [x] If a plugin is deleted, reuse id
 - [ ] Ensure cores are being used
