@@ -49,7 +49,7 @@
 - [x] Cant add different outputs to different inputs between same plugins when a connection is already made
 - [x] Visual bug on some plugins where the x is not on top right and the grey top part is not as wide as the plugin
 - [x] When all inputs connections deleted, close the live plotter
-- [ ] Fix csv recorder path button
+- [x] Fix csv recorder path button
 - [x] On workspace deletion, if its loaded it shall return to default workspace
 - [x] Workspace created doesnt show the name
 - [ ] The gui and runtime in gui mode are a bit coulpled (high periods make the gui laggy)
@@ -57,4 +57,4 @@
 - [x] On cli a connection can be made on unexistent plugins
 - [x] Change the cli view card so it respects the variable type (int shouldnt show decimals). Also add a scroll bar if needed (but dont limit the size)
 - [x] If cli view is aiming to an unexistent plugin, show error
-- [ ] Change plugin config ID badge on plugin config menu so its the same as the plugin card
+- [x] Change plugin config ID badge on plugin config menu so its the same as the plugin card

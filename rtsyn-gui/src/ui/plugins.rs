@@ -464,65 +464,67 @@ impl GuiApp {
                                                                             }
                                                                         }
                                                                         Value::Number(n) => {
-                                                                            // Get field type info from ui_schema
-                                                                            let field_info = ui_schema.as_ref()
+                                                                            let field_info = ui_schema
+                                                                                .as_ref()
                                                                                 .and_then(|schema| schema.fields.iter().find(|f| f.key == *var_name));
-                                                                            
-                                                                            if let Some(f) = n.as_f64() {
-                                                                                let mut val = f;
-                                                                                let (speed, min, max) = if let Some(field) = field_info {
-                                                                                    if let rtsyn_plugin::ui::FieldType::Float { min, max, step } = &field.field_type {
-                                                                                        (*step, *min, *max)
-                                                                                    } else {
-                                                                                        (1.0, None, None)
+
+                                                                            let mut handled = false;
+                                                                            if let Some(field) = field_info {
+                                                                                match &field.field_type {
+                                                                                    rtsyn_plugin::ui::FieldType::Integer { min, max, step } => {
+                                                                                        let min = *min;
+                                                                                        let max = *max;
+                                                                                        let mut val = n.as_i64().unwrap_or_else(|| n.as_f64().unwrap_or(0.0).round() as i64);
+                                                                                        let range = match (min, max) {
+                                                                                            (Some(mn), Some(mx)) => mn..=mx,
+                                                                                            (Some(mn), None) => mn..=i64::MAX,
+                                                                                            (None, Some(mx)) => i64::MIN..=mx,
+                                                                                            (None, None) => i64::MIN..=i64::MAX,
+                                                                                        };
+                                                                                        if ui.add_sized([value_w, 0.0], egui::DragValue::new(&mut val).speed(*step as f64).clamp_range(range)).changed() {
+                                                                                            let _ = self.state_sync.logic_tx.send(LogicMessage::SetPluginVariable(plugin.id, var_name.clone(), Value::from(val)));
+                                                                                            if let Value::Object(ref mut map) = plugin.config {
+                                                                                                map.insert(var_name.clone(), Value::from(val));
+                                                                                                plugin_changed = true;
+                                                                                            }
+                                                                                        }
+                                                                                        handled = true;
                                                                                     }
-                                                                                } else {
-                                                                                    (1.0, None, None)
-                                                                                };
-                                                                                let range = match (min, max) {
-                                                                                    (Some(mn), Some(mx)) => mn..=mx,
-                                                                                    (Some(mn), None) => mn..=f64::INFINITY,
-                                                                                    (None, Some(mx)) => f64::NEG_INFINITY..=mx,
-                                                                                    (None, None) => f64::NEG_INFINITY..=f64::INFINITY,
-                                                                                };
-                                                                                if ui.add_sized([value_w, 0.0], egui::DragValue::new(&mut val).speed(speed).clamp_range(range)).changed() {
-                                                                                    if var_name == "window_multiplier" && val < 1.0 {
-                                                                                        val = 1.0;
+                                                                                    rtsyn_plugin::ui::FieldType::Float { min, max, step } => {
+                                                                                        let min = *min;
+                                                                                        let max = *max;
+                                                                                        let mut val = n.as_f64().unwrap_or(0.0);
+                                                                                        let range = match (min, max) {
+                                                                                            (Some(mn), Some(mx)) => mn..=mx,
+                                                                                            (Some(mn), None) => mn..=f64::INFINITY,
+                                                                                            (None, Some(mx)) => f64::NEG_INFINITY..=mx,
+                                                                                            (None, None) => f64::NEG_INFINITY..=f64::INFINITY,
+                                                                                        };
+                                                                                        if ui.add_sized([value_w, 0.0], egui::DragValue::new(&mut val).speed(*step).clamp_range(range)).changed() {
+                                                                                            let _ = self.state_sync.logic_tx.send(LogicMessage::SetPluginVariable(plugin.id, var_name.clone(), Value::from(val)));
+                                                                                            if let Value::Object(ref mut map) = plugin.config {
+                                                                                                map.insert(var_name.clone(), Value::from(val));
+                                                                                                plugin_changed = true;
+                                                                                            }
+                                                                                            if var_name == "refresh_hz" {
+                                                                                                recompute_plotter_needed = true;
+                                                                                            }
+                                                                                        }
+                                                                                        handled = true;
                                                                                     }
-                                                                                    let _ = self.state_sync.logic_tx.send(LogicMessage::SetPluginVariable(plugin.id, var_name.clone(), Value::from(val)));
-                                                                                    if let Value::Object(ref mut map) = plugin.config {
-                                                                                        map.insert(var_name.clone(), Value::from(val));
-                                                                                        plugin_changed = true;
-                                                                                    }
-                                                                                    if var_name == "refresh_hz" {
-                                                                                        recompute_plotter_needed = true;
-                                                                                    }
+                                                                                    _ => {}
                                                                                 }
-                                                                            } else if let Some(i) = n.as_i64() {
-                                                                                let mut val = i;
-                                                                                let (speed, min, max) = if let Some(field) = field_info {
-                                                                                    if let rtsyn_plugin::ui::FieldType::Integer { min, max, step } = &field.field_type {
-                                                                                        (*step as f64, *min, *max)
-                                                                                    } else {
-                                                                                        (1.0, None, None)
-                                                                                    }
-                                                                                } else {
-                                                                                    (1.0, None, None)
-                                                                                };
-                                                                                let range = match (min, max) {
-                                                                                    (Some(mn), Some(mx)) => mn..=mx,
-                                                                                    (Some(mn), None) => mn..=i64::MAX,
-                                                                                    (None, Some(mx)) => i64::MIN..=mx,
-                                                                                    (None, None) => i64::MIN..=i64::MAX,
-                                                                                };
-                                                                                if ui.add_sized([value_w, 0.0], egui::DragValue::new(&mut val).speed(speed).clamp_range(range)).changed() {
-                                                                                    if var_name == "window_multiplier" && val < 1 {
-                                                                                        val = 1;
-                                                                                    }
-                                                                                    let _ = self.state_sync.logic_tx.send(LogicMessage::SetPluginVariable(plugin.id, var_name.clone(), Value::from(val)));
-                                                                                    if let Value::Object(ref mut map) = plugin.config {
-                                                                                        map.insert(var_name.clone(), Value::from(val));
-                                                                                        plugin_changed = true;
+                                                                            }
+
+                                                                            if !handled {
+                                                                                if let Some(f) = n.as_f64() {
+                                                                                    let mut val = f;
+                                                                                    if ui.add_sized([value_w, 0.0], egui::DragValue::new(&mut val)).changed() {
+                                                                                        let _ = self.state_sync.logic_tx.send(LogicMessage::SetPluginVariable(plugin.id, var_name.clone(), Value::from(val)));
+                                                                                        if let Value::Object(ref mut map) = plugin.config {
+                                                                                            map.insert(var_name.clone(), Value::from(val));
+                                                                                            plugin_changed = true;
+                                                                                        }
                                                                                     }
                                                                                 }
                                                                             }
@@ -1854,29 +1856,28 @@ impl GuiApp {
                     let pending_start: Option<bool> = None;
 
                     ui.horizontal(|ui| {
-                        let (id_rect, _) = ui.allocate_exact_size(
-                            egui::vec2(20.0, 20.0),
-                            egui::Sense::hover(),
-                        );
-                        ui.painter().circle_filled(
-                            id_rect.center(),
-                            9.0,
+                        let (id_rect, _) =
+                            ui.allocate_exact_size(egui::vec2(24.0, 24.0), egui::Sense::hover());
+                        ui.painter().rect_filled(
+                            id_rect,
+                            8.0,
                             egui::Color32::from_gray(60),
                         );
                         ui.painter().text(
                             id_rect.center(),
                             egui::Align2::CENTER_CENTER,
                             plugin_id.to_string(),
-                            egui::FontId::proportional(13.0),
-                            ui.visuals().text_color(),
+                            egui::FontId::proportional(12.0),
+                            egui::Color32::from_rgb(200, 200, 210),
                         );
                         ui.label(RichText::new(display_name).strong().size(16.0));
                     });
                     ui.add_space(6.0);
-                    ui.horizontal(|ui| {
-                        ui.label("Priority");
+                    let label_w = 140.0;
+                    let value_w = 90.0;
+                    kv_row_wrapped(ui, "Priority", label_w, |ui| {
                         if ui
-                            .add(egui::DragValue::new(&mut priority).speed(1))
+                            .add_sized([value_w, 0.0], egui::DragValue::new(&mut priority).speed(1))
                             .changed()
                         {
                             config_changed = true;
