@@ -252,10 +252,13 @@ impl LivePlotter {
             let y_label = y_axis_name.unwrap_or("value");
             plot = plot.x_axis_label(x_label).y_axis_label(y_label);
         }
+        plot = plot.show_grid(show_grid);
 
         // Add title if provided
         if !display_title.is_empty() {
-            ui.label(egui::RichText::new(display_title).strong().size(16.0));
+            ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+                ui.label(egui::RichText::new(display_title).strong().size(16.0));
+            });
         }
 
         // Apply theme
@@ -296,7 +299,9 @@ impl LivePlotter {
             }
         });
 
-        ui.label(title);
+        if !title.is_empty() {
+            ui.label(title);
+        }
     }
 
     pub(crate) fn export_png_with_settings(

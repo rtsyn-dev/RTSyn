@@ -5,6 +5,7 @@ use crate::WorkspaceSettingsDraft;
 use std::sync::mpsc::Receiver;
 use std::path::PathBuf;
 
+#[derive(Clone)]
 pub struct PlotterPreviewState {
     pub open: bool,
     pub target: Option<u64>,
