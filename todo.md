@@ -59,5 +59,7 @@
 - [x] If cli view is aiming to an unexistent plugin, show error
 - [x] Change plugin config ID badge on plugin config menu so its the same as the plugin card
 - [ ] Sometimes the plotter window cant be closed
-- [ ] Add id to ports
+- [ ] Add id to ports for cli
 - [ ] Add a function that returns a mermaid diagram from the runtime
+- [ ] Both `daemon plugin add` and daemon `runtime plugin add` do the same
+- [ ] Add help tab

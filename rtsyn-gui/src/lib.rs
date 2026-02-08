@@ -147,6 +147,8 @@ enum WindowFocus {
     LoadWorkspaces,
     ManageWorkspaces,
     ManagePlugins,
+    InstallPlugins,
+    UninstallPlugins,
     Plugins,
     WorkspaceSettings,
     ManageConnections,
@@ -1043,6 +1045,14 @@ impl eframe::App for GuiApp {
                         self.open_plugins();
                         ui.close_menu();
                     }
+                    if ui.button("Install plugin").clicked() {
+                        self.open_install_plugins();
+                        ui.close_menu();
+                    }
+                    if ui.button("Uninstall plugin").clicked() {
+                        self.open_uninstall_plugins();
+                        ui.close_menu();
+                    }
                     if ui.button("Manage plugins").clicked() {
                         self.open_manage_plugins();
                         ui.close_menu();
@@ -1107,6 +1117,8 @@ impl eframe::App for GuiApp {
         self.render_load_workspaces_window(ctx);
         self.render_manage_workspaces_window(ctx);
         self.render_manage_plugins_window(ctx);
+        self.render_install_plugins_window(ctx);
+        self.render_uninstall_plugins_window(ctx);
         self.render_plugins_window(ctx);
         self.render_manage_connections_window(ctx);
         self.render_connection_editor(ctx);

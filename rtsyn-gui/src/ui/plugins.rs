@@ -56,13 +56,26 @@ impl GuiApp {
     pub(crate) fn open_manage_plugins(&mut self) {
         self.windows.manage_plugins_open = true;
         self.scan_detected_plugins();
+        self.windows.manage_plugin_selected_index = None;
         self.pending_window_focus = Some(WindowFocus::ManagePlugins);
+    }
+
+    pub(crate) fn open_install_plugins(&mut self) {
+        self.windows.install_plugins_open = true;
+        self.scan_detected_plugins();
+        self.windows.install_selected_index = None;
+        self.pending_window_focus = Some(WindowFocus::InstallPlugins);
+    }
+
+    pub(crate) fn open_uninstall_plugins(&mut self) {
+        self.windows.uninstall_plugins_open = true;
+        self.windows.uninstall_selected_index = None;
+        self.pending_window_focus = Some(WindowFocus::UninstallPlugins);
     }
 
     pub(crate) fn open_plugins(&mut self) {
         self.windows.plugins_open = true;
         self.windows.plugin_selected_index = None;
-        self.windows.organize_selected_index = None;
         self.pending_window_focus = Some(WindowFocus::Plugins);
     }
 
@@ -1002,6 +1015,24 @@ impl GuiApp {
             });
     }
 
+    fn render_preview_action_panel(
+        ui: &mut egui::Ui,
+        full_h: f32,
+        right_w: f32,
+        body: impl FnOnce(&mut egui::Ui),
+    ) {
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .max_height(full_h)
+            .min_scrolled_height(full_h)
+            .show(ui, |ui| {
+                // Keep a stable width baseline so button centering does not drift with preview content.
+                ui.set_min_width(right_w);
+                ui.set_max_width(right_w);
+                body(ui);
+            });
+    }
+
     fn live_plotter_inputs_override(&self) -> Option<Vec<String>> {
         let plugin = self
             .workspace_manager.workspace
@@ -1058,440 +1089,122 @@ impl GuiApp {
             return;
         }
 
-        let name_by_kind: HashMap<String, String> = self
-            .plugin_manager.installed_plugins
-            .iter()
-            .map(|plugin| (plugin.manifest.kind.clone(), plugin.manifest.name.clone()))
-            .collect();
-        let __manifest_by_kind: HashMap<String, PluginManifest> = self
-            .plugin_manager.installed_plugins
-            .iter()
-            .map(|plugin| (plugin.manifest.kind.clone(), plugin.manifest.clone()))
-            .collect();
-        let metadata_by_kind: HashMap<String, Vec<(String, f64)>> = self
-            .plugin_manager.installed_plugins
-            .iter()
-            .map(|plugin| (plugin.manifest.kind.clone(), plugin.metadata_variables.clone()))
-            .collect();
-
         let mut window_open = self.windows.plugins_open;
-        let window_size = egui::vec2(700.0, 420.0);
+        let window_size = egui::vec2(760.0, 440.0);
         let default_pos = Self::center_window(ctx, window_size);
-        let response = egui::Window::new("Add plugins")
+        let response = egui::Window::new("Add Plugin")
             .open(&mut window_open)
             .resizable(false)
             .default_pos(default_pos)
             .default_size(window_size)
-            .default_pos(default_pos)
+            .min_size(window_size)
+            .max_size(window_size)
+            .fixed_size(window_size)
             .show(ctx, |ui| {
+                let total_w = ui.available_width();
+                let left_w = (total_w * 0.52).max(260.0);
+                let right_w = (total_w - left_w - 10.0).max(220.0);
+                let full_h = ui.available_height();
+                let search_h = 34.0;
+                let list_h = (full_h - search_h - 16.0).max(120.0);
+                let mut selected: Option<usize> = None;
+
                 ui.horizontal(|ui| {
-                    if ui
-                        .selectable_label(matches!(self.windows.plugin_tab, PluginTab::Add), "Add plugin")
-                        .clicked()
-                    {
-                        self.windows.plugin_tab = PluginTab::Add;
-                    }
-                    if ui
-                        .selectable_label(matches!(self.windows.plugin_tab, PluginTab::Organize), "Organize plugins")
-                        .clicked()
-                    {
-                        self.windows.plugin_tab = PluginTab::Organize;
-                    }
-                });
-                ui.separator();
-
-                match self.windows.plugin_tab {
-                    PluginTab::Add => {
-                        ui.columns(2, |columns| {
-                            columns[0].label("Search");
-                            columns[0].text_edit_singleline(&mut self.windows.plugin_search);
-                            columns[0].add_space(6.0);
-                            let mut selected: Option<usize> = None;
-                            egui::ScrollArea::vertical()
-                                .id_source("organize_plugin_list")
-                                .max_height(220.0)
-                                .show(&mut columns[0], |ui| {
-                                    for (idx, installed) in self.plugin_manager.installed_plugins.iter().enumerate() {
-                                        let label = installed.manifest.name.clone();
-                                        if !self.windows.plugin_search.trim().is_empty()
-                                            && !label
-                                                .to_lowercase()
-                                                .contains(&self.windows.plugin_search.to_lowercase())
-                                        {
-                                            continue;
-                                        }
-                                        if ui
-                                            .selectable_label(
-                                                self.windows.plugin_selected_index == Some(idx),
-                                                label,
-                                            )
-                                            .clicked()
-                                        {
-                                            selected = Some(idx);
-                                        }
-                                    }
-                                });
-                            if let Some(idx) = selected {
-                                self.windows.plugin_selected_index = Some(idx);
-                            }
-
-                            if let Some(idx) = self.windows.plugin_selected_index {
-                                if let Some(installed) = self.plugin_manager.installed_plugins.get(idx) {
-                                    let inputs_override = self.live_plotter_inputs_override();
-                                    Self::render_plugin_preview(
-                                        &mut columns[1],
-                                        &installed.manifest,
-                                        inputs_override,
-                                        &installed.manifest.kind,
-                                        &serde_json::Value::Object(serde_json::Map::new()),
-                                        false,
-                                        &self.plugin_manager.installed_plugins,
-                                    );
-                                    if styled_button(&mut columns[1], "Add to workspace").clicked() {
-                                        self.add_installed_plugin(idx);
-                                    }
-                                }
-                            } else {
-                                columns[1].label("Select a plugin to preview.");
-                            }
-                        });
-                    }
-                    PluginTab::Organize => {
-                        let mut pending_csv_prune: Option<(u64, usize)> = None;
-                        ui.columns(2, |columns| {
-                            columns[0].label("Search");
-                            columns[0].text_edit_singleline(&mut self.windows.organize_search);
-                            columns[0].add_space(6.0);
-                            let mut selected: Option<usize> = None;
-                            egui::ScrollArea::vertical()
-                                .max_height(220.0)
-                                .show(&mut columns[0], |ui| {
-                                    for (idx, plugin) in self.workspace_manager.workspace.plugins.iter().enumerate() {
-                                        let display_name = name_by_kind
-                                            .get(&plugin.kind)
-                                            .cloned()
-                                            .unwrap_or_else(|| Self::display_kind(&plugin.kind));
-                                        let label = format!("#{} {}", plugin.id, display_name);
-                                        if !self.windows.organize_search.trim().is_empty()
-                                            && !label
-                                                .to_lowercase()
-                                                .contains(&self.windows.organize_search.to_lowercase())
-                                        {
-                                            continue;
-                                        }
-                                        if ui
-                                            .selectable_label(
-                                                self.windows.organize_selected_index == Some(idx),
-                                                label,
-                                            )
-                                            .clicked()
-                                        {
-                                            selected = Some(idx);
-                                        }
-                                    }
-                                });
-                            if let Some(idx) = selected {
-                                self.windows.organize_selected_index = Some(idx);
-                            }
-
-                            columns[1].label("Edit");
-                            if let Some(idx) = self.windows.organize_selected_index {
-                                let mut plugin_changed = false;
-                                if let Some(plugin) = self.workspace_manager.workspace.plugins.get_mut(idx) {
-                                    let display_name = name_by_kind
-                                        .get(&plugin.kind)
-                                        .cloned()
-                                        .unwrap_or_else(|| Self::display_kind(&plugin.kind));
-                                    columns[1].label(format!("#{} {}", plugin.id, display_name));
-                                    let is_app_plugin = matches!(
-                                        plugin.kind.as_str(),
-                                        "csv_recorder" | "live_plotter" | "performance_monitor" | "comedi_daq"
-                                    );
-                                    if is_app_plugin {
-                                        if let Some(installed) = self.plugin_manager.installed_plugins.iter().find(|p| p.manifest.kind == plugin.kind) {
-                                            if let Some(schema) = &installed.display_schema {
-                                                let col1 = &mut columns[1];
-                                                if schema.variables.is_empty() {
-                                                    col1.label("No configurable variables.");
-                                                } else {
-                                                    for var_name in &schema.variables {
-                                                        let (tx, rx) = mpsc::channel();
-                                                        let _ = self.state_sync.logic_tx.send(
-                                                            LogicMessage::GetPluginVariable(plugin.id, var_name.clone(), tx),
-                                                        );
-                                                        if let Ok(Some(value)) = rx.recv() {
-                                                            let field_info = installed.ui_schema.as_ref()
-                                                                .and_then(|schema| schema.fields.iter().find(|f| f.key == *var_name));
-                                                            let label = field_info
-                                                                .map(|field| field.label.as_str())
-                                                                .unwrap_or(var_name.as_str());
-                                                            let is_filepath = field_info
-                                                                .map(|field| matches!(field.field_type, rtsyn_plugin::ui::FieldType::FilePath { .. }))
-                                                                .unwrap_or(false);
-                                                            kv_row_wrapped(col1, label, 140.0, |ui| {
-                                                                match &value {
-                                                                    Value::String(s) => {
-                                                                        let mut text = s.clone();
-                                                                        let width = if is_filepath { 80.0 } else { 80.0 };
-                                                                        if ui.add(egui::TextEdit::singleline(&mut text).desired_width(width)).changed() {
-                                                                            let new_text = text.clone();
-                                                                            let _ = self.state_sync.logic_tx.send(
-                                                                                LogicMessage::SetPluginVariable(plugin.id, var_name.clone(), Value::String(new_text.clone())),
-                                                                            );
-                                                                            if let Value::Object(ref mut map) = plugin.config {
-                                                                                map.insert(var_name.clone(), Value::String(new_text));
-                                                                                if var_name == "path" {
-                                                                                    map.insert("path_autogen".to_string(), Value::from(false));
-                                                                                }
-                                                                                plugin_changed = true;
-                                                                            }
-                                                                        }
-                                                                        if is_filepath {
-                                                                            ui.add_space(2.0);
-                                                                            if ui.small_button("...").clicked() {
-                                                                                self.csv_path_target_plugin_id = Some(plugin.id);
-                                                                                let (tx, rx) = mpsc::channel();
-                                                                                self.file_dialogs.csv_path_dialog_rx = Some(rx);
-                                                                                spawn_file_dialog_thread(move || {
-                                                                                    let file = if has_rt_capabilities() {
-                                                                                        zenity_file_dialog("save", None)
-                                                                                    } else {
-                                                                                        rfd::FileDialog::new().save_file()
-                                                                                    };
-                                                                                    let _ = tx.send(file);
-                                                                                });
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                    Value::Bool(b) => {
-                                                                        let mut checked = *b;
-                                                                        if ui.checkbox(&mut checked, "").changed() {
-                                                                            let _ = self.state_sync.logic_tx.send(
-                                                                                LogicMessage::SetPluginVariable(plugin.id, var_name.clone(), Value::Bool(checked)),
-                                                                            );
-                                                                            if let Value::Object(ref mut map) = plugin.config {
-                                                                                map.insert(var_name.clone(), Value::Bool(checked));
-                                                                                plugin_changed = true;
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                    Value::Number(n) => {
-                                                                        let field_info = installed.ui_schema.as_ref()
-                                                                            .and_then(|schema| schema.fields.iter().find(|f| f.key == *var_name));
-                                                                        if let Some(f) = n.as_f64() {
-                                                                            let mut val = f;
-                                                                            let (speed, min, max) = if let Some(field) = field_info {
-                                                                                if let rtsyn_plugin::ui::FieldType::Float { min, max, step } = &field.field_type {
-                                                                                    (*step, *min, *max)
-                                                                                } else {
-                                                                                    (1.0, None, None)
-                                                                                }
-                                                                            } else {
-                                                                                (1.0, None, None)
-                                                                            };
-                                                                            let range = match (min, max) {
-                                                                                (Some(mn), Some(mx)) => mn..=mx,
-                                                                                (Some(mn), None) => mn..=f64::INFINITY,
-                                                                                (None, Some(mx)) => f64::NEG_INFINITY..=mx,
-                                                                                (None, None) => f64::NEG_INFINITY..=f64::INFINITY,
-                                                                            };
-                                                                            if ui.add(egui::DragValue::new(&mut val).speed(speed).clamp_range(range)).changed() {
-                                                                                let _ = self.state_sync.logic_tx.send(
-                                                                                    LogicMessage::SetPluginVariable(plugin.id, var_name.clone(), Value::from(val)),
-                                                                                );
-                                                                                if let Value::Object(ref mut map) = plugin.config {
-                                                                                    map.insert(var_name.clone(), Value::from(val));
-                                                                                    plugin_changed = true;
-                                                                                }
-                                                                            }
-                                                                        } else if let Some(i) = n.as_i64() {
-                                                                            let mut val = i;
-                                                                            let (speed, min, max) = if let Some(field) = field_info {
-                                                                                if let rtsyn_plugin::ui::FieldType::Integer { min, max, step } = &field.field_type {
-                                                                                    (*step as f64, *min, *max)
-                                                                                } else {
-                                                                                    (1.0, None, None)
-                                                                                }
-                                                                            } else {
-                                                                                (1.0, None, None)
-                                                                            };
-                                                                            let range = match (min, max) {
-                                                                                (Some(mn), Some(mx)) => mn..=mx,
-                                                                                (Some(mn), None) => mn..=i64::MAX,
-                                                                                (None, Some(mx)) => i64::MIN..=mx,
-                                                                                (None, None) => i64::MIN..=i64::MAX,
-                                                                            };
-                                                                            if ui.add(egui::DragValue::new(&mut val).speed(speed).clamp_range(range)).changed() {
-                                                                                let _ = self.state_sync.logic_tx.send(
-                                                                                    LogicMessage::SetPluginVariable(plugin.id, var_name.clone(), Value::from(val)),
-                                                                                );
-                                                                                if let Value::Object(ref mut map) = plugin.config {
-                                                                                    map.insert(var_name.clone(), Value::from(val));
-                                                                                    plugin_changed = true;
-                                                                                }
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                    Value::Array(arr) => {
-                                                                        if let Some(field) = field_info {
-                                                                            if let rtsyn_plugin::ui::FieldType::DynamicList { item_type, add_label } = &field.field_type {
-                                                                                let mut items: Vec<String> = arr
-                                                                                    .iter()
-                                                                                    .map(|v| v.as_str().unwrap_or("").to_string())
-                                                                                    .collect();
-                                                                                let mut list_changed = false;
-
-                                                                                ui.vertical(|ui| {
-                                                                                    let mut idx = 0usize;
-                                                                                    while idx < items.len() {
-                                                                                        let mut value = items[idx].clone();
-                                                                                        let mut remove_row = false;
-                                                                                        ui.horizontal(|ui| {
-                                                                                            match &**item_type {
-                                                                                                rtsyn_plugin::ui::FieldType::Text { .. } => {
-                                                                                                    if ui.add(egui::TextEdit::singleline(&mut value).desired_width(140.0)).changed() {
-                                                                                                        items[idx] = value.clone();
-                                                                                                        list_changed = true;
-                                                                                                    }
-                                                                                                }
-                                                                                                _ => {
-                                                                                                    ui.label("Unsupported list item type");
-                                                                                                }
-                                                                                            }
-                                                                                            if ui.small_button("X").clicked() {
-                                                                                                remove_row = true;
-                                                                                            }
-                                                                                        });
-                                                                                        if remove_row {
-                                                                                            items.remove(idx);
-                                                                                            list_changed = true;
-                                                                                        } else {
-                                                                                            idx += 1;
-                                                                                        }
-                                                                                    }
-                                                                                    if ui.small_button(add_label).clicked() {
-                                                                                        items.push(String::new());
-                                                                                        list_changed = true;
-                                                                                    }
-                                                                                });
-
-                                                                                if list_changed {
-                                                                                    let new_value = Value::Array(
-                                                                                        items.clone().into_iter().map(Value::String).collect()
-                                                                                    );
-                                                                                    let _ = self.state_sync.logic_tx.send(
-                                                                                        LogicMessage::SetPluginVariable(plugin.id, var_name.clone(), new_value.clone())
-                                                                                    );
-                                                                                    if let Value::Object(ref mut map) = plugin.config {
-                                                                                        map.insert(var_name.clone(), new_value);
-                                                                                        if var_name == "columns" {
-                                                                                            map.insert("input_count".to_string(), Value::from(items.len() as u64));
-                                                                                            pending_csv_prune = Some((plugin.id, items.len()));
-                                                                                        }
-                                                                                        plugin_changed = true;
-                                                                                    }
-                                                                                }
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                    _ => {}
-                                                                }
-                                                            });
-                                                        }
-                                                    }
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(left_w, full_h),
+                        egui::Layout::top_down(egui::Align::LEFT),
+                        |ui| {
+                            ui.scope(|ui| {
+                                let mut style = ui.style().as_ref().clone();
+                                style.visuals.extreme_bg_color = egui::Color32::from_gray(50);
+                                style.visuals.widgets.inactive.bg_fill = egui::Color32::from_gray(50);
+                                style.visuals.widgets.hovered.bg_fill = egui::Color32::from_gray(55);
+                                style.visuals.widgets.active.bg_fill = egui::Color32::from_gray(60);
+                                ui.set_style(style);
+                                ui.add_sized(
+                                    [200.0, 24.0],
+                                    egui::TextEdit::singleline(&mut self.windows.plugin_search)
+                                        .hint_text("Search plugins"),
+                                );
+                            });
+                            ui.add_space(6.0);
+                            ui.separator();
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(ui.available_width(), list_h),
+                                egui::Layout::top_down(egui::Align::LEFT),
+                                |ui| {
+                                    egui::ScrollArea::vertical()
+                                        .auto_shrink([false, false])
+                                        .max_height(list_h)
+                                        .min_scrolled_height(list_h)
+                                        .show(ui, |ui| {
+                                            for (idx, installed) in self.plugin_manager.installed_plugins.iter().enumerate() {
+                                                let label = installed.manifest.name.clone();
+                                                if !self.windows.plugin_search.trim().is_empty()
+                                                    && !label
+                                                        .to_lowercase()
+                                                        .contains(&self.windows.plugin_search.to_lowercase())
+                                                {
+                                                    continue;
+                                                }
+                                                let response = ui
+                                                    .allocate_ui_with_layout(
+                                                        egui::vec2(ui.available_width(), 22.0),
+                                                        egui::Layout::left_to_right(egui::Align::Center),
+                                                        |ui| {
+                                                            ui.add(egui::SelectableLabel::new(
+                                                                self.windows.plugin_selected_index == Some(idx),
+                                                                egui::RichText::new(label).size(14.0),
+                                                            ))
+                                                        },
+                                                    )
+                                                    .inner;
+                                                if response.clicked() {
+                                                    selected = Some(idx);
                                                 }
                                             }
-                                        }
-                                    } else {
-                                        match plugin.config {
-                                            Value::Object(ref mut map) => {
-                                                let col1 = &mut columns[1];
-                                                let vars = metadata_by_kind
-                                                    .get(&plugin.kind)
-                                                    .cloned()
-                                                    .unwrap_or_default();
-                                                col1.push_id(("organize_config_grid", plugin.id), |ui| {
-                                                    egui::Grid::new(("organize_config_grid_inner", plugin.id))
-                                                        .num_columns(2)
-                                                        .min_col_width(110.0)
-                                                        .spacing([10.0, 6.0])
-                                                        .show(ui, |ui| {
-                                                            for (name, _default_value) in &vars {
-                                                                let key = name;
-                                                                if let Some(value) = map.get_mut(key) {
-                                                                    ui.label(key);
-                                                                    let buffer_key =
-                                                                        (plugin.id, key.clone());
-                                                                    let buffer = self
-                                                                        .number_edit_buffers
-                                                                        .entry(buffer_key)
-                                                                        .or_insert_with(|| {
-                                                                            format_f64_6(
-                                                                                value.as_f64().unwrap_or(0.0),
-                                                                            )
-                                                                        });
-                                                                    let resp = ui.add(
-                                                                        egui::TextEdit::singleline(buffer)
-                                                                            .desired_width(80.0),
-                                                                    );
-                                                                    if resp.changed() {
-                                                                        let _ =
-                                                                            normalize_numeric_input(buffer);
-                                                                        if let Some(parsed) =
-                                                                            parse_f64_input(buffer)
-                                                                        {
-                                                                            let truncated =
-                                                                                truncate_f64(parsed);
-                                                                            *value = Value::from(truncated);
-                                                                            *buffer = format_f64_with_input(
-                                                                                buffer,
-                                                                                truncated,
-                                                                            );
-                                                                            plugin_changed = true;
-                                                                        }
-                                                                    }
-                                                                    ui.end_row();
-                                                                }
-                                                            }
-                                                        });
-                                                });
-                                            }
-                                            _ => {
-                                                columns[1].label("Config is not an object.");
-                                            }
-                                        }
-                                    }
-                                    if styled_button(&mut columns[1], "Remove from workspace").clicked() {
-                                        let display_name = name_by_kind
-                                            .get(&plugin.kind)
-                                            .cloned()
-                                            .unwrap_or_else(|| Self::display_kind(&plugin.kind));
-                                        let label = format!("#{} {}", plugin.id, display_name);
-                                        let plugin_id = plugin.id;
-                                        self.show_confirm(
-                                            "Confirm removal",
-                                            &format!("Remove plugin {label} from the workspace?"),
-                                            "Remove",
-                                            ConfirmAction::RemovePlugin(plugin_id),
-                                        );
-                                    }
-                                }
-                                if plugin_changed {
-                                    self.mark_workspace_dirty();
-                                }
-                            } else {
-                                columns[1].label("Select a plugin to edit.");
-                            }
-                        });
-                        if let Some((id, count)) = pending_csv_prune {
-                            prune_extendable_inputs_plugin_connections(
-                                &mut self.workspace_manager.workspace.connections,
-                                id,
-                                count,
+                                        });
+                                },
                             );
-                            self.enforce_connection_dependent();
-                        }
-                    }
+                        },
+                    );
+
+                    ui.add(egui::Separator::default().vertical());
+
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(right_w, full_h),
+                        egui::Layout::top_down(egui::Align::LEFT),
+                        |ui| {
+                            Self::render_preview_action_panel(ui, full_h, right_w, |ui| {
+                                if let Some(idx) = self.windows.plugin_selected_index {
+                                    if let Some(installed) = self.plugin_manager.installed_plugins.get(idx) {
+                                        let inputs_override = self.live_plotter_inputs_override();
+                                        Self::render_plugin_preview(
+                                            ui,
+                                            &installed.manifest,
+                                            inputs_override,
+                                            &installed.manifest.kind,
+                                            &serde_json::Value::Object(serde_json::Map::new()),
+                                            false,
+                                            &self.plugin_manager.installed_plugins,
+                                        );
+                                        ui.add_space(12.0);
+                                        ui.horizontal_centered(|ui| {
+                                            if styled_button(ui, "Add to runtime").clicked() {
+                                                self.add_installed_plugin(idx);
+                                            }
+                                        });
+                                    }
+                                } else {
+                                    ui.label("Select a plugin to preview.");
+                                }
+                            });
+                        },
+                    );
+                });
+
+                if let Some(idx) = selected {
+                    self.windows.plugin_selected_index = Some(idx);
                 }
             });
         if let Some(response) = response {
@@ -1509,227 +1222,238 @@ impl GuiApp {
         self.windows.plugins_open = window_open;
     }
 
+
+    fn is_app_plugins_path(path: &std::path::Path) -> bool {
+        path.components().any(|c| c.as_os_str() == "app_plugins")
+    }
+
     pub(crate) fn render_manage_plugins_window(&mut self, ctx: &egui::Context) {
         if !self.windows.manage_plugins_open {
             return;
         }
 
         let mut window_open = self.windows.manage_plugins_open;
-        let window_size = egui::vec2(700.0, 400.0);
+        let window_size = egui::vec2(760.0, 440.0);
         let default_pos = Self::center_window(ctx, window_size);
+        let mut install_selected: Option<(BuildAction, String)> = None;
+        let mut reinstall_selected: Option<(BuildAction, String)> = None;
+        let mut uninstall_selected: Option<usize> = None;
+        let mut rescan = false;
+
         let response = egui::Window::new("Manage plugins")
             .open(&mut window_open)
             .resizable(false)
             .default_pos(default_pos)
             .default_size(window_size)
+            .min_size(window_size)
+            .max_size(window_size)
             .fixed_size(window_size)
-            .show(ctx, |ui| match self.windows.manage_plugins_tab {
-                ManageTab::Install => {
-                    let mut rescan = false;
-                    let installed_kinds: HashSet<String> = self
-            .plugin_manager.installed_plugins
-                        .iter()
-                        .map(|plugin| plugin.manifest.kind.clone())
-                        .collect();
-                    ui.columns(2, |columns| {
-                        let col0_width = columns[0].available_width();
-                        let footer_h = BUTTON_SIZE.y * 2.0
-                            + columns[0].text_style_height(&egui::TextStyle::Body) * 2.0
-                            + columns[0].spacing().item_spacing.y * 6.0;
-                        let total_h = columns[0].available_height();
-                        let top_h = (total_h - footer_h).max(140.0);
+            .show(ctx, |ui| {
+                let total_w = ui.available_width();
+                let left_w = (total_w * 0.52).max(260.0);
+                let right_w = (total_w - left_w - 10.0).max(220.0);
+                let full_h = ui.available_height();
+                let footer_h = 72.0;
+                let search_h = 34.0;
+                let list_h = (full_h - search_h - footer_h - 16.0).max(120.0);
 
-                        let mut selected: Option<usize> = None;
-                        columns[0].allocate_ui_with_layout(
-                            egui::vec2(col0_width, top_h),
-                            egui::Layout::top_down(egui::Align::LEFT),
-                            |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.label("Search");
-                                    ui.text_edit_singleline(&mut self.windows.install_search);
-                                });
-                                ui.add_space(6.0);
-                                let list_height = ui.available_height().max(40.0);
-                                egui::ScrollArea::vertical()
-                                    .auto_shrink([false, false])
-                                    .max_height(list_height)
-                                    .min_scrolled_height(list_height)
-                                    .show(ui, |ui| {
-                                        for (idx, detected) in
-                                            self.plugin_manager.detected_plugins.iter().enumerate()
-                                        {
-                                            let label = detected.manifest.name.clone();
-                                            if !self.windows.install_search.trim().is_empty()
-                                                && !label
-                                                    .to_lowercase()
-                                                    .contains(&self.windows.install_search.to_lowercase())
-                                            {
-                                                continue;
-                                            }
-                                            let row = ui.add_sized(
-                                                [ui.available_width(), 18.0],
-                                                egui::SelectableLabel::new(
-                                                    self.windows.manage_selected_index == Some(idx),
-                                                    label,
-                                                ),
-                                            );
-                                            if row.clicked() {
-                                                selected = Some(idx);
-                                            }
-                                        }
-                                    });
-                            },
-                        );
-                        if let Some(idx) = selected {
-                            self.windows.manage_selected_index = Some(idx);
-                        }
+                let installed_kinds: HashSet<String> = self
+                    .plugin_manager
+                    .installed_plugins
+                    .iter()
+                    .map(|plugin| plugin.manifest.kind.clone())
+                    .collect();
 
-                        columns[0].allocate_ui_with_layout(
-                            egui::vec2(col0_width, footer_h),
-                            egui::Layout::top_down(egui::Align::LEFT),
-                            |ui| {
-                                let action_w = BUTTON_SIZE.x + 12.0;
-                                let label_w = (col0_width - action_w).max(140.0);
-                                ui.allocate_ui_with_layout(
-                                    egui::vec2(col0_width, 0.0),
-                                    egui::Layout::left_to_right(egui::Align::Center),
-                                    |ui| {
-                                        ui.allocate_ui_with_layout(
-                                            egui::vec2(label_w, 0.0),
-                                            egui::Layout::top_down(egui::Align::Min),
-                                            |ui| {
-                                                ui.label(RichText::new("Browse plugin folder").strong());
-                                            },
-                                        );
+                let mut selected: Option<usize> = None;
+
+                ui.horizontal(|ui| {
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(left_w, full_h),
+                        egui::Layout::top_down(egui::Align::LEFT),
+                        |ui| {
+                            ui.scope(|ui| {
+                                let mut style = ui.style().as_ref().clone();
+                                style.visuals.extreme_bg_color = egui::Color32::from_gray(50);
+                                style.visuals.widgets.inactive.bg_fill = egui::Color32::from_gray(50);
+                                style.visuals.widgets.hovered.bg_fill = egui::Color32::from_gray(55);
+                                style.visuals.widgets.active.bg_fill = egui::Color32::from_gray(60);
+                                ui.set_style(style);
+                                ui.add_sized(
+                                    [200.0, 24.0],
+                                    egui::TextEdit::singleline(&mut self.windows.manage_plugin_search)
+                                        .hint_text("Search plugins"),
+                                );
+                            });
+                            ui.add_space(6.0);
+                            ui.separator();
+
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(ui.available_width(), list_h),
+                                egui::Layout::top_down(egui::Align::LEFT),
+                                |ui| {
+                                    egui::ScrollArea::vertical()
+                                        .auto_shrink([false, false])
+                                        .max_height(list_h)
+                                        .min_scrolled_height(list_h)
+                                        .show(ui, |ui| {
+                                            for (idx, detected) in self.plugin_manager.detected_plugins.iter().enumerate() {
+                                                let label = detected.manifest.name.clone();
+                                                if !self.windows.manage_plugin_search.trim().is_empty()
+                                                    && !label
+                                                        .to_lowercase()
+                                                        .contains(&self.windows.manage_plugin_search.to_lowercase())
+                                                {
+                                                    continue;
+                                                }
+                                                let response = ui
+                                                    .allocate_ui_with_layout(
+                                                        egui::vec2(ui.available_width(), 22.0),
+                                                        egui::Layout::left_to_right(egui::Align::Center),
+                                                        |ui| {
+                                                            ui.add(egui::SelectableLabel::new(
+                                                                self.windows.manage_plugin_selected_index == Some(idx),
+                                                                egui::RichText::new(label).size(14.0),
+                                                            ))
+                                                        },
+                                                    )
+                                                    .inner;
+                                                if response.clicked() {
+                                                    selected = Some(idx);
+                                                }
+                                            }
+                                        });
+                                },
+                            );
+
+                            ui.separator();
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(ui.available_width(), footer_h),
+                                egui::Layout::top_down(egui::Align::LEFT),
+                                |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label("Browse plugin folder");
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                             if styled_button(ui, "Browse...").clicked() {
                                                 self.open_install_dialog();
                                             }
                                         });
-                                    },
-                                );
-                                ui.add_space(4.0);
-                                ui.allocate_ui_with_layout(
-                                    egui::vec2(col0_width, 0.0),
-                                    egui::Layout::left_to_right(egui::Align::Center),
-                                    |ui| {
-                                        ui.allocate_ui_with_layout(
-                                            egui::vec2(label_w, 0.0),
-                                            egui::Layout::top_down(egui::Align::Min),
-                                            |ui| {
-                                                ui.label("Rescan default plugins folder");
-                                            },
-                                        );
+                                    });
+                                    ui.horizontal(|ui| {
+                                        ui.label("Rescan default plugins folder");
                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                             if styled_button(ui, "Rescan").clicked() {
                                                 rescan = true;
                                             }
                                         });
-                                    },
-                                );
-                            },
-                        );
-
-                        let mut install_selected: Option<(BuildAction, String)> = None;
-                        let mut uninstall_selected: Option<usize> = None;
-                        let mut reinstall_selected: Option<(BuildAction, String)> = None;
-                        if let Some(idx) = self.windows.manage_selected_index {
-                            if let Some(detected) = self.plugin_manager.detected_plugins.get(idx) {
-                                let inputs_override = self.live_plotter_inputs_override();
-                                Self::render_plugin_preview(
-                                    &mut columns[1],
-                                    &detected.manifest,
-                                    inputs_override,
-                                    &detected.manifest.kind,
-                                    &serde_json::Value::Object(serde_json::Map::new()),
-                                    false,
-                                        &self.plugin_manager.installed_plugins,
-                                );
-                                let is_installed =
-                                    installed_kinds.contains(&detected.manifest.kind);
-                                if !is_installed {
-                                    columns[1].horizontal(|ui| {
-                                        if ui
-                                            .add_enabled(
-                                                self.build_dialog.rx.is_none(),
-                                                egui::Button::new("Install").min_size(BUTTON_SIZE),
-                                            )
-                                            .clicked()
-                                        {
-                                            install_selected = Some((
-                                                BuildAction::Install {
-                                                    path: detected.path.clone(),
-                                                    removable: true,
-                                                    persist: true,
-                                                },
-                                                detected.manifest.name.clone(),
-                                            ));
-                                        }
                                     });
-                                } else if let Some(installed_idx) = self
-            .plugin_manager.installed_plugins
-                                    .iter()
-                                    .position(|p| p.manifest.kind == detected.manifest.kind)
-                                {
-                                    let removable = self
-            .plugin_manager.installed_plugins
-                                        .get(installed_idx)
-                                        .map(|p| p.removable)
-                                        .unwrap_or(false);
-                                    columns[1].horizontal(|ui| {
-                                        if ui
-                                            .add_enabled(
-                                                removable && self.build_dialog.rx.is_none(),
-                                                egui::Button::new("Reinstall").min_size(BUTTON_SIZE),
-                                            )
-                                            .clicked()
-                                        {
-                                            if let Some(installed) =
-                                                self.plugin_manager.installed_plugins.get(installed_idx)
+                                },
+                            );
+                        },
+                    );
+
+                    ui.add(egui::Separator::default().vertical());
+
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(right_w, full_h),
+                        egui::Layout::top_down(egui::Align::LEFT),
+                        |ui| {
+                            Self::render_preview_action_panel(
+                                ui,
+                                full_h,
+                                right_w,
+                                |ui| {
+                                    if let Some(idx) = self.windows.manage_plugin_selected_index {
+                                        if let Some(detected) = self.plugin_manager.detected_plugins.get(idx) {
+                                            let inputs_override = self.live_plotter_inputs_override();
+                                            Self::render_plugin_preview(
+                                                ui,
+                                                &detected.manifest,
+                                                inputs_override,
+                                                &detected.manifest.kind,
+                                                &serde_json::Value::Object(serde_json::Map::new()),
+                                                false,
+                                                &self.plugin_manager.installed_plugins,
+                                            );
+
+                                            let is_installed = installed_kinds.contains(&detected.manifest.kind);
+                                            ui.add_space(12.0);
+                                            if !is_installed {
+                                                ui.horizontal_centered(|ui| {
+                                                    if ui
+                                                        .add_enabled(
+                                                            self.build_dialog.rx.is_none(),
+                                                            egui::Button::new("Install").min_size(BUTTON_SIZE),
+                                                        )
+                                                        .clicked()
+                                                    {
+                                                        install_selected = Some((
+                                                            BuildAction::Install {
+                                                                path: detected.path.clone(),
+                                                                removable: true,
+                                                                persist: true,
+                                                            },
+                                                            detected.manifest.name.clone(),
+                                                        ));
+                                                    }
+                                                });
+                                            } else if let Some(installed_idx) = self
+                                                .plugin_manager
+                                                .installed_plugins
+                                                .iter()
+                                                .position(|p| p.manifest.kind == detected.manifest.kind)
                                             {
-                                                reinstall_selected = Some((
-                                                    BuildAction::Reinstall {
-                                                        kind: installed.manifest.kind.clone(),
-                                                        path: installed.path.clone(),
-                                                    },
-                                                    installed.manifest.name.clone(),
-                                                ));
+                                                let removable = self
+                                                    .plugin_manager
+                                                    .installed_plugins
+                                                    .get(installed_idx)
+                                                    .map(|p| p.removable)
+                                                    .unwrap_or(false);
+
+                                                ui.horizontal_centered(|ui| {
+                                                    if ui
+                                                        .add_enabled(
+                                                            removable && self.build_dialog.rx.is_none(),
+                                                            egui::Button::new("Reinstall").min_size(BUTTON_SIZE),
+                                                        )
+                                                        .clicked()
+                                                    {
+                                                        if let Some(installed) = self.plugin_manager.installed_plugins.get(installed_idx) {
+                                                            reinstall_selected = Some((
+                                                                BuildAction::Reinstall {
+                                                                    kind: installed.manifest.kind.clone(),
+                                                                    path: installed.path.clone(),
+                                                                },
+                                                                installed.manifest.name.clone(),
+                                                            ));
+                                                        }
+                                                    }
+
+                                                    if ui
+                                                        .add_enabled(
+                                                            removable,
+                                                            egui::Button::new("Uninstall").min_size(BUTTON_SIZE),
+                                                        )
+                                                        .clicked()
+                                                    {
+                                                        uninstall_selected = Some(installed_idx);
+                                                    }
+                                                });
                                             }
                                         }
-                                        if ui
-                                            .add_enabled(removable, egui::Button::new("Uninstall").min_size(BUTTON_SIZE))
-                                            .clicked()
-                                        {
-                                            uninstall_selected = Some(installed_idx);
-                                        }
-                                    });
-                                }
-                            }
-                        } else {
-                            columns[1].label("Select a plugin to preview.");
-                        }
-                        if let Some((action, label)) = install_selected {
-                            self.start_plugin_build(action, label);
-                        }
-                        if let Some((action, label)) = reinstall_selected {
-                            self.start_plugin_build(action, label);
-                        }
-                        if let Some(idx) = uninstall_selected {
-                            self.show_confirm(
-                                "Uninstall plugin",
-                                "Uninstall this plugin?",
-                                "Uninstall",
-                                ConfirmAction::UninstallPlugin(idx),
+                                    } else {
+                                        ui.label("Select a plugin to preview.");
+                                    }
+                                },
                             );
-                        }
-                    });
+                        },
+                    );
+                });
 
-                    if rescan {
-                        self.load_installed_plugins();
-                        self.scan_detected_plugins();
-                    }
+                if let Some(idx) = selected {
+                    self.windows.manage_plugin_selected_index = Some(idx);
                 }
             });
+
         if let Some(response) = response {
             self.window_rects.push(response.response.rect);
             if !self.confirm_dialog.open
@@ -1743,7 +1467,433 @@ impl GuiApp {
             }
         }
 
+        if rescan {
+            self.load_installed_plugins();
+            self.scan_detected_plugins();
+        }
+        if let Some((action, label)) = install_selected {
+            self.start_plugin_build(action, label);
+        }
+        if let Some((action, label)) = reinstall_selected {
+            self.start_plugin_build(action, label);
+        }
+        if let Some(idx) = uninstall_selected {
+            self.show_confirm(
+                "Uninstall plugin",
+                "Uninstall this plugin?",
+                "Uninstall",
+                ConfirmAction::UninstallPlugin(idx),
+            );
+        }
+
         self.windows.manage_plugins_open = window_open;
+    }
+
+    pub(crate) fn render_install_plugins_window(&mut self, ctx: &egui::Context) {
+        if !self.windows.install_plugins_open {
+            return;
+        }
+
+        let mut window_open = self.windows.install_plugins_open;
+        let window_size = egui::vec2(760.0, 440.0);
+        let default_pos = Self::center_window(ctx, window_size);
+        let mut install_selected: Option<(BuildAction, String)> = None;
+        let mut reinstall_selected: Option<(BuildAction, String)> = None;
+        let mut rescan = false;
+
+        let response = egui::Window::new("Install plugin")
+            .open(&mut window_open)
+            .resizable(false)
+            .default_pos(default_pos)
+            .default_size(window_size)
+            .min_size(window_size)
+            .max_size(window_size)
+            .fixed_size(window_size)
+            .show(ctx, |ui| {
+                let total_w = ui.available_width();
+                let left_w = (total_w * 0.52).max(260.0);
+                let right_w = (total_w - left_w - 10.0).max(220.0);
+                let full_h = ui.available_height();
+                let footer_h = 72.0;
+                let search_h = 34.0;
+                let list_h = (full_h - search_h - footer_h - 16.0).max(120.0);
+                let installed_kinds: HashSet<String> = self
+                    .plugin_manager
+                    .installed_plugins
+                    .iter()
+                    .map(|plugin| plugin.manifest.kind.clone())
+                    .collect();
+                let mut selected: Option<usize> = None;
+
+                ui.horizontal(|ui| {
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(left_w, full_h),
+                        egui::Layout::top_down(egui::Align::LEFT),
+                        |ui| {
+                            ui.scope(|ui| {
+                                let mut style = ui.style().as_ref().clone();
+                                style.visuals.extreme_bg_color = egui::Color32::from_gray(50);
+                                style.visuals.widgets.inactive.bg_fill = egui::Color32::from_gray(50);
+                                style.visuals.widgets.hovered.bg_fill = egui::Color32::from_gray(55);
+                                style.visuals.widgets.active.bg_fill = egui::Color32::from_gray(60);
+                                ui.set_style(style);
+                                ui.add_sized(
+                                    [200.0, 24.0],
+                                    egui::TextEdit::singleline(&mut self.windows.install_plugin_search)
+                                        .hint_text("Search plugins"),
+                                );
+                            });
+                            ui.add_space(6.0);
+                            ui.separator();
+
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(ui.available_width(), list_h),
+                                egui::Layout::top_down(egui::Align::LEFT),
+                                |ui| {
+                                    egui::ScrollArea::vertical()
+                                        .auto_shrink([false, false])
+                                        .max_height(list_h)
+                                        .min_scrolled_height(list_h)
+                                        .show(ui, |ui| {
+                                            for (idx, detected) in self.plugin_manager.detected_plugins.iter().enumerate() {
+                                                if Self::is_app_plugins_path(&detected.path) {
+                                                    continue;
+                                                }
+                                                let label = detected.manifest.name.clone();
+                                                if !self.windows.install_plugin_search.trim().is_empty()
+                                                    && !label
+                                                        .to_lowercase()
+                                                        .contains(&self.windows.install_plugin_search.to_lowercase())
+                                                {
+                                                    continue;
+                                                }
+                                                let response = ui
+                                                    .allocate_ui_with_layout(
+                                                        egui::vec2(ui.available_width(), 22.0),
+                                                        egui::Layout::left_to_right(egui::Align::Center),
+                                                        |ui| {
+                                                            ui.add(egui::SelectableLabel::new(
+                                                                self.windows.install_selected_index == Some(idx),
+                                                                egui::RichText::new(label).size(14.0),
+                                                            ))
+                                                        },
+                                                    )
+                                                    .inner;
+                                                if response.clicked() {
+                                                    selected = Some(idx);
+                                                }
+                                            }
+                                        });
+                                },
+                            );
+
+                            ui.separator();
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(ui.available_width(), footer_h),
+                                egui::Layout::top_down(egui::Align::LEFT),
+                                |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label("Browse plugin folder");
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            if styled_button(ui, "Browse...").clicked() {
+                                                self.open_install_dialog();
+                                            }
+                                        });
+                                    });
+                                    ui.horizontal(|ui| {
+                                        ui.label("Rescan default plugins folder");
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            if styled_button(ui, "Rescan").clicked() {
+                                                rescan = true;
+                                            }
+                                        });
+                                    });
+                                },
+                            );
+                        },
+                    );
+
+                    ui.add(egui::Separator::default().vertical());
+
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(right_w, full_h),
+                        egui::Layout::top_down(egui::Align::LEFT),
+                        |ui| {
+                            Self::render_preview_action_panel(ui, full_h, right_w, |ui| {
+                                if let Some(idx) = self.windows.install_selected_index {
+                                    if let Some(detected) = self.plugin_manager.detected_plugins.get(idx) {
+                                        if Self::is_app_plugins_path(&detected.path) {
+                                            ui.label("Select a plugin to preview.");
+                                            return;
+                                        }
+                                        let inputs_override = self.live_plotter_inputs_override();
+                                        Self::render_plugin_preview(
+                                            ui,
+                                            &detected.manifest,
+                                            inputs_override,
+                                            &detected.manifest.kind,
+                                            &serde_json::Value::Object(serde_json::Map::new()),
+                                            false,
+                                            &self.plugin_manager.installed_plugins,
+                                        );
+
+                                        let is_installed = installed_kinds.contains(&detected.manifest.kind);
+                                        ui.add_space(12.0);
+                                        if !is_installed {
+                                            ui.horizontal_centered(|ui| {
+                                                if ui
+                                                    .add_enabled(
+                                                        self.build_dialog.rx.is_none(),
+                                                        egui::Button::new("Install").min_size(BUTTON_SIZE),
+                                                    )
+                                                    .clicked()
+                                                {
+                                                    install_selected = Some((
+                                                        BuildAction::Install {
+                                                            path: detected.path.clone(),
+                                                            removable: true,
+                                                            persist: true,
+                                                        },
+                                                        detected.manifest.name.clone(),
+                                                    ));
+                                                }
+                                            });
+                                        } else if let Some(installed_idx) = self
+                                            .plugin_manager
+                                            .installed_plugins
+                                            .iter()
+                                            .position(|p| p.manifest.kind == detected.manifest.kind)
+                                        {
+                                            let removable = self
+                                                .plugin_manager
+                                                .installed_plugins
+                                                .get(installed_idx)
+                                                .map(|p| p.removable)
+                                                .unwrap_or(false);
+                                            ui.horizontal_centered(|ui| {
+                                                if ui
+                                                    .add_enabled(
+                                                        removable && self.build_dialog.rx.is_none(),
+                                                        egui::Button::new("Reinstall").min_size(BUTTON_SIZE),
+                                                    )
+                                                    .clicked()
+                                                {
+                                                    if let Some(installed) = self.plugin_manager.installed_plugins.get(installed_idx) {
+                                                        reinstall_selected = Some((
+                                                            BuildAction::Reinstall {
+                                                                kind: installed.manifest.kind.clone(),
+                                                                path: installed.path.clone(),
+                                                            },
+                                                            installed.manifest.name.clone(),
+                                                        ));
+                                                    }
+                                                }
+                                            });
+                                        }
+                                    }
+                                } else {
+                                    ui.label("Select a plugin to preview.");
+                                }
+                            });
+                        },
+                    );
+                });
+
+                if let Some(idx) = selected {
+                    self.windows.install_selected_index = Some(idx);
+                }
+            });
+
+        if let Some(response) = response {
+            self.window_rects.push(response.response.rect);
+            if !self.confirm_dialog.open
+                && (response.response.clicked() || response.response.dragged())
+            {
+                ctx.move_to_top(response.response.layer_id);
+            }
+            if self.pending_window_focus == Some(WindowFocus::InstallPlugins) {
+                ctx.move_to_top(response.response.layer_id);
+                self.pending_window_focus = None;
+            }
+        }
+
+        if rescan {
+            self.load_installed_plugins();
+            self.scan_detected_plugins();
+        }
+        if let Some((action, label)) = install_selected {
+            self.start_plugin_build(action, label);
+        }
+        if let Some((action, label)) = reinstall_selected {
+            self.start_plugin_build(action, label);
+        }
+
+        self.windows.install_plugins_open = window_open;
+    }
+
+    pub(crate) fn render_uninstall_plugins_window(&mut self, ctx: &egui::Context) {
+        if !self.windows.uninstall_plugins_open {
+            return;
+        }
+
+        let mut window_open = self.windows.uninstall_plugins_open;
+        let window_size = egui::vec2(760.0, 440.0);
+        let default_pos = Self::center_window(ctx, window_size);
+        let mut uninstall_selected: Option<usize> = None;
+
+        let response = egui::Window::new("Uninstall plugin")
+            .open(&mut window_open)
+            .resizable(false)
+            .default_pos(default_pos)
+            .default_size(window_size)
+            .min_size(window_size)
+            .max_size(window_size)
+            .fixed_size(window_size)
+            .show(ctx, |ui| {
+                let total_w = ui.available_width();
+                let left_w = (total_w * 0.52).max(260.0);
+                let right_w = (total_w - left_w - 10.0).max(220.0);
+                let full_h = ui.available_height();
+                let search_h = 34.0;
+                let list_h = (full_h - search_h - 10.0).max(120.0);
+                let mut selected: Option<usize> = None;
+
+                ui.horizontal(|ui| {
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(left_w, full_h),
+                        egui::Layout::top_down(egui::Align::LEFT),
+                        |ui| {
+                            ui.scope(|ui| {
+                                let mut style = ui.style().as_ref().clone();
+                                style.visuals.extreme_bg_color = egui::Color32::from_gray(50);
+                                style.visuals.widgets.inactive.bg_fill = egui::Color32::from_gray(50);
+                                style.visuals.widgets.hovered.bg_fill = egui::Color32::from_gray(55);
+                                style.visuals.widgets.active.bg_fill = egui::Color32::from_gray(60);
+                                ui.set_style(style);
+                                ui.add_sized(
+                                    [200.0, 24.0],
+                                    egui::TextEdit::singleline(&mut self.windows.uninstall_plugin_search)
+                                        .hint_text("Search plugins"),
+                                );
+                            });
+                            ui.add_space(6.0);
+                            ui.separator();
+
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(ui.available_width(), list_h),
+                                egui::Layout::top_down(egui::Align::LEFT),
+                                |ui| {
+                                    egui::ScrollArea::vertical()
+                                        .auto_shrink([false, false])
+                                        .max_height(list_h)
+                                        .min_scrolled_height(list_h)
+                                        .show(ui, |ui| {
+                                            for (idx, installed) in self.plugin_manager.installed_plugins.iter().enumerate() {
+                                                if !installed.removable || Self::is_app_plugins_path(&installed.path) {
+                                                    continue;
+                                                }
+                                                let label = installed.manifest.name.clone();
+                                                if !self.windows.uninstall_plugin_search.trim().is_empty()
+                                                    && !label
+                                                        .to_lowercase()
+                                                        .contains(&self.windows.uninstall_plugin_search.to_lowercase())
+                                                {
+                                                    continue;
+                                                }
+                                                let response = ui
+                                                    .allocate_ui_with_layout(
+                                                        egui::vec2(ui.available_width(), 22.0),
+                                                        egui::Layout::left_to_right(egui::Align::Center),
+                                                        |ui| {
+                                                            ui.add(egui::SelectableLabel::new(
+                                                                self.windows.uninstall_selected_index == Some(idx),
+                                                                egui::RichText::new(label).size(14.0),
+                                                            ))
+                                                        },
+                                                    )
+                                                    .inner;
+                                                if response.clicked() {
+                                                    selected = Some(idx);
+                                                }
+                                            }
+                                        });
+                                },
+                            );
+                        },
+                    );
+
+                    ui.add(egui::Separator::default().vertical());
+
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(right_w, full_h),
+                        egui::Layout::top_down(egui::Align::LEFT),
+                        |ui| {
+                            Self::render_preview_action_panel(ui, full_h, right_w, |ui| {
+                                if let Some(idx) = self.windows.uninstall_selected_index {
+                                    if let Some(installed) = self.plugin_manager.installed_plugins.get(idx) {
+                                        if !installed.removable || Self::is_app_plugins_path(&installed.path) {
+                                            ui.label("Select a plugin to preview.");
+                                            return;
+                                        }
+                                        let inputs_override = self.live_plotter_inputs_override();
+                                        Self::render_plugin_preview(
+                                            ui,
+                                            &installed.manifest,
+                                            inputs_override,
+                                            &installed.manifest.kind,
+                                            &serde_json::Value::Object(serde_json::Map::new()),
+                                            false,
+                                            &self.plugin_manager.installed_plugins,
+                                        );
+                                        ui.add_space(12.0);
+                                        ui.horizontal_centered(|ui| {
+                                            if ui
+                                                .add_enabled(
+                                                    installed.removable,
+                                                    egui::Button::new("Uninstall").min_size(BUTTON_SIZE),
+                                                )
+                                                .clicked()
+                                            {
+                                                uninstall_selected = Some(idx);
+                                            }
+                                        });
+                                    }
+                                } else {
+                                    ui.label("Select a plugin to preview.");
+                                }
+                            });
+                        },
+                    );
+                });
+
+                if let Some(idx) = selected {
+                    self.windows.uninstall_selected_index = Some(idx);
+                }
+            });
+
+        if let Some(response) = response {
+            self.window_rects.push(response.response.rect);
+            if !self.confirm_dialog.open
+                && (response.response.clicked() || response.response.dragged())
+            {
+                ctx.move_to_top(response.response.layer_id);
+            }
+            if self.pending_window_focus == Some(WindowFocus::UninstallPlugins) {
+                ctx.move_to_top(response.response.layer_id);
+                self.pending_window_focus = None;
+            }
+        }
+
+        if let Some(idx) = uninstall_selected {
+            self.show_confirm(
+                "Uninstall plugin",
+                "Uninstall this plugin?",
+                "Uninstall",
+                ConfirmAction::UninstallPlugin(idx),
+            );
+        }
+
+        self.windows.uninstall_plugins_open = window_open;
     }
 
     pub(crate) fn render_plugin_context_menu(&mut self, ctx: &egui::Context) {

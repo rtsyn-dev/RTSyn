@@ -56,26 +56,3 @@ pub(crate) enum ConnectionEditTab {
     Inputs,
     Outputs,
 }
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum ManageTab {
-    Install,
-}
-
-impl Default for ManageTab {
-    fn default() -> Self {
-        Self::Install
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum PluginTab {
-    Add,
-    Organize,
-}
-
-impl Default for PluginTab {
-    fn default() -> Self {
-        Self::Add
-    }
-}
