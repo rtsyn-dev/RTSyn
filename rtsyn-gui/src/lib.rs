@@ -1034,6 +1034,20 @@ impl eframe::App for GuiApp {
                         self.export_workspace_path(&self.workspace_manager.workspace_path.clone());
                         ui.close_menu();
                     }
+                    if ui
+                        .add_enabled(has_workspace, egui::Button::new("Delete Workspace"))
+                        .clicked()
+                    {
+                        self.show_confirm(
+                            "Delete workspace",
+                            "Delete current workspace?",
+                            "Delete",
+                            ConfirmAction::DeleteWorkspace(
+                                self.workspace_manager.workspace_path.clone(),
+                            ),
+                        );
+                        ui.close_menu();
+                    }
                     if ui.button("Manage Workspaces").clicked() {
                         self.open_manage_workspaces();
                         ui.close_menu();
