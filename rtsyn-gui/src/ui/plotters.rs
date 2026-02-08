@@ -54,7 +54,7 @@ impl GuiApp {
                 
                 egui::CentralPanel::default().show(ctx, |ui| {
                     if let Ok(mut plotter) = plotter_for_viewport.lock() {
-                        let button_h = 28.0;
+                        let button_h = BUTTON_SIZE.y;
                         let gap_h = 6.0;
                         let plot_margin = 10.0;
                         let available = ui.available_size();
@@ -96,22 +96,17 @@ impl GuiApp {
                         });
                         ui.allocate_space(egui::vec2(available.x, plot_h));
                         ui.add_space(gap_h);
+                        let button_gap = 8.0;
                         let button_rect = egui::Rect::from_min_size(
                             egui::pos2(
-                                plot_rect.right() - 196.0 - plot_margin,
+                                plot_rect.right() - (BUTTON_SIZE.x * 2.0 + button_gap) - plot_margin,
                                 plot_rect.bottom() + gap_h,
                             ),
-                            egui::vec2(196.0, 24.0),
+                            egui::vec2(BUTTON_SIZE.x * 2.0 + button_gap, BUTTON_SIZE.y),
                         );
                         ui.allocate_ui_at_rect(button_rect, |ui| {
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                let capture = ui
-                                    .add_sized(
-                                        [90.0, 24.0],
-                                        egui::Button::new(
-                                            egui::RichText::new("Capture").size(12.0),
-                                        ),
-                                    )
+                                let capture = styled_button(ui, egui::RichText::new("Capture").size(12.0))
                                     .on_hover_text("Save plot image");
                                 if capture.clicked() {
                                     let export_open = egui::Id::new(("plotter_export_open", plugin_id));
@@ -123,13 +118,7 @@ impl GuiApp {
                                         }
                                     });
                                 }
-                                let settings = ui
-                                    .add_sized(
-                                        [90.0, 24.0],
-                                        egui::Button::new(
-                                            egui::RichText::new("Settings").size(12.0),
-                                        ),
-                                    )
+                                let settings = styled_button(ui, egui::RichText::new("Settings").size(12.0))
                                     .on_hover_text("Plot settings");
                                 if settings.clicked() {
                                     let open_id = egui::Id::new(("plotter_settings_open", plugin_id));
@@ -186,7 +175,7 @@ impl GuiApp {
                                             state.width = (state.height as f32 * ratio) as u32;
                                         }
                                     });
-                                    if ui.button("Save").clicked() {
+                                    if styled_button(ui, "Save").clicked() {
                                         save_requested = true;
                                     }
                                 });
@@ -269,7 +258,7 @@ impl GuiApp {
                                         );
                                     });
                                     ui.separator();
-                                    if ui.button("Apply").clicked() {
+                                    if styled_button(ui, "Apply").clicked() {
                                         ctx.data_mut(|d| d.insert_temp(save_id, true));
                                         ctx.request_repaint();
                                     }
@@ -589,17 +578,17 @@ impl GuiApp {
                         self.plotter_preview.width = (self.plotter_preview.height as f32 * ratio) as u32;
                     }
                     
-                    if ui.button("16:9").clicked() && !self.plotter_preview.export_svg {
+                    if styled_button(ui, "16:9").clicked() && !self.plotter_preview.export_svg {
                         let ratio = 16.0 / 9.0;
                         self.plotter_preview.height = (self.plotter_preview.width as f32 / ratio) as u32;
                     }
                 });
 
                 ui.horizontal(|ui| {
-                    if ui.button("Save").clicked() {
+                    if styled_button(ui, "Save").clicked() {
                         save_requested = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if styled_button(ui, "Cancel").clicked() {
                         self.plotter_preview.open = false;
                     }
                 });

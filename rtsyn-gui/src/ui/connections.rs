@@ -55,7 +55,7 @@ impl GuiApp {
                                     connection.to_port,
                                     Self::display_connection_kind(&connection.kind)
                                 ));
-                                if ui.button(format!("Remove #{display_idx}")).clicked() {
+                                if styled_button(ui, format!("Remove #{display_idx}")).clicked() {
                                     let connection = connection.clone();
                                     self.remove_connection_with_input(connection);
                                     break;
@@ -627,7 +627,7 @@ impl GuiApp {
                                         let has_duplicate = exact_idx.is_some();
                                         ui.horizontal(|ui| {
                                             ui.add_enabled_ui(!has_duplicate, |ui| {
-                                                if ui.button("Add connection").clicked() {
+                                                if styled_button(ui, "Add connection").clicked() {
                                                     self.add_connection_direct(
                                                         from_plugin,
                                                         from_port.clone(),
@@ -638,7 +638,7 @@ impl GuiApp {
                                                 }
                                             });
                                             if let Some(idx) = exact_idx {
-                                                if ui.button("Remove connection").clicked() {
+                                                if styled_button(ui, "Remove connection").clicked() {
                                                     let connection =
                                                         self.workspace_manager.workspace.connections[idx].clone();
                                                     self.remove_connection_with_input(connection);
@@ -678,7 +678,7 @@ impl GuiApp {
                                                     conn.to_port,
                                                     Self::display_connection_kind(&conn.kind)
                                                 ));
-                                                if ui.button("Remove").clicked() {
+                                                if styled_button(ui, "Remove").clicked() {
                                                     remove_idx = Some(idx);
                                                 }
                                             });

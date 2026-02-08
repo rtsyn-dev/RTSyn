@@ -58,3 +58,6 @@
 - [x] Change the cli view card so it respects the variable type (int shouldnt show decimals). Also add a scroll bar if needed (but dont limit the size)
 - [x] If cli view is aiming to an unexistent plugin, show error
 - [x] Change plugin config ID badge on plugin config menu so its the same as the plugin card
+- [ ] Sometimes the plotter window cant be closed
+- [ ] Add id to ports
+- [ ] Add a function that returns a mermaid diagram from the runtime

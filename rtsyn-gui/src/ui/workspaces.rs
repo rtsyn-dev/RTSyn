@@ -97,10 +97,10 @@ impl GuiApp {
                 ui.add_space(6.0);
 
                 ui.horizontal(|ui| {
-                    if ui.button("Cancel").clicked() {
+                    if styled_button(ui, "Cancel").clicked() {
                         action = Some("cancel");
                     }
-                    if ui.button("Save").clicked() {
+                    if styled_button(ui, "Save").clicked() {
                         action = Some("save");
                     }
                 });
@@ -221,16 +221,16 @@ impl GuiApp {
                                     ui.label(egui::RichText::new(entry.plugin_kinds.join(", ")).size(12.0).color(egui::Color32::from_gray(180)));
                                 }
                                 ui.add_space(12.0);
-                                if ui.button("Load").clicked() {
+                                if styled_button(ui, "Load").clicked() {
                                     action_load = Some(entry.path.clone());
                                 }
-                                if ui.button("Edit metadata").clicked() {
+                                if styled_button(ui, "Edit metadata").clicked() {
                                     action_edit = Some(entry.path.clone());
                                 }
-                                if ui.button("Export").clicked() {
+                                if styled_button(ui, "Export").clicked() {
                                     action_export = Some(entry.path.clone());
                                 }
-                                if ui.button("Delete").clicked() {
+                                if styled_button(ui, "Delete").clicked() {
                                     action_delete = Some(entry.path.clone());
                                 }
                             });
@@ -245,7 +245,7 @@ impl GuiApp {
                         });
                     }
                     columns[0].with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                        if ui.button("Browse...").clicked() {
+                        if styled_button(ui, "Browse...").clicked() {
                             self.open_import_dialog();
                         }
                         ui.label(RichText::new("Browse workspace").strong());
@@ -361,7 +361,7 @@ impl GuiApp {
                                     ui.label(egui::RichText::new(entry.plugin_kinds.join(", ")).size(12.0).color(egui::Color32::from_gray(180)));
                                 }
                                 ui.add_space(12.0);
-                                if ui.button("Load").clicked() {
+                                if styled_button(ui, "Load").clicked() {
                                     action_load = Some(entry.path.clone());
                                 }
                             });
@@ -377,7 +377,7 @@ impl GuiApp {
                     }
 
                     columns[0].with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                        if ui.button("Browse...").clicked() {
+                        if styled_button(ui, "Browse...").clicked() {
                             self.open_load_dialog();
                         }
                         ui.label(RichText::new("Browse workspace").strong());
@@ -639,7 +639,7 @@ impl GuiApp {
                 ui.label("Lower values improve real-time performance but may reduce numerical accuracy.");
 
                 ui.separator();
-                if ui.button("Apply").clicked() {
+                if styled_button(ui, "Apply").clicked() {
                     apply_clicked = true;
                 }
             });
@@ -731,11 +731,11 @@ impl GuiApp {
                         ui.heading(&self.confirm_dialog.title);
                         ui.label(&self.confirm_dialog.message);
                         ui.horizontal(|ui| {
-                            if ui.button("Cancel").clicked() {
+                            if styled_button(ui, "Cancel").clicked() {
                                 self.confirm_dialog.open = false;
                                 self.confirm_dialog.action = None;
                             }
-                            if ui.button(&self.confirm_dialog.action_label).clicked() {
+                            if styled_button(ui, &self.confirm_dialog.action_label).clicked() {
                                 if let Some(action) = self.confirm_dialog.action.clone() {
                                     self.perform_confirm_action(action);
                                 }
@@ -848,7 +848,7 @@ impl GuiApp {
                             return;
                         }
                         ui.label(&self.build_dialog.message);
-                        if ui.button("OK").clicked() {
+                        if styled_button(ui, "OK").clicked() {
                             self.build_dialog.open = false;
                         }
                     });

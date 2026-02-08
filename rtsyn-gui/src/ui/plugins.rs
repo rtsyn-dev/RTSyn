@@ -743,7 +743,7 @@ impl GuiApp {
                                             .unwrap_or(true);  // Default to true
                                         if supports_start_stop {
                                             let label = if plugin.running { "Stop" } else { "Start" };
-                                            if ui.button(label).clicked() {
+                                            if styled_button(ui, label).clicked() {
                                                 let is_connection_dependent = matches!(plugin.kind.as_str(), "csv_recorder" | "live_plotter" | "comedi_daq");
                                                 if is_connection_dependent
                                                     && !plugin.running
@@ -804,7 +804,7 @@ impl GuiApp {
                                             .map(|b| b.supports_restart)
                                             .unwrap_or(false);  // Default to false
                                         if supports_restart {
-                                            if ui.button("Restart").clicked() {
+                                            if styled_button(ui, "Restart").clicked() {
                                                 pending_restart.push(plugin.id);
                                             }
                                         }
@@ -1147,7 +1147,7 @@ impl GuiApp {
                                         false,
                                         &self.plugin_manager.installed_plugins,
                                     );
-                                    if columns[1].button("Add to workspace").clicked() {
+                                    if styled_button(&mut columns[1], "Add to workspace").clicked() {
                                         self.add_installed_plugin(idx);
                                     }
                                 }
@@ -1461,7 +1461,7 @@ impl GuiApp {
                                             }
                                         }
                                     }
-                                    if columns[1].button("Remove from workspace").clicked() {
+                                    if styled_button(&mut columns[1], "Remove from workspace").clicked() {
                                         let display_name = name_by_kind
                                             .get(&plugin.kind)
                                             .cloned()
@@ -1532,19 +1532,26 @@ impl GuiApp {
                         .map(|plugin| plugin.manifest.kind.clone())
                         .collect();
                     ui.columns(2, |columns| {
-                        columns[0].horizontal(|ui| {
-                            ui.label("Search");
-                            ui.text_edit_singleline(&mut self.windows.install_search);
-                        });
-                        columns[0].add_space(6.0);
+                        let col0_width = columns[0].available_width();
+                        let footer_h = BUTTON_SIZE.y * 2.0
+                            + columns[0].text_style_height(&egui::TextStyle::Body) * 2.0
+                            + columns[0].spacing().item_spacing.y * 6.0;
+                        let total_h = columns[0].available_height();
+                        let top_h = (total_h - footer_h).max(140.0);
+
                         let mut selected: Option<usize> = None;
-                        let list_height = (columns[0].available_height() - 2.0).max(40.0);
-                        let width = columns[0].available_width();
                         columns[0].allocate_ui_with_layout(
-                            egui::vec2(width, list_height),
+                            egui::vec2(col0_width, top_h),
                             egui::Layout::top_down(egui::Align::LEFT),
                             |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label("Search");
+                                    ui.text_edit_singleline(&mut self.windows.install_search);
+                                });
+                                ui.add_space(6.0);
+                                let list_height = ui.available_height().max(40.0);
                                 egui::ScrollArea::vertical()
+                                    .auto_shrink([false, false])
                                     .max_height(list_height)
                                     .min_scrolled_height(list_height)
                                     .show(ui, |ui| {
@@ -1577,20 +1584,51 @@ impl GuiApp {
                             self.windows.manage_selected_index = Some(idx);
                         }
 
-                        columns[0].with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label("Rescan default plugins folder");
-                                if ui.button("Rescan").clicked() {
-                                    rescan = true;
-                                }
-                            });
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new("Browse plugin folder").strong());
-                                if ui.button("Browse...").clicked() {
-                                    self.open_install_dialog();
-                                }
-                            });
-                        });
+                        columns[0].allocate_ui_with_layout(
+                            egui::vec2(col0_width, footer_h),
+                            egui::Layout::top_down(egui::Align::LEFT),
+                            |ui| {
+                                let action_w = BUTTON_SIZE.x + 12.0;
+                                let label_w = (col0_width - action_w).max(140.0);
+                                ui.allocate_ui_with_layout(
+                                    egui::vec2(col0_width, 0.0),
+                                    egui::Layout::left_to_right(egui::Align::Center),
+                                    |ui| {
+                                        ui.allocate_ui_with_layout(
+                                            egui::vec2(label_w, 0.0),
+                                            egui::Layout::top_down(egui::Align::Min),
+                                            |ui| {
+                                                ui.label(RichText::new("Browse plugin folder").strong());
+                                            },
+                                        );
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            if styled_button(ui, "Browse...").clicked() {
+                                                self.open_install_dialog();
+                                            }
+                                        });
+                                    },
+                                );
+                                ui.add_space(4.0);
+                                ui.allocate_ui_with_layout(
+                                    egui::vec2(col0_width, 0.0),
+                                    egui::Layout::left_to_right(egui::Align::Center),
+                                    |ui| {
+                                        ui.allocate_ui_with_layout(
+                                            egui::vec2(label_w, 0.0),
+                                            egui::Layout::top_down(egui::Align::Min),
+                                            |ui| {
+                                                ui.label("Rescan default plugins folder");
+                                            },
+                                        );
+                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                            if styled_button(ui, "Rescan").clicked() {
+                                                rescan = true;
+                                            }
+                                        });
+                                    },
+                                );
+                            },
+                        );
 
                         let mut install_selected: Option<(BuildAction, String)> = None;
                         let mut uninstall_selected: Option<usize> = None;
@@ -1611,11 +1649,10 @@ impl GuiApp {
                                     installed_kinds.contains(&detected.manifest.kind);
                                 if !is_installed {
                                     columns[1].horizontal(|ui| {
-                                        let install_button = egui::Button::new("Install");
                                         if ui
                                             .add_enabled(
                                                 self.build_dialog.rx.is_none(),
-                                                install_button,
+                                                egui::Button::new("Install").min_size(BUTTON_SIZE),
                                             )
                                             .clicked()
                                         {
@@ -1643,7 +1680,7 @@ impl GuiApp {
                                         if ui
                                             .add_enabled(
                                                 removable && self.build_dialog.rx.is_none(),
-                                                egui::Button::new("Reinstall"),
+                                                egui::Button::new("Reinstall").min_size(BUTTON_SIZE),
                                             )
                                             .clicked()
                                         {
@@ -1660,7 +1697,7 @@ impl GuiApp {
                                             }
                                         }
                                         if ui
-                                            .add_enabled(removable, egui::Button::new("Uninstall"))
+                                            .add_enabled(removable, egui::Button::new("Uninstall").min_size(BUTTON_SIZE))
                                             .clicked()
                                         {
                                             uninstall_selected = Some(installed_idx);
