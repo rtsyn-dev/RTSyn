@@ -991,7 +991,15 @@ impl eframe::App for GuiApp {
         self.window_rects.clear();
 
         egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
-            egui::menu::bar(ui, |ui| {
+            ui.scope(|ui| {
+                let mut style = ui.style().as_ref().clone();
+                style.spacing.button_padding = egui::vec2(10.0, 6.0);
+                style.text_styles.insert(
+                    egui::TextStyle::Button,
+                    egui::FontId::proportional(15.0),
+                );
+                ui.set_style(style);
+                egui::menu::bar(ui, |ui| {
                 ui.menu_button("Workspace", |ui| {
                     let label = if self.workspace_manager.workspace_path.as_os_str().is_empty() {
                         "No Workspace loaded".to_string()
@@ -1000,7 +1008,11 @@ impl eframe::App for GuiApp {
                     };
                     ui.add_enabled(
                         false,
-                        egui::Label::new(RichText::new(label).color(egui::Color32::from_gray(230))),
+                        egui::Label::new(
+                            RichText::new(label)
+                                .color(egui::Color32::from_gray(230))
+                                .size(15.0),
+                        ),
                     );
                     ui.separator();
                     if ui.button("New Workspace").clicked() {
@@ -1070,6 +1082,7 @@ impl eframe::App for GuiApp {
                     ui.add_space(6.0);
                     ui.label(RichText::new(format!("RTSyn {}", env!("CARGO_PKG_VERSION"))).weak());
                 });
+            });
             });
         });
 

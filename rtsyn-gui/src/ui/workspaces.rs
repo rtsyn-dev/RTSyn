@@ -76,7 +76,7 @@ impl GuiApp {
         }
 
         let path_preview = self.workspace_file_path(self.workspace_dialog.name_input.trim());
-        let mut path_display = path_preview.display().to_string();
+        let _path_display = path_preview.display().to_string();
         let mut open = self.workspace_dialog.open;
         let window_size = egui::vec2(420.0, 260.0);
         let default_pos = Self::center_window(ctx, window_size);
@@ -87,13 +87,27 @@ impl GuiApp {
             .default_pos(default_pos)
             .default_size(window_size)
             .show(ctx, |ui| {
-                ui.label("Name");
-                ui.text_edit_singleline(&mut self.workspace_dialog.name_input);
-                ui.label("Description");
-                ui.text_edit_multiline(&mut self.workspace_dialog.description_input);
-                ui.add_space(6.0);
-                ui.label("Path");
-                ui.add_enabled(false, egui::TextEdit::singleline(&mut path_display));
+                ui.scope(|ui| {
+                    let mut style = ui.style().as_ref().clone();
+                    style.visuals.extreme_bg_color = egui::Color32::from_gray(40);
+                    style.visuals.widgets.inactive.bg_fill = egui::Color32::from_gray(40);
+                    style.visuals.widgets.hovered.bg_fill = egui::Color32::from_gray(45);
+                    style.visuals.widgets.active.bg_fill = egui::Color32::from_gray(50);
+                    ui.set_style(style);
+                    let width = ui.available_width();
+                    ui.add_sized(
+                        [width, 0.0],
+                        egui::TextEdit::singleline(&mut self.workspace_dialog.name_input)
+                            .font(egui::FontId::proportional(16.0))
+                            .hint_text("Workspace name"),
+                    );
+                    ui.add_space(6.0);
+                    ui.add_sized(
+                        [width, 64.0],
+                        egui::TextEdit::multiline(&mut self.workspace_dialog.description_input)
+                            .hint_text("Description"),
+                    );
+                });
                 ui.add_space(6.0);
 
                 ui.horizontal(|ui| {
@@ -163,94 +177,159 @@ impl GuiApp {
             .default_size(window_size)
             .fixed_size(window_size)
             .show(ctx, |ui| {
-                ui.columns(2, |columns| {
-                    columns[0].add_space(4.0);
-                    let mut selected: Option<usize> = None;
-                    let bottom_height = 60.0;
-                    let list_height = (columns[0].available_height() - bottom_height).max(120.0);
-                    let width = columns[0].available_width();
-                    columns[0].allocate_ui_with_layout(
-                        egui::vec2(width, list_height),
+                let total_w = ui.available_width();
+                let left_w = (total_w * 0.52).max(180.0);
+                let right_w = (total_w - left_w - 10.0).max(140.0);
+                let full_h = ui.available_height();
+                let footer_h = 44.0;
+                let search_h = 34.0;
+                let list_h = (full_h - search_h - footer_h - 16.0).max(120.0);
+                let mut selected: Option<usize> = None;
+
+                ui.horizontal(|ui| {
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(left_w, full_h),
+                        egui::Layout::top_down(egui::Align::LEFT),
+                        |ui| {
+                            ui.scope(|ui| {
+                                let mut style = ui.style().as_ref().clone();
+                                style.visuals.extreme_bg_color = egui::Color32::from_gray(50);
+                                style.visuals.widgets.inactive.bg_fill = egui::Color32::from_gray(50);
+                                style.visuals.widgets.hovered.bg_fill = egui::Color32::from_gray(55);
+                                style.visuals.widgets.active.bg_fill = egui::Color32::from_gray(60);
+                                ui.set_style(style);
+                                ui.add_sized(
+                                    [160.0, 24.0],
+                                    egui::TextEdit::singleline(&mut self.windows.manage_workspace_search)
+                                        .hint_text("Search workspaces"),
+                                );
+                            });
+                            ui.add_space(6.0);
+                            ui.separator();
+
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(ui.available_width(), list_h),
+                                egui::Layout::top_down(egui::Align::LEFT),
+                                |ui| {
+                                    egui::ScrollArea::vertical()
+                                        .auto_shrink([false, false])
+                                        .max_height(list_h)
+                                        .min_scrolled_height(list_h)
+                                        .show(ui, |ui| {
+                                            ui.style_mut().spacing.item_spacing.y = 4.0;
+                                            for (idx, entry) in self.workspace_manager.workspace_entries.iter().enumerate() {
+                                                if !self.windows.manage_workspace_search.trim().is_empty()
+                                                    && !entry
+                                                        .name
+                                                        .to_lowercase()
+                                                        .contains(&self.windows.manage_workspace_search.to_lowercase())
+                                                {
+                                                    continue;
+                                                }
+                                                let label = entry.name.clone();
+                                                let response = ui
+                                                    .allocate_ui_with_layout(
+                                                        egui::vec2(ui.available_width(), 22.0),
+                                                        egui::Layout::left_to_right(egui::Align::Center),
+                                                        |ui| {
+                                                            ui.add(egui::SelectableLabel::new(
+                                                                self.windows.manage_workspace_selected_index == Some(idx),
+                                                                egui::RichText::new(label).size(14.0),
+                                                            ))
+                                                        },
+                                                    )
+                                                    .inner;
+                                                if response.clicked() {
+                                                    selected = Some(idx);
+                                                }
+                                            }
+                                        });
+                                },
+                            );
+
+                            ui.separator();
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(ui.available_width(), footer_h),
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                    if styled_button(ui, "Browse...").clicked() {
+                                        self.open_import_dialog();
+                                    }
+                                },
+                            );
+                        },
+                    );
+
+                    ui.add(egui::Separator::default().vertical());
+
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(right_w, full_h),
                         egui::Layout::top_down(egui::Align::LEFT),
                         |ui| {
                             egui::ScrollArea::vertical()
-                                .max_height(list_height)
-                                .min_scrolled_height(list_height)
+                                .auto_shrink([false, false])
+                                .max_height(full_h)
+                                .min_scrolled_height(full_h)
                                 .show(ui, |ui| {
-                                    ui.style_mut().spacing.item_spacing.y = 4.0;
-                                    for (idx, entry) in self.workspace_manager.workspace_entries.iter().enumerate() {
-                                        let label = format!("{} ({})", entry.name, entry.plugins);
-                                        let response = ui.selectable_label(
-                                            self.windows.manage_workspace_selected_index == Some(idx),
-                                            egui::RichText::new(label).size(14.0),
+                                    if let Some(idx) = self.windows.manage_workspace_selected_index {
+                                        if let Some(entry) = self.workspace_manager.workspace_entries.get(idx) {
+                                            ui.add_space(4.0);
+                                            if !entry.description.is_empty() {
+                                                ui.label(
+                                                    egui::RichText::new(&entry.description)
+                                                        .size(13.0)
+                                                        .color(egui::Color32::from_gray(200)),
+                                                );
+                                                ui.add_space(8.0);
+                                            }
+                                            ui.horizontal(|ui| {
+                                                ui.label(egui::RichText::new("Plugins:").strong());
+                                                ui.label(entry.plugins.to_string());
+                                            });
+                                            if !entry.plugin_kinds.is_empty() {
+                                                ui.add_space(4.0);
+                                                ui.label(egui::RichText::new("Types:").strong());
+                                                ui.label(
+                                                    egui::RichText::new(entry.plugin_kinds.join(", "))
+                                                        .size(12.0)
+                                                    .color(egui::Color32::from_gray(180)),
+                                                );
+                                            }
+                                            ui.add_space(12.0);
+                                            ui.vertical_centered(|ui| {
+                                                if styled_button(ui, "Load").clicked() {
+                                                    action_load = Some(entry.path.clone());
+                                                }
+                                                if styled_button(ui, "Edit metadata").clicked() {
+                                                    action_edit = Some(entry.path.clone());
+                                                }
+                                                if styled_button(ui, "Export").clicked() {
+                                                    action_export = Some(entry.path.clone());
+                                                }
+                                                if styled_button(ui, "Delete").clicked() {
+                                                    action_delete = Some(entry.path.clone());
+                                                }
+                                            });
+                                        }
+                                    } else {
+                                        ui.add_space(4.0);
+                                        ui.label(
+                                            RichText::new("No workspace selected")
+                                                .color(egui::Color32::from_gray(120)),
                                         );
-                                        if response.clicked() {
-                                            selected = Some(idx);
-                                        }
-                                        if response.double_clicked() {
-                                            action_load = Some(entry.path.clone());
-                                        }
                                     }
                                 });
                         },
                     );
-                    if let Some(idx) = selected {
-                        self.windows.manage_workspace_selected_index = Some(idx);
-                        if let Some(entry) = self.workspace_manager.workspace_entries.get(idx) {
-                            self.workspace_dialog.name_input = entry.name.clone();
-                            self.workspace_dialog.description_input = entry.description.clone();
-                        }
-                    }
-
-                    columns[1].add_space(4.0);
-                    if let Some(idx) = self.windows.manage_workspace_selected_index {
-                        if let Some(entry) = self.workspace_manager.workspace_entries.get(idx) {
-                            columns[1].vertical(|ui| {
-                                ui.add_space(4.0);
-                                if !entry.description.is_empty() {
-                                    ui.label(egui::RichText::new(&entry.description).size(13.0).color(egui::Color32::from_gray(200)));
-                                    ui.add_space(8.0);
-                                }
-                                ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new("Plugins:").strong());
-                                    ui.label(entry.plugins.to_string());
-                                });
-                                if !entry.plugin_kinds.is_empty() {
-                                    ui.add_space(4.0);
-                                    ui.label(egui::RichText::new("Types:").strong());
-                                    ui.label(egui::RichText::new(entry.plugin_kinds.join(", ")).size(12.0).color(egui::Color32::from_gray(180)));
-                                }
-                                ui.add_space(12.0);
-                                if styled_button(ui, "Load").clicked() {
-                                    action_load = Some(entry.path.clone());
-                                }
-                                if styled_button(ui, "Edit metadata").clicked() {
-                                    action_edit = Some(entry.path.clone());
-                                }
-                                if styled_button(ui, "Export").clicked() {
-                                    action_export = Some(entry.path.clone());
-                                }
-                                if styled_button(ui, "Delete").clicked() {
-                                    action_delete = Some(entry.path.clone());
-                                }
-                            });
-                        }
-                    } else {
-                        columns[1].with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
-                            ui.add_space(4.0);
-                            ui.label(
-                                RichText::new("No workspace selected")
-                                    .color(egui::Color32::from_gray(120)),
-                            );
-                        });
-                    }
-                    columns[0].with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                        if styled_button(ui, "Browse...").clicked() {
-                            self.open_import_dialog();
-                        }
-                        ui.label(RichText::new("Browse workspace").strong());
-                    });
                 });
+
+                if let Some(idx) = selected {
+                    self.windows.manage_workspace_selected_index = Some(idx);
+                    if let Some(entry) = self.workspace_manager.workspace_entries.get(idx) {
+                        self.workspace_dialog.name_input = entry.name.clone();
+                        self.workspace_dialog.description_input = entry.description.clone();
+                    }
+                }
             });
         if let Some(response) = response {
             self.window_rects.push(response.response.rect);
@@ -306,82 +385,138 @@ impl GuiApp {
             .default_size(window_size)
             .fixed_size(window_size)
             .show(ctx, |ui| {
-                ui.columns(2, |columns| {
-                    columns[0].add_space(4.0);
-                    let mut selected: Option<usize> = None;
-                    let bottom_height = 60.0;
-                    let list_height = (columns[0].available_height() - bottom_height).max(120.0);
-                    let width = columns[0].available_width();
-                    columns[0].allocate_ui_with_layout(
-                        egui::vec2(width, list_height),
+                let total_w = ui.available_width();
+                let left_w = (total_w * 0.52).max(180.0);
+                let right_w = (total_w - left_w - 10.0).max(140.0);
+                let full_h = ui.available_height();
+                let footer_h = 44.0;
+                let search_h = 34.0;
+                let list_h = (full_h - search_h - footer_h - 16.0).max(120.0);
+                let mut selected: Option<usize> = None;
+
+                ui.horizontal(|ui| {
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(left_w, full_h),
+                        egui::Layout::top_down(egui::Align::LEFT),
+                        |ui| {
+                            ui.horizontal(|ui| {
+                                ui.scope(|ui| {
+                                    let mut style = ui.style().as_ref().clone();
+                                    style.visuals.extreme_bg_color = egui::Color32::from_gray(50);
+                                    style.visuals.widgets.inactive.bg_fill = egui::Color32::from_gray(50);
+                                    style.visuals.widgets.hovered.bg_fill = egui::Color32::from_gray(55);
+                                    style.visuals.widgets.active.bg_fill = egui::Color32::from_gray(60);
+                                    ui.set_style(style);
+                                    ui.add_sized(
+                                        [160.0, 24.0],
+                                        egui::TextEdit::singleline(&mut self.windows.load_workspace_search)
+                                            .hint_text("Search workspaces"),
+                                    );
+                                });
+                            });
+                            ui.add_space(6.0);
+                            ui.separator();
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(ui.available_width(), list_h),
+                                egui::Layout::top_down(egui::Align::LEFT),
+                                |ui| {
+                                    egui::ScrollArea::vertical()
+                                        .auto_shrink([false, false])
+                                        .max_height(list_h)
+                                        .min_scrolled_height(list_h)
+                                        .show(ui, |ui| {
+                                            ui.style_mut().spacing.item_spacing.y = 4.0;
+                                            for (idx, entry) in self.workspace_manager.workspace_entries.iter().enumerate() {
+                                                if !self.windows.load_workspace_search.trim().is_empty()
+                                                    && !entry
+                                                        .name
+                                                        .to_lowercase()
+                                                        .contains(&self.windows.load_workspace_search.to_lowercase())
+                                                {
+                                                    continue;
+                                                }
+                                                let label = entry.name.clone();
+                                                let response = ui
+                                                    .allocate_ui_with_layout(
+                                                        egui::vec2(ui.available_width(), 22.0),
+                                                        egui::Layout::left_to_right(egui::Align::Center),
+                                                        |ui| {
+                                                            ui.add(egui::SelectableLabel::new(
+                                                                self.windows.load_workspace_selected_index == Some(idx),
+                                                                egui::RichText::new(label).size(14.0),
+                                                            ))
+                                                        },
+                                                    )
+                                                    .inner;
+                                                if response.clicked() {
+                                                    selected = Some(idx);
+                                                }
+                                            }
+                                        });
+                                },
+                            );
+                            if let Some(idx) = selected {
+                                self.windows.load_workspace_selected_index = Some(idx);
+                                if let Some(entry) = self.workspace_manager.workspace_entries.get(idx) {
+                                    self.workspace_dialog.name_input = entry.name.clone();
+                                    self.workspace_dialog.description_input = entry.description.clone();
+                                }
+                            }
+                            ui.separator();
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(ui.available_width(), footer_h),
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                    if styled_button(ui, "Browse...").clicked() {
+                                        self.open_load_dialog();
+                                    }
+                                },
+                            );
+                        },
+                    );
+                    ui.add(egui::Separator::default().vertical());
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(right_w, full_h),
                         egui::Layout::top_down(egui::Align::LEFT),
                         |ui| {
                             egui::ScrollArea::vertical()
-                                .max_height(list_height)
-                                .min_scrolled_height(list_height)
+                                .auto_shrink([false, false])
+                                .max_height(full_h)
+                                .min_scrolled_height(full_h)
                                 .show(ui, |ui| {
-                                    ui.style_mut().spacing.item_spacing.y = 4.0;
-                                    for (idx, entry) in self.workspace_manager.workspace_entries.iter().enumerate() {
-                                        let label = format!("{} ({})", entry.name, entry.plugins);
-                                        let response = ui.selectable_label(
-                                            self.windows.load_workspace_selected_index == Some(idx),
-                                            egui::RichText::new(label).size(14.0),
-                                        );
-                                        if response.clicked() {
-                                            selected = Some(idx);
+                                    if let Some(idx) = self.windows.load_workspace_selected_index {
+                                        if let Some(entry) = self.workspace_manager.workspace_entries.get(idx) {
+                                            ui.add_space(4.0);
+                                            if !entry.description.is_empty() {
+                                                ui.label(egui::RichText::new(&entry.description).size(13.0).color(egui::Color32::from_gray(200)));
+                                                ui.add_space(8.0);
+                                            }
+                                            ui.horizontal(|ui| {
+                                                ui.label(egui::RichText::new("Plugins:").strong());
+                                                ui.label(entry.plugins.to_string());
+                                            });
+                                            if !entry.plugin_kinds.is_empty() {
+                                                ui.add_space(4.0);
+                                                ui.label(egui::RichText::new("Types:").strong());
+                                                ui.label(egui::RichText::new(entry.plugin_kinds.join(", ")).size(12.0).color(egui::Color32::from_gray(180)));
+                                            }
+                                            ui.add_space(12.0);
+                                            ui.vertical_centered(|ui| {
+                                                if styled_button(ui, "Load").clicked() {
+                                                    action_load = Some(entry.path.clone());
+                                                }
+                                            });
                                         }
+                                    } else {
+                                        ui.add_space(4.0);
+                                        ui.label(
+                                            RichText::new("No workspace selected")
+                                                .color(egui::Color32::from_gray(120)),
+                                        );
                                     }
                                 });
                         },
                     );
-                    if let Some(idx) = selected {
-                        self.windows.load_workspace_selected_index = Some(idx);
-                        if let Some(entry) = self.workspace_manager.workspace_entries.get(idx) {
-                            self.workspace_dialog.name_input = entry.name.clone();
-                            self.workspace_dialog.description_input = entry.description.clone();
-                        }
-                    }
-
-                    columns[1].add_space(4.0);
-                    if let Some(idx) = self.windows.load_workspace_selected_index {
-                        if let Some(entry) = self.workspace_manager.workspace_entries.get(idx) {
-                            columns[1].vertical(|ui| {
-                                ui.add_space(4.0);
-                                if !entry.description.is_empty() {
-                                    ui.label(egui::RichText::new(&entry.description).size(13.0).color(egui::Color32::from_gray(200)));
-                                    ui.add_space(8.0);
-                                }
-                                ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new("Plugins:").strong());
-                                    ui.label(entry.plugins.to_string());
-                                });
-                                if !entry.plugin_kinds.is_empty() {
-                                    ui.add_space(4.0);
-                                    ui.label(egui::RichText::new("Types:").strong());
-                                    ui.label(egui::RichText::new(entry.plugin_kinds.join(", ")).size(12.0).color(egui::Color32::from_gray(180)));
-                                }
-                                ui.add_space(12.0);
-                                if styled_button(ui, "Load").clicked() {
-                                    action_load = Some(entry.path.clone());
-                                }
-                            });
-                        }
-                    } else {
-                        columns[1].with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
-                            ui.add_space(4.0);
-                            ui.label(
-                                RichText::new("No workspace selected")
-                                    .color(egui::Color32::from_gray(120)),
-                            );
-                        });
-                    }
-
-                    columns[0].with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                        if styled_button(ui, "Browse...").clicked() {
-                            self.open_load_dialog();
-                        }
-                        ui.label(RichText::new("Browse workspace").strong());
-                    });
                 });
             });
         if let Some(response) = response {
