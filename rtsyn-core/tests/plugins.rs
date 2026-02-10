@@ -10,7 +10,13 @@ impl PluginMetadataSource for NoMetadata {
         &self,
         _library_path: &str,
         _timeout: Duration,
-    ) -> Option<(Vec<String>, Vec<String>, Vec<(String, f64)>, Option<rtsyn_plugin::ui::DisplaySchema>, Option<rtsyn_plugin::ui::UISchema>)> {
+    ) -> Option<(
+        Vec<String>,
+        Vec<String>,
+        Vec<(String, f64)>,
+        Option<rtsyn_plugin::ui::DisplaySchema>,
+        Option<rtsyn_plugin::ui::UISchema>,
+    )> {
         None
     }
 

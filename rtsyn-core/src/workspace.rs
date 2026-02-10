@@ -17,6 +17,9 @@ pub struct WorkspaceManager {
     pub workspace_dirty: bool,
     pub workspace_entries: Vec<WorkspaceEntry>,
     workspace_dir: PathBuf,
+    runtime_defaults: WorkspaceSettings,
+    runtime_factory: WorkspaceSettings,
+    runtime_defaults_path: PathBuf,
 }
 
 #[derive(Debug, Clone)]
@@ -27,7 +30,16 @@ pub struct RuntimeSettings {
     pub time_label: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeSettingsSaveTarget {
+    Defaults,
+    Workspace,
+}
+
 impl WorkspaceManager {
+    const RUNTIME_DEFAULTS_FILE: &'static str = "runtime_settings.defaults.json";
+    const RUNTIME_FACTORY_FILE: &'static str = "runtime_settings.factory.json";
+
     fn scan_workspace_entries(workspace_dir: &Path) -> Vec<WorkspaceEntry> {
         let mut entries = Vec::new();
         let _ = std::fs::create_dir_all(workspace_dir);
@@ -43,7 +55,11 @@ impl WorkspaceManager {
                             name: workspace.name,
                             description: workspace.description,
                             plugins: workspace.plugins.len(),
-                            plugin_kinds: workspace.plugins.iter().map(|p| p.kind.clone()).collect(),
+                            plugin_kinds: workspace
+                                .plugins
+                                .iter()
+                                .map(|p| p.kind.clone())
+                                .collect(),
                             path,
                         });
                     }
@@ -59,15 +75,92 @@ impl WorkspaceManager {
         workspace_dir.join(format!("{safe}.json"))
     }
 
-    fn empty_workspace(name: &str) -> WorkspaceDefinition {
+    fn empty_workspace(name: &str, settings: WorkspaceSettings) -> WorkspaceDefinition {
         WorkspaceDefinition {
             name: name.to_string(),
             description: String::new(),
             target_hz: 1000,
             plugins: Vec::new(),
             connections: Vec::new(),
-            settings: WorkspaceSettings::default(),
+            settings,
         }
+    }
+
+    fn runtime_defaults_path_for(workspace_dir: &Path) -> PathBuf {
+        workspace_dir.join(Self::RUNTIME_DEFAULTS_FILE)
+    }
+
+    fn runtime_factory_path_for(workspace_dir: &Path) -> PathBuf {
+        workspace_dir.join(Self::RUNTIME_FACTORY_FILE)
+    }
+
+    fn normalize_workspace_settings(
+        mut settings: WorkspaceSettings,
+    ) -> Result<WorkspaceSettings, String> {
+        settings.frequency_value = settings.frequency_value.max(1.0);
+        settings.period_value = settings.period_value.max(1.0);
+        Self::normalize_frequency_unit(&settings.frequency_unit)?;
+        Self::normalize_period_unit(&settings.period_unit)?;
+        if settings.selected_cores.is_empty() {
+            settings.selected_cores = vec![0];
+        }
+        Ok(settings)
+    }
+
+    fn load_runtime_settings_file(path: &Path) -> Result<WorkspaceSettings, String> {
+        let data = std::fs::read(path).map_err(|e| {
+            format!(
+                "Failed to read runtime settings file '{}': {e}",
+                path.display()
+            )
+        })?;
+        let settings: WorkspaceSettings = serde_json::from_slice(&data).map_err(|e| {
+            format!(
+                "Failed to parse runtime settings file '{}': {e}",
+                path.display()
+            )
+        })?;
+        Self::normalize_workspace_settings(settings)
+    }
+
+    fn save_runtime_settings_file(path: &Path, settings: &WorkspaceSettings) -> Result<(), String> {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let data = serde_json::to_vec_pretty(settings)
+            .map_err(|e| format!("Failed to serialize runtime settings: {e}"))?;
+        std::fs::write(path, data).map_err(|e| {
+            format!(
+                "Failed to write runtime settings file '{}': {e}",
+                path.display()
+            )
+        })
+    }
+
+    fn load_or_create_runtime_settings(
+        workspace_dir: &Path,
+    ) -> (WorkspaceSettings, WorkspaceSettings, PathBuf, PathBuf) {
+        let defaults_path = Self::runtime_defaults_path_for(workspace_dir);
+        let factory_path = Self::runtime_factory_path_for(workspace_dir);
+        let builtin = WorkspaceSettings::default();
+
+        let factory = match Self::load_runtime_settings_file(&factory_path) {
+            Ok(settings) => settings,
+            Err(_) => {
+                let _ = Self::save_runtime_settings_file(&factory_path, &builtin);
+                builtin.clone()
+            }
+        };
+
+        let defaults = match Self::load_runtime_settings_file(&defaults_path) {
+            Ok(settings) => settings,
+            Err(_) => {
+                let _ = Self::save_runtime_settings_file(&defaults_path, &factory);
+                factory.clone()
+            }
+        };
+
+        (defaults, factory, defaults_path, factory_path)
     }
 
     fn load_workspace_file(path: &Path) -> Result<WorkspaceDefinition, String> {
@@ -91,12 +184,17 @@ impl WorkspaceManager {
     }
 
     pub fn new(workspace_dir: PathBuf) -> Self {
+        let (runtime_defaults, runtime_factory, runtime_defaults_path, _) =
+            Self::load_or_create_runtime_settings(&workspace_dir);
         Self {
-            workspace: Self::empty_workspace("default"),
+            workspace: Self::empty_workspace("default", runtime_defaults.clone()),
             workspace_path: PathBuf::new(),
             workspace_dirty: true,
             workspace_entries: Vec::new(),
             workspace_dir,
+            runtime_defaults,
+            runtime_factory,
+            runtime_defaults_path,
         }
     }
 
@@ -250,19 +348,19 @@ impl WorkspaceManager {
         if freq_changed {
             let hz = Self::frequency_hz_from(settings.frequency_value, &settings.frequency_unit)?;
             let period_seconds = 1.0 / hz;
-            settings.period_value = Self::period_value_from_seconds(
-                period_seconds,
-                &settings.period_unit,
-            )?;
+            settings.period_value =
+                Self::period_value_from_seconds(period_seconds, &settings.period_unit)?;
         } else if period_changed {
             let period_seconds =
                 Self::period_seconds_from(settings.period_value, &settings.period_unit)?;
             let hz = 1.0 / period_seconds;
-            settings.frequency_value =
-                Self::frequency_value_from_hz(hz, &settings.frequency_unit)?;
+            settings.frequency_value = Self::frequency_value_from_hz(hz, &settings.frequency_unit)?;
         }
 
         self.workspace.settings = settings;
+        if self.workspace_path.as_os_str().is_empty() {
+            self.update_runtime_defaults(self.workspace.settings.clone())?;
+        }
         Ok(())
     }
 
@@ -333,7 +431,7 @@ impl WorkspaceManager {
             return Err("Workspace already exists".to_string());
         }
 
-        self.workspace = Self::empty_workspace(name);
+        self.workspace = Self::empty_workspace(name, self.runtime_defaults.clone());
         self.workspace.description = description.to_string();
 
         let _ = std::fs::create_dir_all(&self.workspace_dir);
@@ -350,8 +448,7 @@ impl WorkspaceManager {
             return Err("Workspace with this name already exists".to_string());
         }
         let _ = std::fs::create_dir_all(&self.workspace_dir);
-        std::fs::copy(source, &dest_path)
-            .map_err(|e| format!("Failed to copy: {e}"))?;
+        std::fs::copy(source, &dest_path).map_err(|e| format!("Failed to copy: {e}"))?;
         Ok(())
     }
 
@@ -376,13 +473,67 @@ impl WorkspaceManager {
         if !path.exists() {
             return Err("Workspace not found".to_string());
         }
-        std::fs::remove_file(&path)
-            .map_err(|e| format!("Failed to delete workspace: {e}"))?;
+        std::fs::remove_file(&path).map_err(|e| format!("Failed to delete workspace: {e}"))?;
         if self.workspace_path == path {
-            self.workspace = Self::empty_workspace("default");
+            self.workspace = Self::empty_workspace("default", self.runtime_defaults.clone());
             self.workspace_path = PathBuf::new();
             self.workspace_dirty = true;
         }
         Ok(())
+    }
+
+    pub fn update_runtime_defaults(&mut self, settings: WorkspaceSettings) -> Result<(), String> {
+        let normalized = Self::normalize_workspace_settings(settings)?;
+        Self::save_runtime_settings_file(&self.runtime_defaults_path, &normalized)?;
+        self.runtime_defaults = normalized.clone();
+        if self.workspace_path.as_os_str().is_empty() {
+            self.workspace.settings = normalized;
+        }
+        Ok(())
+    }
+
+    pub fn persist_runtime_settings_current_context(
+        &mut self,
+    ) -> Result<RuntimeSettingsSaveTarget, String> {
+        if self.workspace_path.as_os_str().is_empty() {
+            self.update_runtime_defaults(self.workspace.settings.clone())?;
+            self.workspace_dirty = false;
+            Ok(RuntimeSettingsSaveTarget::Defaults)
+        } else {
+            self.save_workspace_overwrite_current()?;
+            Ok(RuntimeSettingsSaveTarget::Workspace)
+        }
+    }
+
+    pub fn restore_runtime_settings_current_context(
+        &mut self,
+    ) -> Result<RuntimeSettingsSaveTarget, String> {
+        self.reset_runtime_defaults_to_factory()?;
+        if self.workspace_path.as_os_str().is_empty() {
+            self.workspace_dirty = false;
+            Ok(RuntimeSettingsSaveTarget::Defaults)
+        } else {
+            self.workspace.settings = self.runtime_defaults.clone();
+            self.workspace_dirty = true;
+            Ok(RuntimeSettingsSaveTarget::Workspace)
+        }
+    }
+
+    pub fn reset_runtime_defaults_to_factory(&mut self) -> Result<(), String> {
+        let factory = self.runtime_factory.clone();
+        Self::save_runtime_settings_file(&self.runtime_defaults_path, &factory)?;
+        self.runtime_defaults = factory.clone();
+        if self.workspace_path.as_os_str().is_empty() {
+            self.workspace.settings = factory;
+        }
+        Ok(())
+    }
+
+    pub fn runtime_defaults(&self) -> &WorkspaceSettings {
+        &self.runtime_defaults
+    }
+
+    pub fn runtime_factory(&self) -> &WorkspaceSettings {
+        &self.runtime_factory
     }
 }

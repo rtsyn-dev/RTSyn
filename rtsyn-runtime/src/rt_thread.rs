@@ -5,7 +5,7 @@ compile_error!("`preempt_rt` and `xenomai` features cannot be enabled simultaneo
 mod preempt_rt {
     use libc::{
         clock_gettime, clock_nanosleep, sched_param, sched_setscheduler, syscall, timespec,
-        CLOCK_MONOTONIC, SCHED_FIFO, SYS_gettid, TIMER_ABSTIME,
+        SYS_gettid, CLOCK_MONOTONIC, SCHED_FIFO, TIMER_ABSTIME,
     };
     use std::ptr;
     use std::time::Duration;
@@ -46,12 +46,7 @@ mod preempt_rt {
                 return;
             }
             unsafe {
-                clock_nanosleep(
-                    CLOCK_MONOTONIC,
-                    TIMER_ABSTIME,
-                    next,
-                    ptr::null_mut(),
-                );
+                clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, next, ptr::null_mut());
             }
             add_duration(next, period);
         }
@@ -93,7 +88,8 @@ mod normal_thread {
                 return;
             }
             // For very short periods, use spin-wait for better precision
-            if period.as_nanos() < 500_000 { // Less than 500μs
+            if period.as_nanos() < 500_000 {
+                // Less than 500μs
                 let start = std::time::Instant::now();
                 while start.elapsed() < period {
                     std::hint::spin_loop();

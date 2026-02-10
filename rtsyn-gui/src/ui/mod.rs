@@ -8,7 +8,7 @@ use std::sync::mpsc;
 
 use crate::state::*;
 use crate::utils::{distance_to_segment, format_f64_6, truncate_f64};
-use crate::{WorkspaceSettingsDraft, GuiApp};
+use crate::{GuiApp, WorkspaceSettingsDraft};
 use rtsyn_runtime::runtime::LogicMessage;
 use std::time::{Duration, Instant};
 use workspace::{prune_extendable_inputs_plugin_connections, ConnectionDefinition};

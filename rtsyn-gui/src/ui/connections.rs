@@ -25,7 +25,8 @@ impl GuiApp {
         }
         let mut open = self.windows.manage_connections_open;
         let name_by_kind: HashMap<String, String> = self
-            .plugin_manager.installed_plugins
+            .plugin_manager
+            .installed_plugins
             .iter()
             .map(|plugin| (plugin.manifest.kind.clone(), plugin.manifest.name.clone()))
             .collect();
@@ -45,7 +46,13 @@ impl GuiApp {
                     egui::ScrollArea::vertical()
                         .max_height(140.0)
                         .show(ui, |ui| {
-                            for (idx, connection) in self.workspace_manager.workspace.connections.iter().enumerate() {
+                            for (idx, connection) in self
+                                .workspace_manager
+                                .workspace
+                                .connections
+                                .iter()
+                                .enumerate()
+                            {
                                 let display_idx = idx + 1;
                                 ui.label(format!(
                                     "{}:{} -> {}:{} ({})",
@@ -78,21 +85,30 @@ impl GuiApp {
                 if self.connection_editor.to_idx >= plugin_len {
                     self.connection_editor.to_idx = 0;
                 }
-                if self.connection_editor.from_idx == self.connection_editor.to_idx && plugin_len > 1 {
-                    self.connection_editor.to_idx = (self.connection_editor.from_idx + 1) % plugin_len;
+                if self.connection_editor.from_idx == self.connection_editor.to_idx
+                    && plugin_len > 1
+                {
+                    self.connection_editor.to_idx =
+                        (self.connection_editor.from_idx + 1) % plugin_len;
                 }
 
-                let from_kind = self.workspace_manager.workspace.plugins[self.connection_editor.from_idx]
+                let from_kind = self.workspace_manager.workspace.plugins
+                    [self.connection_editor.from_idx]
                     .kind
                     .clone();
-                let to_kind = self.workspace_manager.workspace.plugins[self.connection_editor.to_idx].kind.clone();
-                
+                let to_kind = self.workspace_manager.workspace.plugins
+                    [self.connection_editor.to_idx]
+                    .kind
+                    .clone();
+
                 // Cache behaviors before using them
                 self.ensure_plugin_behavior_cached(&from_kind);
                 self.ensure_plugin_behavior_cached(&to_kind);
-                
-                let from_id = self.workspace_manager.workspace.plugins[self.connection_editor.from_idx].id;
-                let to_id = self.workspace_manager.workspace.plugins[self.connection_editor.to_idx].id;
+
+                let from_id =
+                    self.workspace_manager.workspace.plugins[self.connection_editor.from_idx].id;
+                let to_id =
+                    self.workspace_manager.workspace.plugins[self.connection_editor.to_idx].id;
                 let mut from_ports = self.ports_for_plugin(from_id, false);
                 let mut to_ports = self.ports_for_plugin(to_id, true);
                 if from_ports.is_empty() {
@@ -116,20 +132,34 @@ impl GuiApp {
                 if !from_ports.contains(&self.connection_editor.from_port) {
                     self.connection_editor.from_port = from_ports[0].clone();
                 }
-                if !self.connection_editor.kind_options.contains(&self.connection_editor.kind) {
+                if !self
+                    .connection_editor
+                    .kind_options
+                    .contains(&self.connection_editor.kind)
+                {
                     self.connection_editor.kind = self.connection_editor.kind_options[0].clone();
                 }
-                let pair_connection = self.workspace_manager.workspace.connections.iter().find(|conn| {
-                    conn.from_plugin == from_id && conn.to_plugin == to_id
-                }).cloned();
+                let pair_connection = self
+                    .workspace_manager
+                    .workspace
+                    .connections
+                    .iter()
+                    .find(|conn| conn.from_plugin == from_id && conn.to_plugin == to_id)
+                    .cloned();
                 let has_pair_connection = pair_connection.is_some();
-                let exact_connection = self.workspace_manager.workspace.connections.iter().find(|conn| {
-                    conn.from_plugin == from_id
-                        && conn.to_plugin == to_id
-                        && conn.from_port == self.connection_editor.from_port
-                        && conn.to_port == self.connection_editor.to_port
-                        && conn.kind == self.connection_editor.kind
-                }).cloned();
+                let exact_connection = self
+                    .workspace_manager
+                    .workspace
+                    .connections
+                    .iter()
+                    .find(|conn| {
+                        conn.from_plugin == from_id
+                            && conn.to_plugin == to_id
+                            && conn.from_port == self.connection_editor.from_port
+                            && conn.to_port == self.connection_editor.to_port
+                            && conn.kind == self.connection_editor.kind
+                    })
+                    .cloned();
                 let has_duplicate = exact_connection.is_some();
                 let display_to_ports = if extendable {
                     self.extendable_input_display_ports(to_id, !has_pair_connection)
@@ -139,7 +169,11 @@ impl GuiApp {
                 if let Some(connection) = pair_connection.as_ref() {
                     if display_to_ports.contains(&connection.to_port) {
                         self.connection_editor.to_port = connection.to_port.clone();
-                        if self.connection_editor.kind_options.contains(&connection.kind) {
+                        if self
+                            .connection_editor
+                            .kind_options
+                            .contains(&connection.kind)
+                        {
                             self.connection_editor.kind = connection.kind.clone();
                         }
                     }
@@ -160,13 +194,19 @@ impl GuiApp {
                             format!("#{} {}", from_id, name)
                         })
                         .show_ui(ui, |ui| {
-                    for (idx, plugin) in self.workspace_manager.workspace.plugins.iter().enumerate() {
+                            for (idx, plugin) in
+                                self.workspace_manager.workspace.plugins.iter().enumerate()
+                            {
                                 let name = name_by_kind
                                     .get(&plugin.kind)
                                     .cloned()
                                     .unwrap_or_else(|| Self::display_kind(&plugin.kind));
                                 let label = format!("#{} {}", plugin.id, name);
-                                ui.selectable_value(&mut self.connection_editor.from_idx, idx, label);
+                                ui.selectable_value(
+                                    &mut self.connection_editor.from_idx,
+                                    idx,
+                                    label,
+                                );
                             }
                         });
                     ui.label("Port");
@@ -194,7 +234,9 @@ impl GuiApp {
                             format!("#{} {}", to_id, name)
                         })
                         .show_ui(ui, |ui| {
-                            for (idx, plugin) in self.workspace_manager.workspace.plugins.iter().enumerate() {
+                            for (idx, plugin) in
+                                self.workspace_manager.workspace.plugins.iter().enumerate()
+                            {
                                 let name = name_by_kind
                                     .get(&plugin.kind)
                                     .cloned()
@@ -203,7 +245,11 @@ impl GuiApp {
                                 if idx == self.connection_editor.from_idx {
                                     ui.add_enabled(false, egui::Label::new(label));
                                 } else {
-                                    ui.selectable_value(&mut self.connection_editor.to_idx, idx, label);
+                                    ui.selectable_value(
+                                        &mut self.connection_editor.to_idx,
+                                        idx,
+                                        label,
+                                    );
                                 }
                             }
                         });
@@ -211,7 +257,7 @@ impl GuiApp {
                     egui::ComboBox::from_id_source("conn_to_port")
                         .selected_text(self.connection_editor.to_port.clone())
                         .show_ui(ui, |ui| {
-                    for port in &display_to_ports {
+                            for port in &display_to_ports {
                                 ui.selectable_value(
                                     &mut self.connection_editor.to_port,
                                     port.clone(),
@@ -280,7 +326,8 @@ impl GuiApp {
             return;
         };
         let current_plugin = match self
-            .workspace_manager.workspace
+            .workspace_manager
+            .workspace
             .plugins
             .iter()
             .find(|plugin| plugin.id == current_id)
@@ -293,12 +340,14 @@ impl GuiApp {
             }
         };
         let name_by_kind: HashMap<String, String> = self
-            .plugin_manager.installed_plugins
+            .plugin_manager
+            .installed_plugins
             .iter()
             .map(|plugin| (plugin.manifest.kind.clone(), plugin.manifest.name.clone()))
             .collect();
         let desc_by_kind: HashMap<String, String> = self
-            .plugin_manager.installed_plugins
+            .plugin_manager
+            .installed_plugins
             .iter()
             .map(|plugin| {
                 (
@@ -357,18 +406,25 @@ impl GuiApp {
                         continue;
                     }
                     let has_connection = match self.connection_editor.tab {
-                        ConnectionEditTab::Inputs => {
-                            self.workspace_manager.workspace.connections.iter().any(|conn| {
+                        ConnectionEditTab::Inputs => self
+                            .workspace_manager
+                            .workspace
+                            .connections
+                            .iter()
+                            .any(|conn| {
                                 conn.to_plugin == current_id && conn.from_plugin == plugin.id
-                            })
-                        }
-                        ConnectionEditTab::Outputs => {
-                            self.workspace_manager.workspace.connections.iter().any(|conn| {
+                            }),
+                        ConnectionEditTab::Outputs => self
+                            .workspace_manager
+                            .workspace
+                            .connections
+                            .iter()
+                            .any(|conn| {
                                 conn.from_plugin == current_id && conn.to_plugin == plugin.id
-                            })
-                        }
+                            }),
                     };
-                    if self.connection_editor.mode == ConnectionEditMode::Remove && !has_connection {
+                    if self.connection_editor.mode == ConnectionEditMode::Remove && !has_connection
+                    {
                         continue;
                     }
                     candidates.push(idx);
@@ -376,7 +432,8 @@ impl GuiApp {
 
                 if self.connection_editor.selected_idx.is_some()
                     && self
-                        .connection_editor.selected_idx
+                        .connection_editor
+                        .selected_idx
                         .map(|idx| !candidates.contains(&idx))
                         .unwrap_or(false)
                 {
@@ -412,7 +469,8 @@ impl GuiApp {
 
                     columns[1].vertical(|ui| {
                         if let Some(selected_idx) = self.connection_editor.selected_idx {
-                            let selected_plugin = &self.workspace_manager.workspace.plugins[selected_idx];
+                            let selected_plugin =
+                                &self.workspace_manager.workspace.plugins[selected_idx];
                             let selected_name = name_by_kind
                                 .get(&selected_plugin.kind)
                                 .cloned()
@@ -447,7 +505,8 @@ impl GuiApp {
 
                             match self.connection_editor.mode {
                                 ConnectionEditMode::Add => {
-                                    let (from_plugin, to_plugin) = match self.connection_editor.tab {
+                                    let (from_plugin, to_plugin) = match self.connection_editor.tab
+                                    {
                                         ConnectionEditTab::Inputs => {
                                             (selected_plugin.id, current_id)
                                         }
@@ -459,22 +518,27 @@ impl GuiApp {
                                     let from_ports = self.ports_for_plugin(from_plugin, false);
                                     let to_ports = self.ports_for_plugin(to_plugin, true);
                                     let extendable = self
-            .workspace_manager.workspace
+                                        .workspace_manager
+                                        .workspace
                                         .plugins
                                         .iter()
                                         .find(|p| p.id == to_plugin)
                                         .map(|plugin| self.is_extendable_inputs(&plugin.kind))
                                         .unwrap_or(false);
-                                    let pair_connection = self.workspace_manager.workspace.connections.iter().find(
-                                        |conn| {
+                                    let pair_connection = self
+                                        .workspace_manager
+                                        .workspace
+                                        .connections
+                                        .iter()
+                                        .find(|conn| {
                                             conn.from_plugin == from_plugin
                                                 && conn.to_plugin == to_plugin
-                                        },
-                                    ).cloned();
+                                        })
+                                        .cloned();
                                     let display_to_ports = if extendable {
                                         self.extendable_input_display_ports(
                                             to_plugin,
-                                            true,  // Always show placeholder for extendable inputs
+                                            true, // Always show placeholder for extendable inputs
                                         )
                                     } else {
                                         to_ports.clone()
@@ -484,10 +548,15 @@ impl GuiApp {
                                     let first_available_to_port =
                                         |ports: &[String]| -> Option<usize> {
                                             ports.iter().position(|port| {
-                                                !self.workspace_manager.workspace.connections.iter().any(|conn| {
-                                                    conn.to_plugin == to_plugin
-                                                        && conn.to_port == *port
-                                                })
+                                                !self
+                                                    .workspace_manager
+                                                    .workspace
+                                                    .connections
+                                                    .iter()
+                                                    .any(|conn| {
+                                                        conn.to_plugin == to_plugin
+                                                            && conn.to_port == *port
+                                                    })
                                             })
                                         };
                                     if self.connection_editor.last_selected
@@ -503,10 +572,12 @@ impl GuiApp {
                                             {
                                                 self.connection_editor.to_port_idx = pos;
                                                 if self
-                                                    .connection_editor.kind_options
+                                                    .connection_editor
+                                                    .kind_options
                                                     .contains(&connection.kind)
                                                 {
-                                                    self.connection_editor.kind = connection.kind.clone();
+                                                    self.connection_editor.kind =
+                                                        connection.kind.clone();
                                                 }
                                             } else {
                                                 self.connection_editor.to_port_idx =
@@ -526,7 +597,8 @@ impl GuiApp {
                                     if self.connection_editor.from_port_idx >= from_ports.len() {
                                         self.connection_editor.from_port_idx = 0;
                                     }
-                                    if self.connection_editor.to_port_idx >= display_to_ports.len() {
+                                    if self.connection_editor.to_port_idx >= display_to_ports.len()
+                                    {
                                         self.connection_editor.to_port_idx = 0;
                                     }
 
@@ -549,14 +621,17 @@ impl GuiApp {
                                         } else {
                                             egui::ComboBox::from_id_source("conn_edit_from_port")
                                                 .selected_text(
-                                                    from_ports[self.connection_editor.from_port_idx]
+                                                    from_ports
+                                                        [self.connection_editor.from_port_idx]
                                                         .clone(),
                                                 )
                                                 .show_ui(ui, |ui| {
                                                     for (idx, port) in from_ports.iter().enumerate()
                                                     {
                                                         ui.selectable_value(
-                                                            &mut self.connection_editor.from_port_idx,
+                                                            &mut self
+                                                                .connection_editor
+                                                                .from_port_idx,
                                                             idx,
                                                             port,
                                                         );
@@ -610,20 +685,24 @@ impl GuiApp {
                                                 .color(egui::Color32::GRAY),
                                         );
                                     } else {
-                                        let from_port =
-                                            from_ports[self.connection_editor.from_port_idx].clone();
-                                        let to_port =
-                                            display_to_ports[self.connection_editor.to_port_idx]
-                                                .clone();
-                                        let exact_idx = self.workspace_manager.workspace.connections.iter().position(
-                                            |conn| {
+                                        let from_port = from_ports
+                                            [self.connection_editor.from_port_idx]
+                                            .clone();
+                                        let to_port = display_to_ports
+                                            [self.connection_editor.to_port_idx]
+                                            .clone();
+                                        let exact_idx = self
+                                            .workspace_manager
+                                            .workspace
+                                            .connections
+                                            .iter()
+                                            .position(|conn| {
                                                 conn.from_plugin == from_plugin
                                                     && conn.to_plugin == to_plugin
                                                     && conn.from_port == from_port
                                                     && conn.to_port == to_port
                                                     && conn.kind == self.connection_editor.kind
-                                            },
-                                        );
+                                            });
                                         let has_duplicate = exact_idx.is_some();
                                         ui.horizontal(|ui| {
                                             ui.add_enabled_ui(!has_duplicate, |ui| {
@@ -638,9 +717,13 @@ impl GuiApp {
                                                 }
                                             });
                                             if let Some(idx) = exact_idx {
-                                                if styled_button(ui, "Remove connection").clicked() {
-                                                    let connection =
-                                                        self.workspace_manager.workspace.connections[idx].clone();
+                                                if styled_button(ui, "Remove connection").clicked()
+                                                {
+                                                    let connection = self
+                                                        .workspace_manager
+                                                        .workspace
+                                                        .connections[idx]
+                                                        .clone();
                                                     self.remove_connection_with_input(connection);
                                                 }
                                             }
@@ -649,7 +732,8 @@ impl GuiApp {
                                 }
                                 ConnectionEditMode::Remove => {
                                     let connections: Vec<(usize, &ConnectionDefinition)> = self
-            .workspace_manager.workspace
+                                        .workspace_manager
+                                        .workspace
                                         .connections
                                         .iter()
                                         .enumerate()
@@ -685,7 +769,8 @@ impl GuiApp {
                                         }
                                         if let Some(idx) = remove_idx {
                                             let connection =
-                                                self.workspace_manager.workspace.connections[idx].clone();
+                                                self.workspace_manager.workspace.connections[idx]
+                                                    .clone();
                                             self.remove_connection_with_input(connection);
                                         }
                                     }
@@ -734,7 +819,13 @@ impl GuiApp {
 
         let mut groups: HashMap<(u64, u64), (Vec<String>, Vec<String>, Vec<usize>)> =
             HashMap::new();
-        for (idx, connection) in self.workspace_manager.workspace.connections.iter().enumerate() {
+        for (idx, connection) in self
+            .workspace_manager
+            .workspace
+            .connections
+            .iter()
+            .enumerate()
+        {
             let entry = groups
                 .entry((connection.from_plugin, connection.to_plugin))
                 .or_insert_with(|| (Vec::new(), Vec::new(), Vec::new()));
@@ -927,11 +1018,16 @@ impl GuiApp {
             (pointer_pos, best_hover)
         {
             // Only show tooltip if pointer is not over any UI element
-            if pointer_over_plugin || pointer_over_window || self.confirm_dialog.open || ctx.is_pointer_over_area() {
+            if pointer_over_plugin
+                || pointer_over_window
+                || self.confirm_dialog.open
+                || ctx.is_pointer_over_area()
+            {
                 // Still allow right-click menu
                 if ctx.input(|i| i.pointer.secondary_clicked()) && !self.confirm_dialog.open {
                     let matched: Vec<ConnectionDefinition> = self
-            .workspace_manager.workspace
+                        .workspace_manager
+                        .workspace
                         .connections
                         .iter()
                         .filter(|conn| conn.from_plugin == from_id && conn.to_plugin == to_id)
@@ -945,7 +1041,8 @@ impl GuiApp {
             }
             if ctx.input(|i| i.pointer.secondary_clicked()) && !self.confirm_dialog.open {
                 let matched: Vec<ConnectionDefinition> = self
-            .workspace_manager.workspace
+                    .workspace_manager
+                    .workspace
                     .connections
                     .iter()
                     .filter(|conn| conn.from_plugin == from_id && conn.to_plugin == to_id)
@@ -1048,7 +1145,8 @@ impl GuiApp {
                         let mut remove_inputs: HashMap<u64, Vec<usize>> = HashMap::new();
                         for conn in &connections {
                             let extendable = self
-            .workspace_manager.workspace
+                                .workspace_manager
+                                .workspace
                                 .plugins
                                 .iter()
                                 .find(|p| p.id == conn.to_plugin)

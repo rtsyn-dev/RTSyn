@@ -46,7 +46,7 @@ mod tests {
             connections: Vec::new(),
             settings: WorkspaceSettings::default(),
         };
-        
+
         let runtime = Runtime::new(workspace);
         assert_eq!(runtime.config().name, "test");
         assert_eq!(runtime.config().target_hz, 500);
@@ -62,7 +62,7 @@ mod tests {
             connections: Vec::new(),
             settings: WorkspaceSettings::default(),
         };
-        
+
         let mut runtime = Runtime::new(workspace);
         assert!(runtime.tick().is_ok());
     }

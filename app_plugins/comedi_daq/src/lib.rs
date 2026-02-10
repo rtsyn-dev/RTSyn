@@ -43,8 +43,11 @@ mod comedilib {
         ) -> *mut comedi_range;
         pub fn comedi_get_maxdata(dev: *mut comedi_t, subdevice: c_uint, chan: c_uint) -> LsamplT;
 
-        pub fn comedi_to_phys(data: LsamplT, rng: *const comedi_range, maxdata: LsamplT)
-            -> c_double;
+        pub fn comedi_to_phys(
+            data: LsamplT,
+            rng: *const comedi_range,
+            maxdata: LsamplT,
+        ) -> c_double;
         pub fn comedi_from_phys(
             data: c_double,
             rng: *const comedi_range,
@@ -122,7 +125,11 @@ mod comedilib {
         }
     }
 
-    pub unsafe fn get_range(dev: *mut comedi_t, subd: u32, chan: u32) -> Result<comedi_range, String> {
+    pub unsafe fn get_range(
+        dev: *mut comedi_t,
+        subd: u32,
+        chan: u32,
+    ) -> Result<comedi_range, String> {
         let ptr = comedi_get_range(dev, subd as c_uint, chan as c_uint, 0);
         if ptr.is_null() {
             Err(last_error())
@@ -250,7 +257,9 @@ impl ComediDaqPlugin {
         if changed {
             self.device_path = device_path;
         }
-        if changed || (scan_devices && !self.last_scan_devices) || scan_nonce != self.last_scan_nonce
+        if changed
+            || (scan_devices && !self.last_scan_devices)
+            || scan_nonce != self.last_scan_nonce
         {
             self.auto_configure();
         }
@@ -276,7 +285,8 @@ impl ComediDaqPlugin {
         output_ports: &std::collections::HashSet<String>,
     ) {
         if self.active_inputs.len() != self.input_port_names.len() {
-            self.active_inputs.resize(self.input_port_names.len(), false);
+            self.active_inputs
+                .resize(self.input_port_names.len(), false);
         }
         if self.active_outputs.len() != self.output_port_names.len() {
             self.active_outputs
@@ -409,13 +419,12 @@ impl Plugin for ComediDaqPlugin {
             }
             let port = format!("ao{sd}_{ch}");
             if let Some(v) = self.input_values.get(&port) {
-                let range = unsafe { comedilib::get_range(dev, *sd, *ch) }
-                    .map_err(Self::comedi_error)?;
-                let max = unsafe { comedilib::get_maxdata(dev, *sd, *ch) }
-                    .map_err(Self::comedi_error)?;
+                let range =
+                    unsafe { comedilib::get_range(dev, *sd, *ch) }.map_err(Self::comedi_error)?;
+                let max =
+                    unsafe { comedilib::get_maxdata(dev, *sd, *ch) }.map_err(Self::comedi_error)?;
                 let raw = unsafe { comedilib::from_phys(*v, &range, max) };
-                unsafe { comedilib::write(dev, *sd, *ch, raw) }
-                    .map_err(Self::comedi_error)?;
+                unsafe { comedilib::write(dev, *sd, *ch, raw) }.map_err(Self::comedi_error)?;
             }
         }
 
@@ -424,10 +433,10 @@ impl Plugin for ComediDaqPlugin {
                 continue;
             }
             let raw = unsafe { comedilib::read(dev, *sd, *ch) }.map_err(Self::comedi_error)?;
-            let range = unsafe { comedilib::get_range(dev, *sd, *ch) }
-                .map_err(Self::comedi_error)?;
-            let max = unsafe { comedilib::get_maxdata(dev, *sd, *ch) }
-                .map_err(Self::comedi_error)?;
+            let range =
+                unsafe { comedilib::get_range(dev, *sd, *ch) }.map_err(Self::comedi_error)?;
+            let max =
+                unsafe { comedilib::get_maxdata(dev, *sd, *ch) }.map_err(Self::comedi_error)?;
             let phys = unsafe { comedilib::to_phys(raw, &range, max) };
 
             let port = format!("ai{sd}_{ch}");
@@ -513,7 +522,6 @@ impl Plugin for ComediDaqPlugin {
         }
         Ok(())
     }
-
 }
 
 impl DeviceDriver for ComediDaqPlugin {

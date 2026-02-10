@@ -1,5 +1,5 @@
-use crate::{GuiApp, spawn_file_dialog_thread};
 use crate::state::WorkspaceDialogMode;
+use crate::{spawn_file_dialog_thread, GuiApp};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -12,7 +12,10 @@ impl GuiApp {
             return;
         }
 
-        match self.workspace_manager.load_workspace(&self.workspace_manager.workspace_path.clone()) {
+        match self
+            .workspace_manager
+            .load_workspace(&self.workspace_manager.workspace_path.clone())
+        {
             Ok(()) => {
                 let name = self.workspace_manager.workspace.name.clone();
                 self.refresh_installed_library_paths();
@@ -46,12 +49,15 @@ impl GuiApp {
             self.show_info("Workspace", "Workspace name is required");
             return false;
         }
-        
-        if let Err(e) = self.workspace_manager.create_workspace(name, self.workspace_dialog.description_input.trim()) {
+
+        if let Err(e) = self
+            .workspace_manager
+            .create_workspace(name, self.workspace_dialog.description_input.trim())
+        {
             self.show_info("Workspace Error", &e);
             return false;
         }
-        
+
         self.plugin_manager.next_plugin_id = 1;
         self.plugin_manager.available_plugin_ids.clear();
         self.show_info("Workspace", &format!("Workspace '{}' created", name));
@@ -65,12 +71,15 @@ impl GuiApp {
             self.show_info("Workspace", "Workspace name is required");
             return false;
         }
-        
-        if let Err(e) = self.workspace_manager.save_workspace_as(name, self.workspace_dialog.description_input.trim()) {
+
+        if let Err(e) = self
+            .workspace_manager
+            .save_workspace_as(name, self.workspace_dialog.description_input.trim())
+        {
             self.show_info("Workspace Error", &e);
             return false;
         }
-        
+
         self.show_info("Workspace", &format!("Workspace '{}' saved", name));
         self.scan_workspaces();
         true
@@ -87,7 +96,10 @@ impl GuiApp {
             return;
         }
         let display_name = self.workspace_manager.workspace.name.clone();
-        self.show_info("Workspace", &format!("Workspace '{}' updated", display_name));
+        self.show_info(
+            "Workspace",
+            &format!("Workspace '{}' updated", display_name),
+        );
         self.scan_workspaces();
     }
 

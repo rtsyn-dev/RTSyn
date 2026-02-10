@@ -4,7 +4,22 @@ use std::sync::{Arc, Mutex};
 
 pub struct PlotterManager {
     pub plotters: HashMap<u64, Arc<Mutex<LivePlotter>>>,
-    pub plotter_preview_settings: HashMap<u64, (bool, bool, bool, Vec<String>, Vec<egui::Color32>, String, bool, String, String, bool, bool)>,
+    pub plotter_preview_settings: HashMap<
+        u64,
+        (
+            bool,
+            bool,
+            bool,
+            Vec<String>,
+            Vec<egui::Color32>,
+            String,
+            bool,
+            String,
+            String,
+            bool,
+            bool,
+        ),
+    >,
 }
 
 impl PlotterManager {

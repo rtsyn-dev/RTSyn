@@ -1,5 +1,5 @@
-use rtsyn_runtime::{Runtime, PluginSchedule};
 use rtsyn_plugin::{Plugin, PluginContext, PluginError, PluginId, PluginMeta, Port};
+use rtsyn_runtime::{PluginSchedule, Runtime};
 use serde_json::Value;
 use std::sync::{Arc, Mutex};
 

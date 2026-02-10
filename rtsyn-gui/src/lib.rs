@@ -1,6 +1,6 @@
+use eframe::{egui, egui::RichText};
 use rtsyn_runtime::runtime::{LogicMessage, LogicSettings, LogicState};
 use rtsyn_runtime::spawn_runtime;
-use eframe::{egui, egui::RichText};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -26,38 +26,45 @@ fn zenity_file_dialog(mode: &str, filter: Option<&str>) -> Option<PathBuf> {
     zenity_file_dialog_with_name(mode, filter, None)
 }
 
-fn zenity_file_dialog_with_name(mode: &str, filter: Option<&str>, filename: Option<&str>) -> Option<PathBuf> {
+fn zenity_file_dialog_with_name(
+    mode: &str,
+    filter: Option<&str>,
+    filename: Option<&str>,
+) -> Option<PathBuf> {
     let mut cmd = Command::new("zenity");
     cmd.arg("--file-selection");
-    
+
     match mode {
-        "save" => { cmd.arg("--save"); }
-        "folder" => { cmd.arg("--directory"); }
+        "save" => {
+            cmd.arg("--save");
+        }
+        "folder" => {
+            cmd.arg("--directory");
+        }
         _ => {} // open file is default
     }
-    
+
     if let Some(f) = filter {
         cmd.arg("--file-filter").arg(f);
     }
-    
+
     if let Some(name) = filename {
         cmd.arg("--filename").arg(name);
     }
-    
-    cmd.output().ok()
-        .and_then(|output| {
-            if output.status.success() {
-                let path_string = String::from_utf8_lossy(&output.stdout);
-                let path_str = path_string.trim();
-                if !path_str.is_empty() {
-                    Some(PathBuf::from(path_str))
-                } else {
-                    None
-                }
+
+    cmd.output().ok().and_then(|output| {
+        if output.status.success() {
+            let path_string = String::from_utf8_lossy(&output.stdout);
+            let path_str = path_string.trim();
+            if !path_str.is_empty() {
+                Some(PathBuf::from(path_str))
             } else {
                 None
             }
-        })
+        } else {
+            None
+        }
+    })
 }
 
 // Helper function to spawn file dialogs that work with RT
@@ -68,11 +75,7 @@ where
 {
     std::thread::spawn(f)
 }
-use workspace::{
-    input_sum, input_sum_any,
-    ConnectionDefinition,
-    WorkspaceSettings,
-};
+use workspace::{input_sum, input_sum_any, ConnectionDefinition, WorkspaceSettings};
 
 // Operation modules
 mod connection_operations;
@@ -81,6 +84,7 @@ mod plugin_operations;
 mod workspace_operations;
 
 // Core modules
+mod daemon_viewer;
 mod file_dialogs;
 mod notifications;
 mod plotter;
@@ -90,20 +94,17 @@ mod state_sync;
 mod ui;
 mod ui_state;
 mod utils;
-mod daemon_viewer;
 
 use file_dialogs::FileDialogManager;
 use notifications::Notification;
 use plotter::LivePlotter;
 use plotter_manager::PlotterManager;
 use rtsyn_core::plugin::PluginManager;
-use state_sync::StateSync;
 use rtsyn_core::workspace::WorkspaceManager;
 use state::{
-    WorkspaceTimingTab, ConfirmAction,
-    FrequencyUnit, PeriodUnit,
-    TimeUnit, WorkspaceDialogMode,
+    ConfirmAction, FrequencyUnit, PeriodUnit, TimeUnit, WorkspaceDialogMode, WorkspaceTimingTab,
 };
+use state_sync::StateSync;
 
 #[derive(Debug, Clone)]
 pub struct GuiConfig {
@@ -233,7 +234,7 @@ struct GuiApp {
     file_dialogs: FileDialogManager,
     plotter_manager: PlotterManager,
     state_sync: StateSync,
-    
+
     // UI State Groups
     plotter_preview: ui_state::PlotterPreviewState,
     connection_editor: ui_state::ConnectionEditorState,
@@ -242,7 +243,7 @@ struct GuiApp {
     confirm_dialog: ui_state::ConfirmDialogState,
     workspace_settings: ui_state::WorkspaceSettingsState,
     windows: ui_state::WindowState,
-    
+
     // Remaining UI State
     status: String,
     csv_path_target_plugin_id: Option<u64>,
@@ -286,20 +287,28 @@ impl GuiApp {
         let state_sync = StateSync::new(logic_tx, logic_state_rx);
 
         plugin_manager.refresh_library_paths();
-        workspace_manager.workspace.plugins.iter_mut().for_each(|p| {
-            if let Some(installed) = plugin_manager.installed_plugins.iter().find(|i| i.manifest.kind == p.kind) {
-                if let Some(lib_path) = &installed.library_path {
-                    if let Some(config) = p.config.as_object_mut() {
-                        config.insert(
-                            "library_path".to_string(),
-                            serde_json::Value::String(lib_path.to_string_lossy().to_string()),
-                        );
+        workspace_manager
+            .workspace
+            .plugins
+            .iter_mut()
+            .for_each(|p| {
+                if let Some(installed) = plugin_manager
+                    .installed_plugins
+                    .iter()
+                    .find(|i| i.manifest.kind == p.kind)
+                {
+                    if let Some(lib_path) = &installed.library_path {
+                        if let Some(config) = p.config.as_object_mut() {
+                            config.insert(
+                                "library_path".to_string(),
+                                serde_json::Value::String(lib_path.to_string_lossy().to_string()),
+                            );
+                        }
                     }
                 }
-            }
-        });
+            });
 
-        Self {
+        let mut app = Self {
             plugin_manager,
             workspace_manager,
             file_dialogs,
@@ -333,7 +342,9 @@ impl GuiApp {
             number_edit_buffers: HashMap::new(),
             window_rects: Vec::new(),
             pending_window_focus: None,
-        }
+        };
+        app.apply_workspace_settings();
+        app
     }
 
     fn center_window(ctx: &egui::Context, size: egui::Vec2) -> egui::Pos2 {
@@ -343,7 +354,13 @@ impl GuiApp {
     }
 
     fn sync_next_plugin_id(&mut self) {
-        let max_id = self.workspace_manager.workspace.plugins.iter().map(|p| p.id).max();
+        let max_id = self
+            .workspace_manager
+            .workspace
+            .plugins
+            .iter()
+            .map(|p| p.id)
+            .max();
         self.plugin_manager.sync_next_plugin_id(max_id);
     }
 
@@ -352,7 +369,10 @@ impl GuiApp {
     }
 
     fn restart_plugin(&mut self, plugin_id: u64) {
-        let _ = self.state_sync.logic_tx.send(LogicMessage::RestartPlugin(plugin_id));
+        let _ = self
+            .state_sync
+            .logic_tx
+            .send(LogicMessage::RestartPlugin(plugin_id));
     }
 
     fn display_kind(kind: &str) -> String {
@@ -390,7 +410,8 @@ impl GuiApp {
         match action {
             ConfirmAction::RemovePlugin(plugin_id) => {
                 if let Some(index) = self
-            .workspace_manager.workspace
+                    .workspace_manager
+                    .workspace
                     .plugins
                     .iter()
                     .position(|plugin| plugin.id == plugin_id)
@@ -452,12 +473,15 @@ impl GuiApp {
             };
             if self.state_sync.last_output_update.elapsed() >= output_interval {
                 // Filter out outputs from stopped plugins
-                let running_plugins: std::collections::HashSet<u64> = self.workspace_manager.workspace.plugins
+                let running_plugins: std::collections::HashSet<u64> = self
+                    .workspace_manager
+                    .workspace
+                    .plugins
                     .iter()
                     .filter(|p| p.running)
                     .map(|p| p.id)
                     .collect();
-                
+
                 let filtered_outputs: HashMap<(u64, String), f64> = outputs
                     .into_iter()
                     .filter(|((id, _), _)| running_plugins.contains(id))
@@ -466,11 +490,12 @@ impl GuiApp {
                     .into_iter()
                     .filter(|((id, _), _)| running_plugins.contains(id))
                     .collect();
-                let filtered_internals: HashMap<(u64, String), serde_json::Value> = internal_variable_values
-                    .into_iter()
-                    .filter(|((id, _), _)| running_plugins.contains(id))
-                    .collect();
-                
+                let filtered_internals: HashMap<(u64, String), serde_json::Value> =
+                    internal_variable_values
+                        .into_iter()
+                        .filter(|((id, _), _)| running_plugins.contains(id))
+                        .collect();
+
                 self.state_sync.computed_outputs = filtered_outputs;
                 self.state_sync.input_values = filtered_inputs;
                 self.state_sync.internal_variable_values = filtered_internals;
@@ -481,7 +506,8 @@ impl GuiApp {
     }
 
     fn ports_for_kind(&self, kind: &str, inputs: bool) -> Vec<String> {
-        self.plugin_manager.installed_plugins
+        self.plugin_manager
+            .installed_plugins
             .iter()
             .find(|plugin| plugin.manifest.kind == kind)
             .map(|plugin| {
@@ -496,29 +522,48 @@ impl GuiApp {
 
     fn is_extendable_inputs(&self, kind: &str) -> bool {
         if let Some(cached) = self.plugin_manager.plugin_behaviors.get(kind) {
-            return matches!(cached.extendable_inputs, rtsyn_plugin::ui::ExtendableInputs::Auto { .. } | rtsyn_plugin::ui::ExtendableInputs::Manual);
+            return matches!(
+                cached.extendable_inputs,
+                rtsyn_plugin::ui::ExtendableInputs::Auto { .. }
+                    | rtsyn_plugin::ui::ExtendableInputs::Manual
+            );
         }
         rtsyn_core::plugin::is_extendable_inputs(kind)
     }
 
     fn auto_extend_inputs(&self, kind: &str) -> bool {
         if let Some(cached) = self.plugin_manager.plugin_behaviors.get(kind) {
-            return matches!(cached.extendable_inputs, rtsyn_plugin::ui::ExtendableInputs::Auto { .. });
+            return matches!(
+                cached.extendable_inputs,
+                rtsyn_plugin::ui::ExtendableInputs::Auto { .. }
+            );
         }
         matches!(kind, "csv_recorder" | "live_plotter")
     }
-    
 
-    fn ensure_plugin_behavior_cached_with_path(&mut self, kind: &str, library_path: Option<&PathBuf>) {
+    fn ensure_plugin_behavior_cached_with_path(
+        &mut self,
+        kind: &str,
+        library_path: Option<&PathBuf>,
+    ) {
         if self.plugin_manager.plugin_behaviors.contains_key(kind) {
             return;
         }
-        
+
         let (tx, rx) = std::sync::mpsc::channel();
         let path_str = library_path.map(|p| p.to_string_lossy().to_string());
-        let _ = self.state_sync.logic_tx.send(LogicMessage::QueryPluginBehavior(kind.to_string(), path_str, tx));
+        let _ = self
+            .state_sync
+            .logic_tx
+            .send(LogicMessage::QueryPluginBehavior(
+                kind.to_string(),
+                path_str,
+                tx,
+            ));
         if let Ok(Some(behavior)) = rx.recv_timeout(std::time::Duration::from_millis(100)) {
-            self.plugin_manager.plugin_behaviors.insert(kind.to_string(), behavior);
+            self.plugin_manager
+                .plugin_behaviors
+                .insert(kind.to_string(), behavior);
         }
     }
 
@@ -526,16 +571,31 @@ impl GuiApp {
         if self.plugin_manager.plugin_behaviors.contains_key(kind) {
             return;
         }
-        
+
         let (tx, rx) = std::sync::mpsc::channel();
-        let _ = self.state_sync.logic_tx.send(LogicMessage::QueryPluginBehavior(kind.to_string(), None, tx));
+        let _ = self
+            .state_sync
+            .logic_tx
+            .send(LogicMessage::QueryPluginBehavior(
+                kind.to_string(),
+                None,
+                tx,
+            ));
         if let Ok(Some(behavior)) = rx.recv_timeout(std::time::Duration::from_millis(100)) {
-            self.plugin_manager.plugin_behaviors.insert(kind.to_string(), behavior);
+            self.plugin_manager
+                .plugin_behaviors
+                .insert(kind.to_string(), behavior);
         }
     }
 
     fn ports_for_plugin(&self, plugin_id: u64, inputs: bool) -> Vec<String> {
-        let Some(plugin) = self.workspace_manager.workspace.plugins.iter().find(|p| p.id == plugin_id) else {
+        let Some(plugin) = self
+            .workspace_manager
+            .workspace
+            .plugins
+            .iter()
+            .find(|p| p.id == plugin_id)
+        else {
             return Vec::new();
         };
         let extendable_inputs = self.is_extendable_inputs(&plugin.kind);
@@ -565,11 +625,13 @@ impl GuiApp {
 
     fn plugin_display_name(&self, plugin_id: u64) -> String {
         let name_by_kind: HashMap<String, String> = self
-            .plugin_manager.installed_plugins
+            .plugin_manager
+            .installed_plugins
             .iter()
             .map(|plugin| (plugin.manifest.kind.clone(), plugin.manifest.name.clone()))
             .collect();
-        self.workspace_manager.workspace
+        self.workspace_manager
+            .workspace
             .plugins
             .iter()
             .find(|plugin| plugin.id == plugin_id)
@@ -633,7 +695,8 @@ impl GuiApp {
         for idx in 0..input_count {
             let port = format!("in_{idx}");
             if let Some(conn) = self
-            .workspace_manager.workspace
+                .workspace_manager
+                .workspace
                 .connections
                 .iter()
                 .find(|conn| conn.to_plugin == plotter_id && conn.to_port == port)
@@ -658,9 +721,19 @@ impl GuiApp {
             let port = format!("in_{idx}");
             let value = if idx == 0 {
                 let ports = vec![port.clone(), "in".to_string()];
-                input_sum_any(&self.workspace_manager.workspace.connections, outputs, plotter_id, &ports)
+                input_sum_any(
+                    &self.workspace_manager.workspace.connections,
+                    outputs,
+                    plotter_id,
+                    &ports,
+                )
             } else {
-                input_sum(&self.workspace_manager.workspace.connections, outputs, plotter_id, &port)
+                input_sum(
+                    &self.workspace_manager.workspace.connections,
+                    outputs,
+                    plotter_id,
+                    &port,
+                )
             };
             values.push(value);
         }
@@ -686,7 +759,8 @@ impl GuiApp {
                 self.plotter_config_from_value(&plugin.config);
             let series_names = self.plotter_series_names(plugin.id, input_count);
             let is_open = self
-            .plotter_manager.plotters
+                .plotter_manager
+                .plotters
                 .get(&plugin.id)
                 .and_then(|plotter| plotter.lock().ok().map(|plotter| plotter.open))
                 .unwrap_or(false);
@@ -696,7 +770,8 @@ impl GuiApp {
                 Vec::new()
             };
             let plotter = self
-            .plotter_manager.plotters
+                .plotter_manager
+                .plotters
                 .entry(plugin.id)
                 .or_insert_with(|| Arc::new(Mutex::new(LivePlotter::new(plugin.id))));
             if let Ok(mut plotter) = plotter.lock() {
@@ -721,7 +796,12 @@ impl GuiApp {
                             );
                         }
                     } else {
-                        plotter.push_sample(tick, time_s, self.state_sync.logic_time_scale, &values);
+                        plotter.push_sample(
+                            tick,
+                            time_s,
+                            self.state_sync.logic_time_scale,
+                            &values,
+                        );
                     }
                     if refresh_hz > max_refresh {
                         max_refresh = refresh_hz;
@@ -730,7 +810,8 @@ impl GuiApp {
             }
         }
 
-        self.plotter_manager.plotters
+        self.plotter_manager
+            .plotters
             .retain(|plugin_id, _| live_plotter_ids.contains(plugin_id));
         self.refresh_logic_ui_hz(max_refresh);
     }
@@ -821,7 +902,8 @@ impl GuiApp {
         self.state_sync.logic_time_scale = time_scale;
         self.state_sync.logic_time_label = time_label.clone();
         let _ = self
-            .state_sync.logic_tx
+            .state_sync
+            .logic_tx
             .send(LogicMessage::UpdateSettings(LogicSettings {
                 cores,
                 period_seconds,
@@ -977,9 +1059,9 @@ impl eframe::App for GuiApp {
             ctx.request_repaint_after(Duration::from_millis(250));
         }
         if self.workspace_manager.workspace_dirty {
-            let _ = self
-            .state_sync.logic_tx
-                .send(LogicMessage::UpdateWorkspace(self.workspace_manager.workspace.clone()));
+            let _ = self.state_sync.logic_tx.send(LogicMessage::UpdateWorkspace(
+                self.workspace_manager.workspace.clone(),
+            ));
             self.workspace_manager.workspace_dirty = false;
         }
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -996,117 +1078,125 @@ impl eframe::App for GuiApp {
             ui.scope(|ui| {
                 let mut style = ui.style().as_ref().clone();
                 style.spacing.button_padding = egui::vec2(10.0, 6.0);
-                style.text_styles.insert(
-                    egui::TextStyle::Button,
-                    egui::FontId::proportional(15.0),
-                );
+                style
+                    .text_styles
+                    .insert(egui::TextStyle::Button, egui::FontId::proportional(15.0));
                 ui.set_style(style);
                 egui::menu::bar(ui, |ui| {
-                ui.menu_button("Workspace", |ui| {
-                    let label = if self.workspace_manager.workspace_path.as_os_str().is_empty() {
-                        "No Workspace loaded".to_string()
-                    } else {
-                        self.workspace_manager.workspace.name.clone()
-                    };
-                    ui.add_enabled(
-                        false,
-                        egui::Label::new(
-                            RichText::new(label)
-                                .color(egui::Color32::from_gray(230))
-                                .size(15.0),
-                        ),
-                    );
-                    ui.separator();
-                    if ui.button("New Workspace").clicked() {
-                        self.open_workspace_dialog(WorkspaceDialogMode::New);
-                        ui.close_menu();
-                    }
-                    if ui.button("Load Workspace").clicked() {
-                        self.open_load_workspaces();
-                        ui.close_menu();
-                    }
-                    if ui.button("Save Workspace").clicked() {
-                        self.save_workspace_overwrite_current();
-                        ui.close_menu();
-                    }
-                    let has_workspace = !self.workspace_manager.workspace_path.as_os_str().is_empty();
-                    if ui.add_enabled(has_workspace, egui::Button::new("Export Workspace")).clicked() {
-                        self.export_workspace_path(&self.workspace_manager.workspace_path.clone());
-                        ui.close_menu();
-                    }
-                    if ui
-                        .add_enabled(has_workspace, egui::Button::new("Delete Workspace"))
-                        .clicked()
-                    {
-                        self.show_confirm(
-                            "Delete workspace",
-                            "Delete current workspace?",
-                            "Delete",
-                            ConfirmAction::DeleteWorkspace(
-                                self.workspace_manager.workspace_path.clone(),
+                    ui.menu_button("Workspace", |ui| {
+                        let label = if self.workspace_manager.workspace_path.as_os_str().is_empty()
+                        {
+                            "No Workspace loaded".to_string()
+                        } else {
+                            self.workspace_manager.workspace.name.clone()
+                        };
+                        ui.add_enabled(
+                            false,
+                            egui::Label::new(
+                                RichText::new(label)
+                                    .color(egui::Color32::from_gray(230))
+                                    .size(15.0),
                             ),
                         );
-                        ui.close_menu();
-                    }
-                    if ui.button("Manage Workspaces").clicked() {
-                        self.open_manage_workspaces();
-                        ui.close_menu();
-                    }
-                });
+                        ui.separator();
+                        if ui.button("New Workspace").clicked() {
+                            self.open_workspace_dialog(WorkspaceDialogMode::New);
+                            ui.close_menu();
+                        }
+                        if ui.button("Load Workspace").clicked() {
+                            self.open_load_workspaces();
+                            ui.close_menu();
+                        }
+                        if ui.button("Save Workspace").clicked() {
+                            self.save_workspace_overwrite_current();
+                            ui.close_menu();
+                        }
+                        let has_workspace =
+                            !self.workspace_manager.workspace_path.as_os_str().is_empty();
+                        if ui
+                            .add_enabled(has_workspace, egui::Button::new("Export Workspace"))
+                            .clicked()
+                        {
+                            self.export_workspace_path(
+                                &self.workspace_manager.workspace_path.clone(),
+                            );
+                            ui.close_menu();
+                        }
+                        if ui
+                            .add_enabled(has_workspace, egui::Button::new("Delete Workspace"))
+                            .clicked()
+                        {
+                            self.show_confirm(
+                                "Delete workspace",
+                                "Delete current workspace?",
+                                "Delete",
+                                ConfirmAction::DeleteWorkspace(
+                                    self.workspace_manager.workspace_path.clone(),
+                                ),
+                            );
+                            ui.close_menu();
+                        }
+                        if ui.button("Manage Workspaces").clicked() {
+                            self.open_manage_workspaces();
+                            ui.close_menu();
+                        }
+                    });
 
-                ui.menu_button("Plugins", |ui| {
-                    if ui.button("Add plugins").clicked() {
-                        self.open_plugins();
-                        ui.close_menu();
-                    }
-                    if ui.button("Install plugin").clicked() {
-                        self.open_install_plugins();
-                        ui.close_menu();
-                    }
-                    if ui.button("Uninstall plugin").clicked() {
-                        self.open_uninstall_plugins();
-                        ui.close_menu();
-                    }
-                    if ui.button("Manage plugins").clicked() {
-                        self.open_manage_plugins();
-                        ui.close_menu();
-                    }
-                });
+                    ui.menu_button("Plugins", |ui| {
+                        if ui.button("Add plugins").clicked() {
+                            self.open_plugins();
+                            ui.close_menu();
+                        }
+                        if ui.button("Install plugin").clicked() {
+                            self.open_install_plugins();
+                            ui.close_menu();
+                        }
+                        if ui.button("Uninstall plugin").clicked() {
+                            self.open_uninstall_plugins();
+                            ui.close_menu();
+                        }
+                        if ui.button("Manage plugins").clicked() {
+                            self.open_manage_plugins();
+                            ui.close_menu();
+                        }
+                    });
 
-                ui.menu_button("Connections", |ui| {
-                    ui.set_width(220.0);
-                    let icon = if self.connections_view_enabled {
-                        "\u{f070}"
-                    } else {
-                        "\u{f06e}"
-                    };
-                    if ui
-                        .button(format!("Toggle connections view {icon}"))
-                        .clicked()
-                    {
-                        self.connections_view_enabled = !self.connections_view_enabled;
-                        ui.close_menu();
-                    }
-                    if ui.button("Manage connections").clicked() {
-                        self.windows.manage_connections_open = true;
-                        self.pending_window_focus = Some(WindowFocus::ManageConnections);
-                        ui.close_menu();
-                    }
-                });
+                    ui.menu_button("Connections", |ui| {
+                        ui.set_width(220.0);
+                        let icon = if self.connections_view_enabled {
+                            "\u{f070}"
+                        } else {
+                            "\u{f06e}"
+                        };
+                        if ui
+                            .button(format!("Toggle connections view {icon}"))
+                            .clicked()
+                        {
+                            self.connections_view_enabled = !self.connections_view_enabled;
+                            ui.close_menu();
+                        }
+                        if ui.button("Manage connections").clicked() {
+                            self.windows.manage_connections_open = true;
+                            self.pending_window_focus = Some(WindowFocus::ManageConnections);
+                            ui.close_menu();
+                        }
+                    });
 
-                ui.menu_button("Runtime", |ui| {
-                    if ui.button("Settings").clicked() {
-                        self.workspace_settings.open = true;
-                        self.pending_window_focus = Some(WindowFocus::WorkspaceSettings);
-                        ui.close_menu();
-                    }
-                });
+                    ui.menu_button("Runtime", |ui| {
+                        if ui.button("Settings").clicked() {
+                            self.workspace_settings.open = true;
+                            self.pending_window_focus = Some(WindowFocus::WorkspaceSettings);
+                            ui.close_menu();
+                        }
+                    });
 
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.add_space(6.0);
-                    ui.label(RichText::new(format!("RTSyn {}", env!("CARGO_PKG_VERSION"))).weak());
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.add_space(6.0);
+                        ui.label(
+                            RichText::new(format!("RTSyn {}", env!("CARGO_PKG_VERSION"))).weak(),
+                        );
+                    });
                 });
-            });
             });
         });
 

@@ -1,9 +1,11 @@
 use super::*;
 use crate::utils::{format_f64_with_input, normalize_numeric_input, parse_f64_input};
 use crate::WindowFocus;
-use crate::{BuildAction, LivePlotter, has_rt_capabilities, spawn_file_dialog_thread, zenity_file_dialog};
-use std::sync::{Arc, Mutex};
+use crate::{
+    has_rt_capabilities, spawn_file_dialog_thread, zenity_file_dialog, BuildAction, LivePlotter,
+};
 use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 
 fn kv_row_wrapped(
     ui: &mut egui::Ui,
@@ -20,13 +22,13 @@ fn kv_row_wrapped(
                 ui.add(egui::Label::new(label).wrap(true));
             },
         );
-        
+
         // Add spacing to reach fixed position
         let used_width = label_response.response.rect.width();
         if used_width < label_w {
             ui.add_space(label_w - used_width);
         }
-        
+
         ui.add_space(8.0);
         value_ui(ui);
     });
@@ -82,25 +84,34 @@ impl GuiApp {
     pub(crate) fn render_plugin_cards(&mut self, ctx: &egui::Context, panel_rect: egui::Rect) {
         let mut pending_info: Option<String> = None;
         let incoming_connections: HashSet<u64> = self
-            .workspace_manager.workspace
+            .workspace_manager
+            .workspace
             .connections
             .iter()
             .map(|conn| conn.to_plugin)
             .collect();
         let name_by_kind: HashMap<String, String> = self
-            .plugin_manager.installed_plugins
+            .plugin_manager
+            .installed_plugins
             .iter()
             .map(|plugin| (plugin.manifest.kind.clone(), plugin.manifest.name.clone()))
             .collect();
         let __manifest_by_kind: HashMap<String, PluginManifest> = self
-            .plugin_manager.installed_plugins
+            .plugin_manager
+            .installed_plugins
             .iter()
             .map(|plugin| (plugin.manifest.kind.clone(), plugin.manifest.clone()))
             .collect();
         let metadata_by_kind: HashMap<String, Vec<(String, f64)>> = self
-            .plugin_manager.installed_plugins
+            .plugin_manager
+            .installed_plugins
             .iter()
-            .map(|plugin| (plugin.manifest.kind.clone(), plugin.metadata_variables.clone()))
+            .map(|plugin| {
+                (
+                    plugin.manifest.kind.clone(),
+                    plugin.metadata_variables.clone(),
+                )
+            })
             .collect();
         let computed_outputs = self.state_sync.computed_outputs.clone();
         let input_values = self.state_sync.input_values.clone();
@@ -833,7 +844,10 @@ impl GuiApp {
             self.plugin_positions
                 .insert(plugin.id, response.response.rect.min);
             self.plugin_rects.insert(plugin.id, response.response.rect);
-            if ctx.input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary)) {
+            if ctx.input(|i| {
+                i.pointer
+                    .button_double_clicked(egui::PointerButton::Primary)
+            }) {
                 if response.response.hovered() && !self.confirm_dialog.open {
                     // Toggle selection
                     if self.selected_plugin_id == Some(plugin.id) {
@@ -863,20 +877,27 @@ impl GuiApp {
             index += 1;
         }
         if pending_workspace_update {
-            let _ = self
-            .state_sync.logic_tx
-                .send(LogicMessage::UpdateWorkspace(self.workspace_manager.workspace.clone()));
+            let _ = self.state_sync.logic_tx.send(LogicMessage::UpdateWorkspace(
+                self.workspace_manager.workspace.clone(),
+            ));
         }
         for (plugin_id, running) in pending_running {
             // Mark plugin as stopped BEFORE sending message to prevent one more update
             if !running {
-                if let Some(plugin) = self.workspace_manager.workspace.plugins.iter_mut().find(|p| p.id == plugin_id) {
+                if let Some(plugin) = self
+                    .workspace_manager
+                    .workspace
+                    .plugins
+                    .iter_mut()
+                    .find(|p| p.id == plugin_id)
+                {
                     plugin.running = false;
                 }
             }
-            
+
             let _ = self
-            .state_sync.logic_tx
+                .state_sync
+                .logic_tx
                 .send(LogicMessage::SetPluginRunning(plugin_id, running));
         }
         if recompute_plotter_needed {
@@ -901,12 +922,14 @@ impl GuiApp {
 
         if let Some(id) = remove_id {
             let name_by_kind: HashMap<String, String> = self
-            .plugin_manager.installed_plugins
+                .plugin_manager
+                .installed_plugins
                 .iter()
                 .map(|plugin| (plugin.manifest.kind.clone(), plugin.manifest.name.clone()))
                 .collect();
             let label = self
-            .workspace_manager.workspace
+                .workspace_manager
+                .workspace
                 .plugins
                 .iter()
                 .find(|plugin| plugin.id == id)
@@ -1003,7 +1026,10 @@ impl GuiApp {
                         ui.end_row();
                     });
 
-                if let Some(plugin) = installed_plugins.iter().find(|p| p.manifest.kind == manifest.kind) {
+                if let Some(plugin) = installed_plugins
+                    .iter()
+                    .find(|p| p.manifest.kind == manifest.kind)
+                {
                     if !plugin.metadata_variables.is_empty() {
                         ui.add_space(6.0);
                         ui.label(RichText::new("Variables").strong());
@@ -1035,7 +1061,8 @@ impl GuiApp {
 
     fn live_plotter_inputs_override(&self) -> Option<Vec<String>> {
         let plugin = self
-            .workspace_manager.workspace
+            .workspace_manager
+            .workspace
             .plugins
             .iter()
             .find(|p| p.kind == "live_plotter")?;
@@ -1117,8 +1144,10 @@ impl GuiApp {
                             ui.scope(|ui| {
                                 let mut style = ui.style().as_ref().clone();
                                 style.visuals.extreme_bg_color = egui::Color32::from_gray(50);
-                                style.visuals.widgets.inactive.bg_fill = egui::Color32::from_gray(50);
-                                style.visuals.widgets.hovered.bg_fill = egui::Color32::from_gray(55);
+                                style.visuals.widgets.inactive.bg_fill =
+                                    egui::Color32::from_gray(50);
+                                style.visuals.widgets.hovered.bg_fill =
+                                    egui::Color32::from_gray(55);
                                 style.visuals.widgets.active.bg_fill = egui::Color32::from_gray(60);
                                 ui.set_style(style);
                                 ui.add_sized(
@@ -1138,23 +1167,32 @@ impl GuiApp {
                                         .max_height(list_h)
                                         .min_scrolled_height(list_h)
                                         .show(ui, |ui| {
-                                            for (idx, installed) in self.plugin_manager.installed_plugins.iter().enumerate() {
+                                            for (idx, installed) in self
+                                                .plugin_manager
+                                                .installed_plugins
+                                                .iter()
+                                                .enumerate()
+                                            {
                                                 let label = installed.manifest.name.clone();
                                                 if !self.windows.plugin_search.trim().is_empty()
-                                                    && !label
-                                                        .to_lowercase()
-                                                        .contains(&self.windows.plugin_search.to_lowercase())
+                                                    && !label.to_lowercase().contains(
+                                                        &self.windows.plugin_search.to_lowercase(),
+                                                    )
                                                 {
                                                     continue;
                                                 }
                                                 let response = ui
                                                     .allocate_ui_with_layout(
                                                         egui::vec2(ui.available_width(), 22.0),
-                                                        egui::Layout::left_to_right(egui::Align::Center),
+                                                        egui::Layout::left_to_right(
+                                                            egui::Align::Center,
+                                                        ),
                                                         |ui| {
                                                             ui.add(egui::SelectableLabel::new(
-                                                                self.windows.plugin_selected_index == Some(idx),
-                                                                egui::RichText::new(label).size(14.0),
+                                                                self.windows.plugin_selected_index
+                                                                    == Some(idx),
+                                                                egui::RichText::new(label)
+                                                                    .size(14.0),
                                                             ))
                                                         },
                                                     )
@@ -1177,7 +1215,9 @@ impl GuiApp {
                         |ui| {
                             Self::render_preview_action_panel(ui, full_h, right_w, |ui| {
                                 if let Some(idx) = self.windows.plugin_selected_index {
-                                    if let Some(installed) = self.plugin_manager.installed_plugins.get(idx) {
+                                    if let Some(installed) =
+                                        self.plugin_manager.installed_plugins.get(idx)
+                                    {
                                         let inputs_override = self.live_plotter_inputs_override();
                                         Self::render_plugin_preview(
                                             ui,
@@ -1221,7 +1261,6 @@ impl GuiApp {
         }
         self.windows.plugins_open = window_open;
     }
-
 
     fn is_app_plugins_path(path: &std::path::Path) -> bool {
         path.components().any(|c| c.as_os_str() == "app_plugins")
@@ -1274,14 +1313,18 @@ impl GuiApp {
                             ui.scope(|ui| {
                                 let mut style = ui.style().as_ref().clone();
                                 style.visuals.extreme_bg_color = egui::Color32::from_gray(50);
-                                style.visuals.widgets.inactive.bg_fill = egui::Color32::from_gray(50);
-                                style.visuals.widgets.hovered.bg_fill = egui::Color32::from_gray(55);
+                                style.visuals.widgets.inactive.bg_fill =
+                                    egui::Color32::from_gray(50);
+                                style.visuals.widgets.hovered.bg_fill =
+                                    egui::Color32::from_gray(55);
                                 style.visuals.widgets.active.bg_fill = egui::Color32::from_gray(60);
                                 ui.set_style(style);
                                 ui.add_sized(
                                     [200.0, 24.0],
-                                    egui::TextEdit::singleline(&mut self.windows.manage_plugin_search)
-                                        .hint_text("Search plugins"),
+                                    egui::TextEdit::singleline(
+                                        &mut self.windows.manage_plugin_search,
+                                    )
+                                    .hint_text("Search plugins"),
                                 );
                             });
                             ui.add_space(6.0);
@@ -1296,23 +1339,40 @@ impl GuiApp {
                                         .max_height(list_h)
                                         .min_scrolled_height(list_h)
                                         .show(ui, |ui| {
-                                            for (idx, detected) in self.plugin_manager.detected_plugins.iter().enumerate() {
+                                            for (idx, detected) in self
+                                                .plugin_manager
+                                                .detected_plugins
+                                                .iter()
+                                                .enumerate()
+                                            {
                                                 let label = detected.manifest.name.clone();
-                                                if !self.windows.manage_plugin_search.trim().is_empty()
-                                                    && !label
-                                                        .to_lowercase()
-                                                        .contains(&self.windows.manage_plugin_search.to_lowercase())
+                                                if !self
+                                                    .windows
+                                                    .manage_plugin_search
+                                                    .trim()
+                                                    .is_empty()
+                                                    && !label.to_lowercase().contains(
+                                                        &self
+                                                            .windows
+                                                            .manage_plugin_search
+                                                            .to_lowercase(),
+                                                    )
                                                 {
                                                     continue;
                                                 }
                                                 let response = ui
                                                     .allocate_ui_with_layout(
                                                         egui::vec2(ui.available_width(), 22.0),
-                                                        egui::Layout::left_to_right(egui::Align::Center),
+                                                        egui::Layout::left_to_right(
+                                                            egui::Align::Center,
+                                                        ),
                                                         |ui| {
                                                             ui.add(egui::SelectableLabel::new(
-                                                                self.windows.manage_plugin_selected_index == Some(idx),
-                                                                egui::RichText::new(label).size(14.0),
+                                                                self.windows
+                                                                    .manage_plugin_selected_index
+                                                                    == Some(idx),
+                                                                egui::RichText::new(label)
+                                                                    .size(14.0),
                                                             ))
                                                         },
                                                     )
@@ -1332,19 +1392,25 @@ impl GuiApp {
                                 |ui| {
                                     ui.horizontal(|ui| {
                                         ui.label("Browse plugin folder");
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            if styled_button(ui, "Browse...").clicked() {
-                                                self.open_install_dialog();
-                                            }
-                                        });
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                if styled_button(ui, "Browse...").clicked() {
+                                                    self.open_install_dialog();
+                                                }
+                                            },
+                                        );
                                     });
                                     ui.horizontal(|ui| {
                                         ui.label("Rescan default plugins folder");
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            if styled_button(ui, "Rescan").clicked() {
-                                                rescan = true;
-                                            }
-                                        });
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                if styled_button(ui, "Rescan").clicked() {
+                                                    rescan = true;
+                                                }
+                                            },
+                                        );
                                     });
                                 },
                             );
@@ -1357,94 +1423,101 @@ impl GuiApp {
                         egui::vec2(right_w, full_h),
                         egui::Layout::top_down(egui::Align::LEFT),
                         |ui| {
-                            Self::render_preview_action_panel(
-                                ui,
-                                full_h,
-                                right_w,
-                                |ui| {
-                                    if let Some(idx) = self.windows.manage_plugin_selected_index {
-                                        if let Some(detected) = self.plugin_manager.detected_plugins.get(idx) {
-                                            let inputs_override = self.live_plotter_inputs_override();
-                                            Self::render_plugin_preview(
-                                                ui,
-                                                &detected.manifest,
-                                                inputs_override,
-                                                &detected.manifest.kind,
-                                                &serde_json::Value::Object(serde_json::Map::new()),
-                                                false,
-                                                &self.plugin_manager.installed_plugins,
-                                            );
+                            Self::render_preview_action_panel(ui, full_h, right_w, |ui| {
+                                if let Some(idx) = self.windows.manage_plugin_selected_index {
+                                    if let Some(detected) =
+                                        self.plugin_manager.detected_plugins.get(idx)
+                                    {
+                                        let inputs_override = self.live_plotter_inputs_override();
+                                        Self::render_plugin_preview(
+                                            ui,
+                                            &detected.manifest,
+                                            inputs_override,
+                                            &detected.manifest.kind,
+                                            &serde_json::Value::Object(serde_json::Map::new()),
+                                            false,
+                                            &self.plugin_manager.installed_plugins,
+                                        );
 
-                                            let is_installed = installed_kinds.contains(&detected.manifest.kind);
-                                            ui.add_space(12.0);
-                                            if !is_installed {
-                                                ui.horizontal_centered(|ui| {
-                                                    if ui
-                                                        .add_enabled(
-                                                            self.build_dialog.rx.is_none(),
-                                                            egui::Button::new("Install").min_size(BUTTON_SIZE),
-                                                        )
-                                                        .clicked()
-                                                    {
-                                                        install_selected = Some((
-                                                            BuildAction::Install {
-                                                                path: detected.path.clone(),
-                                                                removable: true,
-                                                                persist: true,
-                                                            },
-                                                            detected.manifest.name.clone(),
-                                                        ));
-                                                    }
-                                                });
-                                            } else if let Some(installed_idx) = self
+                                        let is_installed =
+                                            installed_kinds.contains(&detected.manifest.kind);
+                                        ui.add_space(12.0);
+                                        if !is_installed {
+                                            ui.horizontal_centered(|ui| {
+                                                if ui
+                                                    .add_enabled(
+                                                        self.build_dialog.rx.is_none(),
+                                                        egui::Button::new("Install")
+                                                            .min_size(BUTTON_SIZE),
+                                                    )
+                                                    .clicked()
+                                                {
+                                                    install_selected = Some((
+                                                        BuildAction::Install {
+                                                            path: detected.path.clone(),
+                                                            removable: true,
+                                                            persist: true,
+                                                        },
+                                                        detected.manifest.name.clone(),
+                                                    ));
+                                                }
+                                            });
+                                        } else if let Some(installed_idx) =
+                                            self.plugin_manager.installed_plugins.iter().position(
+                                                |p| p.manifest.kind == detected.manifest.kind,
+                                            )
+                                        {
+                                            let removable = self
                                                 .plugin_manager
                                                 .installed_plugins
-                                                .iter()
-                                                .position(|p| p.manifest.kind == detected.manifest.kind)
-                                            {
-                                                let removable = self
-                                                    .plugin_manager
-                                                    .installed_plugins
-                                                    .get(installed_idx)
-                                                    .map(|p| p.removable)
-                                                    .unwrap_or(false);
+                                                .get(installed_idx)
+                                                .map(|p| p.removable)
+                                                .unwrap_or(false);
 
-                                                ui.horizontal_centered(|ui| {
-                                                    if ui
-                                                        .add_enabled(
-                                                            removable && self.build_dialog.rx.is_none(),
-                                                            egui::Button::new("Reinstall").min_size(BUTTON_SIZE),
-                                                        )
-                                                        .clicked()
+                                            ui.horizontal_centered(|ui| {
+                                                if ui
+                                                    .add_enabled(
+                                                        removable && self.build_dialog.rx.is_none(),
+                                                        egui::Button::new("Reinstall")
+                                                            .min_size(BUTTON_SIZE),
+                                                    )
+                                                    .clicked()
+                                                {
+                                                    if let Some(installed) = self
+                                                        .plugin_manager
+                                                        .installed_plugins
+                                                        .get(installed_idx)
                                                     {
-                                                        if let Some(installed) = self.plugin_manager.installed_plugins.get(installed_idx) {
-                                                            reinstall_selected = Some((
-                                                                BuildAction::Reinstall {
-                                                                    kind: installed.manifest.kind.clone(),
-                                                                    path: installed.path.clone(),
-                                                                },
-                                                                installed.manifest.name.clone(),
-                                                            ));
-                                                        }
+                                                        reinstall_selected = Some((
+                                                            BuildAction::Reinstall {
+                                                                kind: installed
+                                                                    .manifest
+                                                                    .kind
+                                                                    .clone(),
+                                                                path: installed.path.clone(),
+                                                            },
+                                                            installed.manifest.name.clone(),
+                                                        ));
                                                     }
+                                                }
 
-                                                    if ui
-                                                        .add_enabled(
-                                                            removable,
-                                                            egui::Button::new("Uninstall").min_size(BUTTON_SIZE),
-                                                        )
-                                                        .clicked()
-                                                    {
-                                                        uninstall_selected = Some(installed_idx);
-                                                    }
-                                                });
-                                            }
+                                                if ui
+                                                    .add_enabled(
+                                                        removable,
+                                                        egui::Button::new("Uninstall")
+                                                            .min_size(BUTTON_SIZE),
+                                                    )
+                                                    .clicked()
+                                                {
+                                                    uninstall_selected = Some(installed_idx);
+                                                }
+                                            });
                                         }
-                                    } else {
-                                        ui.label("Select a plugin to preview.");
                                     }
-                                },
-                            );
+                                } else {
+                                    ui.label("Select a plugin to preview.");
+                                }
+                            });
                         },
                     );
                 });
@@ -1533,14 +1606,18 @@ impl GuiApp {
                             ui.scope(|ui| {
                                 let mut style = ui.style().as_ref().clone();
                                 style.visuals.extreme_bg_color = egui::Color32::from_gray(50);
-                                style.visuals.widgets.inactive.bg_fill = egui::Color32::from_gray(50);
-                                style.visuals.widgets.hovered.bg_fill = egui::Color32::from_gray(55);
+                                style.visuals.widgets.inactive.bg_fill =
+                                    egui::Color32::from_gray(50);
+                                style.visuals.widgets.hovered.bg_fill =
+                                    egui::Color32::from_gray(55);
                                 style.visuals.widgets.active.bg_fill = egui::Color32::from_gray(60);
                                 ui.set_style(style);
                                 ui.add_sized(
                                     [200.0, 24.0],
-                                    egui::TextEdit::singleline(&mut self.windows.install_plugin_search)
-                                        .hint_text("Search plugins"),
+                                    egui::TextEdit::singleline(
+                                        &mut self.windows.install_plugin_search,
+                                    )
+                                    .hint_text("Search plugins"),
                                 );
                             });
                             ui.add_space(6.0);
@@ -1555,26 +1632,42 @@ impl GuiApp {
                                         .max_height(list_h)
                                         .min_scrolled_height(list_h)
                                         .show(ui, |ui| {
-                                            for (idx, detected) in self.plugin_manager.detected_plugins.iter().enumerate() {
+                                            for (idx, detected) in self
+                                                .plugin_manager
+                                                .detected_plugins
+                                                .iter()
+                                                .enumerate()
+                                            {
                                                 if Self::is_app_plugins_path(&detected.path) {
                                                     continue;
                                                 }
                                                 let label = detected.manifest.name.clone();
-                                                if !self.windows.install_plugin_search.trim().is_empty()
-                                                    && !label
-                                                        .to_lowercase()
-                                                        .contains(&self.windows.install_plugin_search.to_lowercase())
+                                                if !self
+                                                    .windows
+                                                    .install_plugin_search
+                                                    .trim()
+                                                    .is_empty()
+                                                    && !label.to_lowercase().contains(
+                                                        &self
+                                                            .windows
+                                                            .install_plugin_search
+                                                            .to_lowercase(),
+                                                    )
                                                 {
                                                     continue;
                                                 }
                                                 let response = ui
                                                     .allocate_ui_with_layout(
                                                         egui::vec2(ui.available_width(), 22.0),
-                                                        egui::Layout::left_to_right(egui::Align::Center),
+                                                        egui::Layout::left_to_right(
+                                                            egui::Align::Center,
+                                                        ),
                                                         |ui| {
                                                             ui.add(egui::SelectableLabel::new(
-                                                                self.windows.install_selected_index == Some(idx),
-                                                                egui::RichText::new(label).size(14.0),
+                                                                self.windows.install_selected_index
+                                                                    == Some(idx),
+                                                                egui::RichText::new(label)
+                                                                    .size(14.0),
                                                             ))
                                                         },
                                                     )
@@ -1594,19 +1687,25 @@ impl GuiApp {
                                 |ui| {
                                     ui.horizontal(|ui| {
                                         ui.label("Browse plugin folder");
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            if styled_button(ui, "Browse...").clicked() {
-                                                self.open_install_dialog();
-                                            }
-                                        });
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                if styled_button(ui, "Browse...").clicked() {
+                                                    self.open_install_dialog();
+                                                }
+                                            },
+                                        );
                                     });
                                     ui.horizontal(|ui| {
                                         ui.label("Rescan default plugins folder");
-                                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                            if styled_button(ui, "Rescan").clicked() {
-                                                rescan = true;
-                                            }
-                                        });
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                if styled_button(ui, "Rescan").clicked() {
+                                                    rescan = true;
+                                                }
+                                            },
+                                        );
                                     });
                                 },
                             );
@@ -1621,7 +1720,9 @@ impl GuiApp {
                         |ui| {
                             Self::render_preview_action_panel(ui, full_h, right_w, |ui| {
                                 if let Some(idx) = self.windows.install_selected_index {
-                                    if let Some(detected) = self.plugin_manager.detected_plugins.get(idx) {
+                                    if let Some(detected) =
+                                        self.plugin_manager.detected_plugins.get(idx)
+                                    {
                                         if Self::is_app_plugins_path(&detected.path) {
                                             ui.label("Select a plugin to preview.");
                                             return;
@@ -1637,14 +1738,16 @@ impl GuiApp {
                                             &self.plugin_manager.installed_plugins,
                                         );
 
-                                        let is_installed = installed_kinds.contains(&detected.manifest.kind);
+                                        let is_installed =
+                                            installed_kinds.contains(&detected.manifest.kind);
                                         ui.add_space(12.0);
                                         if !is_installed {
                                             ui.horizontal_centered(|ui| {
                                                 if ui
                                                     .add_enabled(
                                                         self.build_dialog.rx.is_none(),
-                                                        egui::Button::new("Install").min_size(BUTTON_SIZE),
+                                                        egui::Button::new("Install")
+                                                            .min_size(BUTTON_SIZE),
                                                     )
                                                     .clicked()
                                                 {
@@ -1658,11 +1761,10 @@ impl GuiApp {
                                                     ));
                                                 }
                                             });
-                                        } else if let Some(installed_idx) = self
-                                            .plugin_manager
-                                            .installed_plugins
-                                            .iter()
-                                            .position(|p| p.manifest.kind == detected.manifest.kind)
+                                        } else if let Some(installed_idx) =
+                                            self.plugin_manager.installed_plugins.iter().position(
+                                                |p| p.manifest.kind == detected.manifest.kind,
+                                            )
                                         {
                                             let removable = self
                                                 .plugin_manager
@@ -1674,14 +1776,22 @@ impl GuiApp {
                                                 if ui
                                                     .add_enabled(
                                                         removable && self.build_dialog.rx.is_none(),
-                                                        egui::Button::new("Reinstall").min_size(BUTTON_SIZE),
+                                                        egui::Button::new("Reinstall")
+                                                            .min_size(BUTTON_SIZE),
                                                     )
                                                     .clicked()
                                                 {
-                                                    if let Some(installed) = self.plugin_manager.installed_plugins.get(installed_idx) {
+                                                    if let Some(installed) = self
+                                                        .plugin_manager
+                                                        .installed_plugins
+                                                        .get(installed_idx)
+                                                    {
                                                         reinstall_selected = Some((
                                                             BuildAction::Reinstall {
-                                                                kind: installed.manifest.kind.clone(),
+                                                                kind: installed
+                                                                    .manifest
+                                                                    .kind
+                                                                    .clone(),
                                                                 path: installed.path.clone(),
                                                             },
                                                             installed.manifest.name.clone(),
@@ -1766,14 +1876,18 @@ impl GuiApp {
                             ui.scope(|ui| {
                                 let mut style = ui.style().as_ref().clone();
                                 style.visuals.extreme_bg_color = egui::Color32::from_gray(50);
-                                style.visuals.widgets.inactive.bg_fill = egui::Color32::from_gray(50);
-                                style.visuals.widgets.hovered.bg_fill = egui::Color32::from_gray(55);
+                                style.visuals.widgets.inactive.bg_fill =
+                                    egui::Color32::from_gray(50);
+                                style.visuals.widgets.hovered.bg_fill =
+                                    egui::Color32::from_gray(55);
                                 style.visuals.widgets.active.bg_fill = egui::Color32::from_gray(60);
                                 ui.set_style(style);
                                 ui.add_sized(
                                     [200.0, 24.0],
-                                    egui::TextEdit::singleline(&mut self.windows.uninstall_plugin_search)
-                                        .hint_text("Search plugins"),
+                                    egui::TextEdit::singleline(
+                                        &mut self.windows.uninstall_plugin_search,
+                                    )
+                                    .hint_text("Search plugins"),
                                 );
                             });
                             ui.add_space(6.0);
@@ -1788,26 +1902,45 @@ impl GuiApp {
                                         .max_height(list_h)
                                         .min_scrolled_height(list_h)
                                         .show(ui, |ui| {
-                                            for (idx, installed) in self.plugin_manager.installed_plugins.iter().enumerate() {
-                                                if !installed.removable || Self::is_app_plugins_path(&installed.path) {
+                                            for (idx, installed) in self
+                                                .plugin_manager
+                                                .installed_plugins
+                                                .iter()
+                                                .enumerate()
+                                            {
+                                                if !installed.removable
+                                                    || Self::is_app_plugins_path(&installed.path)
+                                                {
                                                     continue;
                                                 }
                                                 let label = installed.manifest.name.clone();
-                                                if !self.windows.uninstall_plugin_search.trim().is_empty()
-                                                    && !label
-                                                        .to_lowercase()
-                                                        .contains(&self.windows.uninstall_plugin_search.to_lowercase())
+                                                if !self
+                                                    .windows
+                                                    .uninstall_plugin_search
+                                                    .trim()
+                                                    .is_empty()
+                                                    && !label.to_lowercase().contains(
+                                                        &self
+                                                            .windows
+                                                            .uninstall_plugin_search
+                                                            .to_lowercase(),
+                                                    )
                                                 {
                                                     continue;
                                                 }
                                                 let response = ui
                                                     .allocate_ui_with_layout(
                                                         egui::vec2(ui.available_width(), 22.0),
-                                                        egui::Layout::left_to_right(egui::Align::Center),
+                                                        egui::Layout::left_to_right(
+                                                            egui::Align::Center,
+                                                        ),
                                                         |ui| {
                                                             ui.add(egui::SelectableLabel::new(
-                                                                self.windows.uninstall_selected_index == Some(idx),
-                                                                egui::RichText::new(label).size(14.0),
+                                                                self.windows
+                                                                    .uninstall_selected_index
+                                                                    == Some(idx),
+                                                                egui::RichText::new(label)
+                                                                    .size(14.0),
                                                             ))
                                                         },
                                                     )
@@ -1830,8 +1963,12 @@ impl GuiApp {
                         |ui| {
                             Self::render_preview_action_panel(ui, full_h, right_w, |ui| {
                                 if let Some(idx) = self.windows.uninstall_selected_index {
-                                    if let Some(installed) = self.plugin_manager.installed_plugins.get(idx) {
-                                        if !installed.removable || Self::is_app_plugins_path(&installed.path) {
+                                    if let Some(installed) =
+                                        self.plugin_manager.installed_plugins.get(idx)
+                                    {
+                                        if !installed.removable
+                                            || Self::is_app_plugins_path(&installed.path)
+                                        {
                                             ui.label("Select a plugin to preview.");
                                             return;
                                         }
@@ -1850,7 +1987,8 @@ impl GuiApp {
                                             if ui
                                                 .add_enabled(
                                                     installed.removable,
-                                                    egui::Button::new("Uninstall").min_size(BUTTON_SIZE),
+                                                    egui::Button::new("Uninstall")
+                                                        .min_size(BUTTON_SIZE),
                                                 )
                                                 .clicked()
                                             {
@@ -2001,23 +2139,29 @@ impl GuiApp {
         };
 
         let name_by_kind: HashMap<String, String> = self
-            .plugin_manager.installed_plugins
+            .plugin_manager
+            .installed_plugins
             .iter()
             .map(|plugin| (plugin.manifest.kind.clone(), plugin.manifest.name.clone()))
             .collect();
 
-        let window_size =
-            if let Some(plugin) = self.workspace_manager.workspace.plugins.iter().find(|p| p.id == plugin_id) {
-                if plugin.kind == "csv_recorder" {
-                    egui::vec2(520.0, 360.0)
-                } else if plugin.kind == "live_plotter" {
-                    egui::vec2(420.0, 240.0)
-                } else {
-                    egui::vec2(320.0, 180.0)
-                }
+        let window_size = if let Some(plugin) = self
+            .workspace_manager
+            .workspace
+            .plugins
+            .iter()
+            .find(|p| p.id == plugin_id)
+        {
+            if plugin.kind == "csv_recorder" {
+                egui::vec2(520.0, 360.0)
+            } else if plugin.kind == "live_plotter" {
+                egui::vec2(420.0, 240.0)
             } else {
                 egui::vec2(320.0, 180.0)
-            };
+            }
+        } else {
+            egui::vec2(320.0, 180.0)
+        };
         let default_pos = Self::center_window(ctx, window_size);
         let response = egui::Window::new("Plugin config")
             .open(&mut open)
@@ -2027,29 +2171,32 @@ impl GuiApp {
             .fixed_size(window_size)
             .show(ctx, |ui| {
                 let plugin_index = self
-            .workspace_manager.workspace
+                    .workspace_manager
+                    .workspace
                     .plugins
                     .iter()
                     .position(|p| p.id == plugin_id);
                 if let Some(plugin_index) = plugin_index {
-                    let plugin_kind = self.workspace_manager.workspace.plugins[plugin_index].kind.clone();
+                    let plugin_kind = self.workspace_manager.workspace.plugins[plugin_index]
+                        .kind
+                        .clone();
                     let display_name = name_by_kind
                         .get(&plugin_kind)
                         .cloned()
                         .unwrap_or_else(|| Self::display_kind(&plugin_kind));
-                    let mut priority = self.workspace_manager.workspace.plugins[plugin_index].priority;
-                    let config = self.workspace_manager.workspace.plugins[plugin_index].config.clone();
+                    let mut priority =
+                        self.workspace_manager.workspace.plugins[plugin_index].priority;
+                    let config = self.workspace_manager.workspace.plugins[plugin_index]
+                        .config
+                        .clone();
                     let mut config_changed = false;
                     let pending_start: Option<bool> = None;
 
                     ui.horizontal(|ui| {
                         let (id_rect, _) =
                             ui.allocate_exact_size(egui::vec2(24.0, 24.0), egui::Sense::hover());
-                        ui.painter().rect_filled(
-                            id_rect,
-                            8.0,
-                            egui::Color32::from_gray(60),
-                        );
+                        ui.painter()
+                            .rect_filled(id_rect, 8.0, egui::Color32::from_gray(60));
                         ui.painter().text(
                             id_rect.center(),
                             egui::Align2::CENTER_CENTER,
@@ -2085,7 +2232,8 @@ impl GuiApp {
                     }
                     if let Some(running) = pending_start {
                         let _ = self
-            .state_sync.logic_tx
+                            .state_sync
+                            .logic_tx
                             .send(LogicMessage::SetPluginRunning(plugin_id, running));
                         self.mark_workspace_dirty();
                     }

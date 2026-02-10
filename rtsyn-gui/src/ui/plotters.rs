@@ -9,13 +9,15 @@ impl GuiApp {
         let mut settings_saved: Vec<u64> = Vec::new();
         let mut settings_closed: Vec<u64> = Vec::new();
         let name_by_id: HashMap<u64, String> = self
-            .workspace_manager.workspace
+            .workspace_manager
+            .workspace
             .plugins
             .iter()
             .map(|plugin| (plugin.id, self.plugin_display_name(plugin.id)))
             .collect();
         let plotter_ids: Vec<u64> = self
-            .plotter_manager.plotters
+            .plotter_manager
+            .plotters
             .iter()
             .filter_map(|(id, plotter)| {
                 plotter
@@ -39,19 +41,24 @@ impl GuiApp {
                 .with_close_button(false);
 
             let plotter = self
-            .plotter_manager.plotters
+                .plotter_manager
+                .plotters
                 .get(&plugin_id)
                 .cloned()
                 .expect("plotter exists");
             let plotter_for_viewport = plotter.clone();
-            let preview_settings = self.plotter_manager.plotter_preview_settings.get(&plugin_id).cloned();
+            let preview_settings = self
+                .plotter_manager
+                .plotter_preview_settings
+                .get(&plugin_id)
+                .cloned();
             let time_label = self.state_sync.logic_time_label.clone();
 
             ctx.show_viewport_deferred(viewport_id, builder, move |ctx, class| {
                 if class == egui::ViewportClass::Embedded {
                     return;
                 }
-                
+
                 egui::CentralPanel::default().show(ctx, |ui| {
                     if let Ok(mut plotter) = plotter_for_viewport.lock() {
                         let button_h = BUTTON_SIZE.y;
@@ -59,7 +66,10 @@ impl GuiApp {
                         let plot_margin = 10.0;
                         let available = ui.available_size();
                         let plot_h = (available.y - button_h - gap_h).max(0.0);
-                        let plot_rect = egui::Rect::from_min_size(ui.min_rect().min, egui::vec2(available.x, plot_h));
+                        let plot_rect = egui::Rect::from_min_size(
+                            ui.min_rect().min,
+                            egui::vec2(available.x, plot_h),
+                        );
                         let inner_rect = plot_rect.shrink2(egui::vec2(plot_margin, plot_margin));
                         ui.allocate_ui_at_rect(inner_rect, |ui| {
                             if let Some((
@@ -99,45 +109,64 @@ impl GuiApp {
                         let button_gap = 8.0;
                         let button_rect = egui::Rect::from_min_size(
                             egui::pos2(
-                                plot_rect.right() - (BUTTON_SIZE.x * 2.0 + button_gap) - plot_margin,
+                                plot_rect.right()
+                                    - (BUTTON_SIZE.x * 2.0 + button_gap)
+                                    - plot_margin,
                                 plot_rect.bottom() + gap_h,
                             ),
                             egui::vec2(BUTTON_SIZE.x * 2.0 + button_gap, BUTTON_SIZE.y),
                         );
                         ui.allocate_ui_at_rect(button_rect, |ui| {
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                let capture = styled_button(ui, egui::RichText::new("Capture").size(12.0))
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    let capture = styled_button(
+                                        ui,
+                                        egui::RichText::new("Capture").size(12.0),
+                                    )
                                     .on_hover_text("Save plot image");
-                                if capture.clicked() {
-                                    let export_open = egui::Id::new(("plotter_export_open", plugin_id));
-                                    let export_state = egui::Id::new(("plotter_export_state", plugin_id));
-                                    ctx.data_mut(|d| {
-                                        d.insert_temp(export_open, true);
-                                        if d.get_temp::<PlotterPreviewState>(export_state).is_none() {
-                                            d.insert_temp(export_state, settings_seed.clone());
-                                        }
-                                    });
-                                }
-                                let settings = styled_button(ui, egui::RichText::new("Settings").size(12.0))
+                                    if capture.clicked() {
+                                        let export_open =
+                                            egui::Id::new(("plotter_export_open", plugin_id));
+                                        let export_state =
+                                            egui::Id::new(("plotter_export_state", plugin_id));
+                                        ctx.data_mut(|d| {
+                                            d.insert_temp(export_open, true);
+                                            if d.get_temp::<PlotterPreviewState>(export_state)
+                                                .is_none()
+                                            {
+                                                d.insert_temp(export_state, settings_seed.clone());
+                                            }
+                                        });
+                                    }
+                                    let settings = styled_button(
+                                        ui,
+                                        egui::RichText::new("Settings").size(12.0),
+                                    )
                                     .on_hover_text("Plot settings");
-                                if settings.clicked() {
-                                    let open_id = egui::Id::new(("plotter_settings_open", plugin_id));
-                                    let state_id = egui::Id::new(("plotter_settings_state", plugin_id));
-                                    ctx.data_mut(|d| {
-                                        d.insert_temp(open_id, true);
-                                        if d.get_temp::<PlotterPreviewState>(state_id).is_none() {
-                                            d.insert_temp(state_id, settings_seed.clone());
-                                        }
-                                    });
-                                }
-                            });
+                                    if settings.clicked() {
+                                        let open_id =
+                                            egui::Id::new(("plotter_settings_open", plugin_id));
+                                        let state_id =
+                                            egui::Id::new(("plotter_settings_state", plugin_id));
+                                        ctx.data_mut(|d| {
+                                            d.insert_temp(open_id, true);
+                                            if d.get_temp::<PlotterPreviewState>(state_id).is_none()
+                                            {
+                                                d.insert_temp(state_id, settings_seed.clone());
+                                            }
+                                        });
+                                    }
+                                },
+                            );
                         });
-                        
+
                         let export_open = egui::Id::new(("plotter_export_open", plugin_id));
                         let export_state = egui::Id::new(("plotter_export_state", plugin_id));
                         let export_save = egui::Id::new(("plotter_export_save", plugin_id));
                         let export_close = egui::Id::new(("plotter_export_close", plugin_id));
-                        let mut export_is_open = ctx.data(|d| d.get_temp::<bool>(export_open).unwrap_or(false));
+                        let mut export_is_open =
+                            ctx.data(|d| d.get_temp::<bool>(export_open).unwrap_or(false));
                         if export_is_open {
                             let mut state = ctx
                                 .data(|d| d.get_temp::<PlotterPreviewState>(export_state))
@@ -224,20 +253,22 @@ impl GuiApp {
                                     });
                                     ui.separator();
                                     ui.label("Series customization:");
-                                    egui::ScrollArea::vertical().max_height(150.0).show(ui, |ui| {
-                                        for (i, (name, color)) in state
-                                            .series_names
-                                            .iter_mut()
-                                            .zip(state.colors.iter_mut())
-                                            .enumerate()
-                                        {
-                                            ui.horizontal(|ui| {
-                                                ui.label(format!("Series {}:", i + 1));
-                                                ui.text_edit_singleline(name);
-                                                ui.color_edit_button_srgba(color);
-                                            });
-                                        }
-                                    });
+                                    egui::ScrollArea::vertical()
+                                        .max_height(150.0)
+                                        .show(ui, |ui| {
+                                            for (i, (name, color)) in state
+                                                .series_names
+                                                .iter_mut()
+                                                .zip(state.colors.iter_mut())
+                                                .enumerate()
+                                            {
+                                                ui.horizontal(|ui| {
+                                                    ui.label(format!("Series {}:", i + 1));
+                                                    ui.text_edit_singleline(name);
+                                                    ui.color_edit_button_srgba(color);
+                                                });
+                                            }
+                                        });
                                     ui.separator();
                                     let preview_rect = ui.available_rect_before_wrap();
                                     let preview_size = egui::vec2(preview_rect.width(), 200.0);
@@ -278,17 +309,32 @@ impl GuiApp {
             });
 
             // Check for capture request
-            if ctx.data(|d| d.get_temp::<bool>(egui::Id::new(("plotter_export_save", plugin_id))).unwrap_or(false)) {
+            if ctx.data(|d| {
+                d.get_temp::<bool>(egui::Id::new(("plotter_export_save", plugin_id)))
+                    .unwrap_or(false)
+            }) {
                 export_saved.push(plugin_id);
-                ctx.data_mut(|d| d.remove::<bool>(egui::Id::new(("plotter_export_save", plugin_id))));
+                ctx.data_mut(|d| {
+                    d.remove::<bool>(egui::Id::new(("plotter_export_save", plugin_id)))
+                });
             }
-            if ctx.data(|d| d.get_temp::<bool>(egui::Id::new(("plotter_settings_save", plugin_id))).unwrap_or(false)) {
+            if ctx.data(|d| {
+                d.get_temp::<bool>(egui::Id::new(("plotter_settings_save", plugin_id)))
+                    .unwrap_or(false)
+            }) {
                 settings_saved.push(plugin_id);
-                ctx.data_mut(|d| d.remove::<bool>(egui::Id::new(("plotter_settings_save", plugin_id))));
+                ctx.data_mut(|d| {
+                    d.remove::<bool>(egui::Id::new(("plotter_settings_save", plugin_id)))
+                });
             }
-            if ctx.data(|d| d.get_temp::<bool>(egui::Id::new(("plotter_settings_close", plugin_id))).unwrap_or(false)) {
+            if ctx.data(|d| {
+                d.get_temp::<bool>(egui::Id::new(("plotter_settings_close", plugin_id)))
+                    .unwrap_or(false)
+            }) {
                 settings_closed.push(plugin_id);
-                ctx.data_mut(|d| d.remove::<bool>(egui::Id::new(("plotter_settings_close", plugin_id))));
+                ctx.data_mut(|d| {
+                    d.remove::<bool>(egui::Id::new(("plotter_settings_close", plugin_id)))
+                });
             }
 
             if ctx.embed_viewports() {
@@ -309,7 +355,11 @@ impl GuiApp {
                                 y_axis,
                                 _high_quality,
                                 _export_svg,
-                            )) = self.plotter_manager.plotter_preview_settings.get(&plugin_id).cloned()
+                            )) = self
+                                .plotter_manager
+                                .plotter_preview_settings
+                                .get(&plugin_id)
+                                .cloned()
                             {
                                 plotter.render_with_settings(
                                     ui,
@@ -353,10 +403,19 @@ impl GuiApp {
                 }
             }
             // Stop the plugin when plot window closes
-            if let Some(plugin) = self.workspace_manager.workspace.plugins.iter_mut().find(|p| p.id == id) {
+            if let Some(plugin) = self
+                .workspace_manager
+                .workspace
+                .plugins
+                .iter_mut()
+                .find(|p| p.id == id)
+            {
                 if plugin.running {
                     plugin.running = false;
-                    let _ = self.state_sync.logic_tx.send(LogicMessage::SetPluginRunning(id, false));
+                    let _ = self
+                        .state_sync
+                        .logic_tx
+                        .send(LogicMessage::SetPluginRunning(id, false));
                     self.mark_workspace_dirty();
                 }
             }
@@ -387,7 +446,24 @@ impl GuiApp {
     fn build_plotter_preview_state(&self, plugin_id: u64) -> PlotterPreviewState {
         let mut state = PlotterPreviewState::default();
         state.target = Some(plugin_id);
-        if let Some((show_axes, show_legend, show_grid, series_names, colors, title, dark_theme, x_axis, y_axis, high_quality, export_svg)) = self.plotter_manager.plotter_preview_settings.get(&plugin_id).cloned() {
+        if let Some((
+            show_axes,
+            show_legend,
+            show_grid,
+            series_names,
+            colors,
+            title,
+            dark_theme,
+            x_axis,
+            y_axis,
+            high_quality,
+            export_svg,
+        )) = self
+            .plotter_manager
+            .plotter_preview_settings
+            .get(&plugin_id)
+            .cloned()
+        {
             state.show_axes = show_axes;
             state.show_legend = show_legend;
             state.show_grid = show_grid;
@@ -480,7 +556,7 @@ impl GuiApp {
         };
 
         let mut save_requested = false;
-        
+
         egui::Window::new("Plot Preview & Export")
             .resizable(true)
             .default_size(egui::vec2(600.0, 500.0))
@@ -489,7 +565,7 @@ impl GuiApp {
                     ui.label("Title:");
                     ui.text_edit_singleline(&mut self.plotter_preview.title);
                 });
-                
+
                 ui.horizontal(|ui| {
                     ui.checkbox(&mut self.plotter_preview.show_axes, "Show axes");
                     ui.checkbox(&mut self.plotter_preview.show_legend, "Show legend");
@@ -507,19 +583,23 @@ impl GuiApp {
                 ui.separator();
                 ui.label("Series customization:");
 
-                egui::ScrollArea::vertical().max_height(150.0).show(ui, |ui| {
-                    for (i, (name, color)) in self.plotter_preview.series_names
-                        .iter_mut()
-                        .zip(self.plotter_preview.colors.iter_mut())
-                        .enumerate()
-                    {
-                        ui.horizontal(|ui| {
-                            ui.label(format!("Series {}:", i + 1));
-                            ui.text_edit_singleline(name);
-                            ui.color_edit_button_srgba(color);
-                        });
-                    }
-                });
+                egui::ScrollArea::vertical()
+                    .max_height(150.0)
+                    .show(ui, |ui| {
+                        for (i, (name, color)) in self
+                            .plotter_preview
+                            .series_names
+                            .iter_mut()
+                            .zip(self.plotter_preview.colors.iter_mut())
+                            .enumerate()
+                        {
+                            ui.horizontal(|ui| {
+                                ui.label(format!("Series {}:", i + 1));
+                                ui.text_edit_singleline(name);
+                                ui.color_edit_button_srgba(color);
+                            });
+                        }
+                    });
 
                 ui.separator();
 
@@ -527,13 +607,13 @@ impl GuiApp {
                 ui.label("Preview:");
                 let preview_rect = ui.available_rect_before_wrap();
                 let preview_size = egui::vec2(preview_rect.width(), 200.0);
-                
+
                 if let Some(plotter) = self.plotter_manager.plotters.get(&plugin_id) {
                     if let Ok(mut plotter) = plotter.lock() {
                         ui.allocate_ui(preview_size, |ui| {
                             plotter.render_with_settings(
-                                ui, 
-                                "Preview", 
+                                ui,
+                                "Preview",
                                 &self.state_sync.logic_time_label,
                                 self.plotter_preview.show_axes,
                                 self.plotter_preview.show_legend,
@@ -554,33 +634,45 @@ impl GuiApp {
                 ui.horizontal(|ui| {
                     ui.checkbox(&mut self.plotter_preview.export_svg, "Export as SVG");
                 });
-                
+
                 ui.horizontal(|ui| {
                     ui.label("Resolution:");
                     let old_width = self.plotter_preview.width;
-                    ui.add_enabled(!self.plotter_preview.export_svg, 
-                        egui::DragValue::new(&mut self.plotter_preview.width).clamp_range(400..=4000).suffix("px"));
-                    
+                    ui.add_enabled(
+                        !self.plotter_preview.export_svg,
+                        egui::DragValue::new(&mut self.plotter_preview.width)
+                            .clamp_range(400..=4000)
+                            .suffix("px"),
+                    );
+
                     // Update height proportionally if width changed
                     if self.plotter_preview.width != old_width && !self.plotter_preview.export_svg {
                         let ratio = 16.0 / 9.0;
-                        self.plotter_preview.height = (self.plotter_preview.width as f32 / ratio) as u32;
+                        self.plotter_preview.height =
+                            (self.plotter_preview.width as f32 / ratio) as u32;
                     }
-                    
+
                     ui.label("×");
                     let old_height = self.plotter_preview.height;
-                    ui.add_enabled(!self.plotter_preview.export_svg, 
-                        egui::DragValue::new(&mut self.plotter_preview.height).clamp_range(300..=3000).suffix("px"));
-                    
+                    ui.add_enabled(
+                        !self.plotter_preview.export_svg,
+                        egui::DragValue::new(&mut self.plotter_preview.height)
+                            .clamp_range(300..=3000)
+                            .suffix("px"),
+                    );
+
                     // Update width proportionally if height changed
-                    if self.plotter_preview.height != old_height && !self.plotter_preview.export_svg {
+                    if self.plotter_preview.height != old_height && !self.plotter_preview.export_svg
+                    {
                         let ratio = 16.0 / 9.0;
-                        self.plotter_preview.width = (self.plotter_preview.height as f32 * ratio) as u32;
+                        self.plotter_preview.width =
+                            (self.plotter_preview.height as f32 * ratio) as u32;
                     }
-                    
+
                     if styled_button(ui, "16:9").clicked() && !self.plotter_preview.export_svg {
                         let ratio = 16.0 / 9.0;
-                        self.plotter_preview.height = (self.plotter_preview.width as f32 / ratio) as u32;
+                        self.plotter_preview.height =
+                            (self.plotter_preview.width as f32 / ratio) as u32;
                     }
                 });
 

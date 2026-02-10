@@ -11,7 +11,10 @@ pub fn extendable_input_index(port: &str) -> Option<usize> {
     }
 }
 
-pub fn next_available_extendable_input_index(workspace: &WorkspaceDefinition, plugin_id: u64) -> usize {
+pub fn next_available_extendable_input_index(
+    workspace: &WorkspaceDefinition,
+    plugin_id: u64,
+) -> usize {
     let mut used = std::collections::HashSet::new();
     for connection in &workspace.connections {
         if connection.to_plugin == plugin_id {
@@ -56,10 +59,7 @@ pub fn ensure_extendable_input_count(
             }
         }
     };
-    let mut input_count = map
-        .get("input_count")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as usize;
+    let mut input_count = map.get("input_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
     if input_count < required_count {
         input_count = required_count;
         map.insert("input_count".to_string(), Value::from(input_count as u64));
@@ -105,7 +105,11 @@ pub fn sync_extendable_input_count(workspace: &mut WorkspaceDefinition, plugin_i
         if conn.to_plugin != plugin_id {
             continue;
         }
-        if let Some(idx) = conn.to_port.strip_prefix("in_").and_then(|v| v.parse().ok()) {
+        if let Some(idx) = conn
+            .to_port
+            .strip_prefix("in_")
+            .and_then(|v| v.parse().ok())
+        {
             max_idx = Some(max_idx.map(|v| v.max(idx)).unwrap_or(idx));
         }
     }
@@ -120,7 +124,10 @@ pub fn sync_extendable_input_count(workspace: &mut WorkspaceDefinition, plugin_i
             }
         }
     };
-    map.insert("input_count".to_string(), Value::from(required_count as u64));
+    map.insert(
+        "input_count".to_string(),
+        Value::from(required_count as u64),
+    );
     if plugin.kind == "csv_recorder" {
         let mut columns: Vec<String> = map
             .get("columns")
@@ -190,7 +197,8 @@ pub fn add_connection(
     let input_idx = to_port_string
         .strip_prefix("in_")
         .and_then(|v| v.parse::<usize>().ok());
-    let default_column = input_idx.map(|idx| default_csv_column(workspace, installed, to_plugin, idx));
+    let default_column =
+        input_idx.map(|idx| default_csv_column(workspace, installed, to_plugin, idx));
 
     let connection = ConnectionDefinition {
         from_plugin,
@@ -212,10 +220,8 @@ pub fn add_connection(
         if let Some(plugin) = workspace.plugins.iter_mut().find(|p| p.id == to_plugin) {
             if plugin.kind == "csv_recorder" {
                 if let Value::Object(ref mut map) = plugin.config {
-                    let input_count = map
-                        .get("input_count")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0) as usize;
+                    let input_count =
+                        map.get("input_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
                     let mut columns: Vec<String> = map
                         .get("columns")
                         .and_then(|v| v.as_array())

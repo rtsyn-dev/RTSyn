@@ -1,8 +1,13 @@
-use crate::protocol::{ConnectionSummary, DaemonRequest, DaemonResponse, PluginSummary, WorkspaceSummary, RuntimePluginSummary, RuntimePluginState, DEFAULT_SOCKET_PATH};
 use crate::protocol::RuntimeSettingsOptions;
+use crate::protocol::{
+    ConnectionSummary, DaemonRequest, DaemonResponse, PluginSummary, RuntimePluginState,
+    RuntimePluginSummary, WorkspaceSummary, DEFAULT_SOCKET_PATH,
+};
 use rtsyn_core::connection::next_available_extendable_input_index;
-use rtsyn_core::plugin::{is_extendable_inputs, InstalledPlugin, PluginCatalog, PluginMetadataSource};
-use rtsyn_core::workspace::WorkspaceManager;
+use rtsyn_core::plugin::{
+    is_extendable_inputs, InstalledPlugin, PluginCatalog, PluginMetadataSource,
+};
+use rtsyn_core::workspace::{RuntimeSettingsSaveTarget, WorkspaceManager};
 use rtsyn_runtime::runtime::{spawn_runtime, LogicMessage, LogicState};
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -43,11 +48,18 @@ impl PluginMetadataSource for RuntimeQuery {
         &self,
         library_path: &str,
         timeout: Duration,
-    ) -> Option<(Vec<String>, Vec<String>, Vec<(String, f64)>, Option<rtsyn_plugin::ui::DisplaySchema>, Option<rtsyn_plugin::ui::UISchema>)> {
+    ) -> Option<(
+        Vec<String>,
+        Vec<String>,
+        Vec<(String, f64)>,
+        Option<rtsyn_plugin::ui::DisplaySchema>,
+        Option<rtsyn_plugin::ui::UISchema>,
+    )> {
         let (tx, rx) = mpsc::channel();
-        let _ = self
-            .logic_tx
-            .send(LogicMessage::QueryPluginMetadata(library_path.to_string(), tx));
+        let _ = self.logic_tx.send(LogicMessage::QueryPluginMetadata(
+            library_path.to_string(),
+            tx,
+        ));
         rx.recv_timeout(timeout).ok().flatten()
     }
 
@@ -110,7 +122,9 @@ impl DaemonState {
         let _ = self
             .runtime_query
             .logic_tx
-            .send(LogicMessage::UpdateWorkspace(self.workspace_manager.workspace.clone()));
+            .send(LogicMessage::UpdateWorkspace(
+                self.workspace_manager.workspace.clone(),
+            ));
     }
 
     fn drain_logic_states(&mut self) {
@@ -143,7 +157,12 @@ pub fn run_daemon_at(socket_path: &str) -> Result<(), String> {
 
     let install_db_path = PathBuf::from("app_plugins").join("installed_plugins.json");
     let workspace_dir = PathBuf::from("app_workspaces");
-    let mut state = DaemonState::new(install_db_path, workspace_dir, logic_tx.clone(), logic_state_rx);
+    let mut state = DaemonState::new(
+        install_db_path,
+        workspace_dir,
+        logic_tx.clone(),
+        logic_state_rx,
+    );
     state.refresh_runtime();
 
     let listener = UnixListener::bind(socket_path)
@@ -151,18 +170,16 @@ pub fn run_daemon_at(socket_path: &str) -> Result<(), String> {
 
     for stream in listener.incoming() {
         match stream {
-            Ok(stream) => {
-                match handle_client(stream, &mut state) {
-                    Ok(()) => {}
-                    Err(err) if err == "daemon_stop" => {
-                        let _ = std::fs::remove_file(socket_path);
-                        return Ok(());
-                    }
-                    Err(err) => {
-                        eprintln!("[RTSyn][ERROR]: Daemon client error: {err}");
-                    }
+            Ok(stream) => match handle_client(stream, &mut state) {
+                Ok(()) => {}
+                Err(err) if err == "daemon_stop" => {
+                    let _ = std::fs::remove_file(socket_path);
+                    return Ok(());
                 }
-            }
+                Err(err) => {
+                    eprintln!("[RTSyn][ERROR]: Daemon client error: {err}");
+                }
+            },
             Err(err) => {
                 eprintln!("[RTSyn][ERROR]: Daemon accept error: {err}");
             }
@@ -179,8 +196,7 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
     if bytes == 0 || line.trim().is_empty() {
         return Ok(());
     }
-    let request: DaemonRequest =
-        serde_json::from_str(line.trim()).map_err(|e| e.to_string())?;
+    let request: DaemonRequest = serde_json::from_str(line.trim()).map_err(|e| e.to_string())?;
     let mut stream = reader.into_inner();
 
     let response = match request {
@@ -213,8 +229,7 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
                     message: "Plugin install path must be absolute".to_string(),
                 }
             } else {
-                let resolved = std::fs::canonicalize(&install_path)
-                    .unwrap_or(install_path);
+                let resolved = std::fs::canonicalize(&install_path).unwrap_or(install_path);
                 match state.catalog.install_plugin_from_folder(
                     resolved,
                     true,
@@ -230,7 +245,10 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
         }
         DaemonRequest::PluginReinstall { name } => {
             let key = normalize_plugin_key(&name);
-            match state.catalog.reinstall_plugin_by_kind(&key, &state.runtime_query) {
+            match state
+                .catalog
+                .reinstall_plugin_by_kind(&key, &state.runtime_query)
+            {
                 Ok(()) => DaemonResponse::Ok {
                     message: "Plugin reinstalled".to_string(),
                 },
@@ -249,40 +267,35 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
         DaemonRequest::PluginUninstall { name } => {
             let key = normalize_plugin_key(&name);
             match state.catalog.uninstall_plugin_by_kind(&key) {
-            Ok(plugin) => {
-                let removed_ids = state
-                    .catalog
-                    .remove_plugins_by_kind_from_workspace(
+                Ok(plugin) => {
+                    let removed_ids = state.catalog.remove_plugins_by_kind_from_workspace(
                         &plugin.manifest.kind,
                         &mut state.workspace_manager.workspace,
                     );
-                if !removed_ids.is_empty() {
-                    state.refresh_runtime();
+                    if !removed_ids.is_empty() {
+                        state.refresh_runtime();
+                    }
+                    DaemonResponse::Ok {
+                        message: "Plugin uninstalled".to_string(),
+                    }
                 }
-                DaemonResponse::Ok {
-                    message: "Plugin uninstalled".to_string(),
-                }
+                Err(err) => DaemonResponse::Error { message: err },
             }
-            Err(err) => DaemonResponse::Error { message: err },
         }
-        },
         DaemonRequest::PluginAdd { name } => {
             let key = normalize_plugin_key(&name);
-            match state
-                .catalog
-                .add_installed_plugin_to_workspace(
-                    &key,
-                    &mut state.workspace_manager.workspace,
-                    &state.runtime_query,
-                )
-        {
-            Ok(id) => {
-                state.refresh_runtime();
-                DaemonResponse::PluginAdded { id }
+            match state.catalog.add_installed_plugin_to_workspace(
+                &key,
+                &mut state.workspace_manager.workspace,
+                &state.runtime_query,
+            ) {
+                Ok(id) => {
+                    state.refresh_runtime();
+                    DaemonResponse::PluginAdded { id }
+                }
+                Err(err) => DaemonResponse::Error { message: err },
             }
-            Err(err) => DaemonResponse::Error { message: err },
         }
-        },
         DaemonRequest::PluginRemove { id } => match state
             .catalog
             .remove_plugin_from_workspace(id, &mut state.workspace_manager.workspace)
@@ -319,7 +332,9 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
                 Ok(()) => {
                     let mut workspace = state.workspace_manager.workspace.clone();
                     state.catalog.refresh_library_paths();
-                    state.catalog.inject_library_paths_into_workspace(&mut workspace);
+                    state
+                        .catalog
+                        .inject_library_paths_into_workspace(&mut workspace);
                     state.catalog.sync_ids_from_workspace(&workspace);
                     for plugin in &mut workspace.plugins {
                         if plugin.running {
@@ -330,8 +345,12 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
                             .get("library_path")
                             .and_then(|v| v.as_str())
                             .map(|v| v.to_string());
-                        let library_path = config_path
-                            .or_else(|| plugin_library_path(&state.catalog.manager.installed_plugins, &plugin.kind));
+                        let library_path = config_path.or_else(|| {
+                            plugin_library_path(
+                                &state.catalog.manager.installed_plugins,
+                                &plugin.kind,
+                            )
+                        });
                         if let Some(behavior) = state.runtime_query.query_plugin_behavior(
                             &plugin.kind,
                             library_path.as_deref(),
@@ -362,10 +381,7 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
             }
         }
         DaemonRequest::WorkspaceNew { name } => {
-            match state
-                .workspace_manager
-                .create_workspace(&name, "")
-            {
+            match state.workspace_manager.create_workspace(&name, "") {
                 Ok(()) => {
                     state
                         .catalog
@@ -540,40 +556,40 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
                             .map(|p| p.kind.clone())
                             .unwrap_or_default();
                         let to_inputs = plugin_inputs(installed, &to_kind);
-                    if is_extendable_inputs(&to_kind) {
-                        let next_idx = next_available_extendable_input_index(
-                            &state.workspace_manager.workspace,
-                            to_plugin,
-                        );
-                        let next_port = format!("in_{next_idx}");
-                        if !to_inputs.iter().any(|p| p == &to_port) && to_port != next_port {
-                            DaemonResponse::Error {
+                        if is_extendable_inputs(&to_kind) {
+                            let next_idx = next_available_extendable_input_index(
+                                &state.workspace_manager.workspace,
+                                to_plugin,
+                            );
+                            let next_port = format!("in_{next_idx}");
+                            if !to_inputs.iter().any(|p| p == &to_port) && to_port != next_port {
+                                DaemonResponse::Error {
                                 message:
                                     "Target port must be the next in_<number> or an existing input"
                                         .to_string(),
                             }
-                        } else {
-                            match rtsyn_core::connection::add_connection(
-                                &mut state.workspace_manager.workspace,
-                                &state.catalog.manager.installed_plugins,
-                                from_plugin,
-                                &from_port,
-                                to_plugin,
-                                &to_port,
-                                &kind,
-                            ) {
-                                Ok(()) => {
-                                    state.refresh_runtime();
-                                    DaemonResponse::Ok {
-                                        message: "Connection added".to_string(),
+                            } else {
+                                match rtsyn_core::connection::add_connection(
+                                    &mut state.workspace_manager.workspace,
+                                    &state.catalog.manager.installed_plugins,
+                                    from_plugin,
+                                    &from_port,
+                                    to_plugin,
+                                    &to_port,
+                                    &kind,
+                                ) {
+                                    Ok(()) => {
+                                        state.refresh_runtime();
+                                        DaemonResponse::Ok {
+                                            message: "Connection added".to_string(),
+                                        }
                                     }
+                                    Err(err) => DaemonResponse::Error {
+                                        message: format!("{err}"),
+                                    },
                                 }
-                                Err(err) => DaemonResponse::Error {
-                                    message: format!("{err}"),
-                                },
                             }
-                        }
-                    } else if to_inputs.is_empty() {
+                        } else if to_inputs.is_empty() {
                             DaemonResponse::Error {
                                 message: "Target plugin inputs not available".to_string(),
                             }
@@ -618,11 +634,11 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
                 .connections
                 .iter()
                 .position(|conn| {
-                conn.from_plugin == from_plugin
-                    && conn.from_port == from_port
-                    && conn.to_plugin == to_plugin
-                    && conn.to_port == to_port
-            });
+                    conn.from_plugin == from_plugin
+                        && conn.from_port == from_port
+                        && conn.to_plugin == to_plugin
+                        && conn.to_port == to_port
+                });
             match index {
                 Some(idx) => {
                     state.workspace_manager.workspace.connections.remove(idx);
@@ -662,7 +678,9 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
             state.catalog.scan_detected_plugins();
             let workspace_dir = state.workspace_manager.workspace_dir().to_path_buf();
             state.workspace_manager = WorkspaceManager::new(workspace_dir);
-            state.catalog.sync_ids_from_workspace(&state.workspace_manager.workspace);
+            state
+                .catalog
+                .sync_ids_from_workspace(&state.workspace_manager.workspace);
             state.refresh_runtime();
             DaemonResponse::Ok {
                 message: "Daemon reloaded".to_string(),
@@ -687,7 +705,12 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
         DaemonRequest::RuntimeSettingsOptions => DaemonResponse::RuntimeSettingsOptions {
             options: RuntimeSettingsOptions {
                 frequency_units: vec!["hz".to_string(), "khz".to_string(), "mhz".to_string()],
-                period_units: vec!["ns".to_string(), "us".to_string(), "ms".to_string(), "s".to_string()],
+                period_units: vec![
+                    "ns".to_string(),
+                    "us".to_string(),
+                    "ms".to_string(),
+                    "s".to_string(),
+                ],
                 min_frequency_value: 1.0,
                 min_period_value: 1.0,
                 max_integration_steps_min: 1,
@@ -709,6 +732,42 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
                         state.refresh_runtime();
                         DaemonResponse::Ok {
                             message: "Runtime settings updated".to_string(),
+                        }
+                    }
+                    Err(err) => DaemonResponse::Error { message: err },
+                },
+                Err(err) => DaemonResponse::Error { message: err },
+            }
+        }
+        DaemonRequest::RuntimeSettingsSave => {
+            match state.workspace_manager.persist_runtime_settings_current_context() {
+                Ok(RuntimeSettingsSaveTarget::Defaults) => DaemonResponse::Ok {
+                    message: "Default values saved".to_string(),
+                },
+                Ok(RuntimeSettingsSaveTarget::Workspace) => DaemonResponse::Ok {
+                    message: "Workspace values saved".to_string(),
+                },
+                Err(err) => DaemonResponse::Error { message: err },
+            }
+        }
+        DaemonRequest::RuntimeSettingsRestore => {
+            match state
+                .workspace_manager
+                .restore_runtime_settings_current_context()
+            {
+                Ok(_) => match state.workspace_manager.runtime_settings() {
+                    Ok(runtime_settings) => {
+                        state.logic_settings.cores = runtime_settings.cores;
+                        state.logic_settings.period_seconds = runtime_settings.period_seconds;
+                        state.logic_settings.time_scale = runtime_settings.time_scale;
+                        state.logic_settings.time_label = runtime_settings.time_label;
+                        let _ = state
+                            .runtime_query
+                            .logic_tx
+                            .send(LogicMessage::UpdateSettings(state.logic_settings.clone()));
+                        state.refresh_runtime();
+                        DaemonResponse::Ok {
+                            message: "Default values restored".to_string(),
                         }
                     }
                     Err(err) => DaemonResponse::Error { message: err },
@@ -969,7 +1028,11 @@ fn build_plotter_series_names(
     plotter_id: u64,
     samples: &[(u64, Vec<f64>)],
 ) -> Vec<String> {
-    let plugin = manager.workspace.plugins.iter().find(|p| p.id == plotter_id);
+    let plugin = manager
+        .workspace
+        .plugins
+        .iter()
+        .find(|p| p.id == plotter_id);
     let input_count = if let Some(plugin) = plugin {
         plugin
             .config
@@ -997,10 +1060,9 @@ fn build_plotter_series_names(
             .iter()
             .find(|plugin| plugin.id == plugin_id)
             .map(|plugin| {
-                name_by_kind
-                    .get(&plugin.kind)
-                    .cloned()
-                    .unwrap_or_else(|| rtsyn_core::plugin::PluginManager::display_kind(&plugin.kind))
+                name_by_kind.get(&plugin.kind).cloned().unwrap_or_else(|| {
+                    rtsyn_core::plugin::PluginManager::display_kind(&plugin.kind)
+                })
             })
             .unwrap_or_else(|| "plugin".to_string())
     };
@@ -1015,7 +1077,10 @@ fn build_plotter_series_names(
             .find(|conn| conn.to_plugin == plotter_id && conn.to_port == port)
         {
             let source_name = plugin_display_name(conn.from_plugin);
-            names.push(format!("{source_name}({}):{}", conn.from_plugin, conn.from_port));
+            names.push(format!(
+                "{source_name}({}):{}",
+                conn.from_plugin, conn.from_port
+            ));
         } else {
             names.push(port);
         }

@@ -248,7 +248,10 @@ impl Plugin for CsvRecorderedPlugin {
                     .unwrap_or_default(),
             )),
             "columns" => Some(Value::Array(
-                self.columns.iter().map(|c| Value::String(c.clone())).collect()
+                self.columns
+                    .iter()
+                    .map(|c| Value::String(c.clone()))
+                    .collect(),
             )),
             _ => None,
         }
@@ -303,7 +306,10 @@ impl Plugin for CsvRecorderedPlugin {
     }
 
     fn on_input_added(&mut self, port: &str) -> Result<(), PluginError> {
-        if let Some(idx) = port.strip_prefix("in_").and_then(|s| s.parse::<usize>().ok()) {
+        if let Some(idx) = port
+            .strip_prefix("in_")
+            .and_then(|s| s.parse::<usize>().ok())
+        {
             while self.inputs.len() <= idx {
                 let i = self.inputs.len();
                 self.inputs.push(Port {
@@ -317,7 +323,10 @@ impl Plugin for CsvRecorderedPlugin {
     }
 
     fn on_input_removed(&mut self, port: &str) -> Result<(), PluginError> {
-        if let Some(idx) = port.strip_prefix("in_").and_then(|s| s.parse::<usize>().ok()) {
+        if let Some(idx) = port
+            .strip_prefix("in_")
+            .and_then(|s| s.parse::<usize>().ok())
+        {
             if idx < self.inputs.len() {
                 self.inputs.remove(idx);
                 if idx < self.input_values.len() {

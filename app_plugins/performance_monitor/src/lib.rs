@@ -28,10 +28,18 @@ impl PerformanceMonitorPlugin {
             },
             inputs: Vec::new(),
             outputs: vec![
-                Port { id: PortId("period_us".to_string()) },
-                Port { id: PortId("latency_us".to_string()) },
-                Port { id: PortId("jitter_us".to_string()) },
-                Port { id: PortId("realtime_violation".to_string()) },
+                Port {
+                    id: PortId("period_us".to_string()),
+                },
+                Port {
+                    id: PortId("latency_us".to_string()),
+                },
+                Port {
+                    id: PortId("jitter_us".to_string()),
+                },
+                Port {
+                    id: PortId("realtime_violation".to_string()),
+                },
             ],
             last_trigger_time: None,
             max_latency_us: 1000.0,
@@ -74,58 +82,65 @@ impl Plugin for PerformanceMonitorPlugin {
 
     fn process(&mut self, _ctx: &mut PluginContext) -> Result<(), PluginError> {
         let process_start = Instant::now();
-        
+
         if let Some(last_time) = self.last_trigger_time {
             let actual_period_us = process_start.duration_since(last_time).as_micros() as f64;
-            
+
             // Add to history for jitter calculation
             self.period_history.push(actual_period_us);
             if self.period_history.len() > 10 {
                 self.period_history.remove(0);
             }
-            
+
             // Latency: how much we're late (only positive delays count)
             let latency_us = if actual_period_us > self.workspace_period_us {
                 actual_period_us - self.workspace_period_us
             } else {
                 0.0
             };
-            
+
             // Jitter: standard deviation of recent periods (timing variation)
             let jitter_us = if self.period_history.len() >= 2 {
-                let mean = self.period_history.iter().sum::<f64>() / self.period_history.len() as f64;
-                let variance = self.period_history.iter()
+                let mean =
+                    self.period_history.iter().sum::<f64>() / self.period_history.len() as f64;
+                let variance = self
+                    .period_history
+                    .iter()
                     .map(|x| (x - mean).powi(2))
-                    .sum::<f64>() / self.period_history.len() as f64;
+                    .sum::<f64>()
+                    / self.period_history.len() as f64;
                 variance.sqrt()
             } else {
                 0.0
             };
-            
+
             // Real-time violation if latency exceeds threshold
-            let violation = if latency_us > self.max_latency_us { 1.0 } else { 0.0 };
-            
-            self.output_values[0] = actual_period_us;        // period_us
-            self.output_values[1] = latency_us;              // latency_us
-            self.output_values[2] = jitter_us;               // jitter_us  
-            self.output_values[3] = violation;               // realtime_violation
+            let violation = if latency_us > self.max_latency_us {
+                1.0
+            } else {
+                0.0
+            };
+
+            self.output_values[0] = actual_period_us; // period_us
+            self.output_values[1] = latency_us; // latency_us
+            self.output_values[2] = jitter_us; // jitter_us
+            self.output_values[3] = violation; // realtime_violation
         }
-        
+
         self.last_trigger_time = Some(process_start);
-        
+
         Ok(())
     }
 
     fn ui_schema(&self) -> Option<UISchema> {
         Some(
-            UISchema::new()
-                .field(
-                    ConfigField::float("max_latency_us", "Max Latency (μs)")
-                        .min_f(0.0)
-                        .step_f(100.0)
-                        .default_value(Value::from(1000.0))
-                        .hint("Maximum allowed latency before violation"),
-                ),
+            UISchema::new().field(
+                ConfigField::float("max_latency_us", "Max Latency (μs)")
+                    .min_f(0.0)
+                    .step_f(100.0)
+                    .default_value(Value::from(1000.0))
+                    .hint("Maximum allowed latency before violation"),
+            ),
         )
     }
 

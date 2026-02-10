@@ -7,7 +7,7 @@
 - [ ] Create a plugin that can help creating plugins
 - [ ] Impove, change and refactor the plotter: It shall generate plots from different inputs, this should be the y value and the x the time (period of collection)
 - [ ] Let the installed plugins be organized in folders (virtual view), there is one reserved for the System ones
-- [ ] Allow changing the color of the plotter lines and names
+- [x] Allow changing the color of the plotter lines and names
 - [ ] When confirmation dialog is shown, the connections on background dissapear visually while is shown.
 - [ ] When you right click on empty space (not plugin or window), a menu with Add plugin must appear
 - [x] Fix warning `warning: the following packages contain code that will be rejected by a future version of Rust: ashpd v0.8.1`
@@ -38,8 +38,8 @@
 - [x] For actual csv recorder and live plotter: make number of inputs and on/off internal variables instead of actual special view (which shall be removed)
 - [x] Performance monitor doesn't show the variables and outputs
 - [x] On stop button it iterates one more time on showing outputs
-- [ ] While stopped, some plugins (like live plotter) arn't showing correctly the info
-- [-] Replace the config characteristics on csv and plotter to part of the plugin and make plugin config only for general config
+- [x] While stopped, some plugins (like live plotter) arn't showing correctly the info
+- [x] Replace the config characteristics on csv and plotter to part of the plugin and make plugin config only for general config
 - [x] Refactor app_plugins code so its generic and follows similar loading as the dynamic plugins.
 - [x] Eliminate cross from plotter
 - [x] Check if cached plugin is deleted when reinstalled (it should, plugin updates) and delete instances of same kind plugin that is open
@@ -60,6 +60,6 @@
 - [x] Change plugin config ID badge on plugin config menu so its the same as the plugin card
 - [ ] Sometimes the plotter window cant be closed
 - [ ] Add id to ports for cli
-- [ ] Add a function that returns a mermaid diagram from the runtime
+- [ ] Add a function that returns a uml diagram from the runtime
 - [ ] Both `daemon plugin add` and daemon `runtime plugin add` do the same
 - [ ] Add help tab

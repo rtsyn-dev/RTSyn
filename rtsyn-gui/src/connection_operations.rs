@@ -16,7 +16,12 @@ impl GuiApp {
             return;
         }
 
-        let from_plugin = match self.workspace_manager.workspace.plugins.get(self.connection_editor.from_idx) {
+        let from_plugin = match self
+            .workspace_manager
+            .workspace
+            .plugins
+            .get(self.connection_editor.from_idx)
+        {
             Some(plugin) => plugin.id,
             None => {
                 self.status = "Invalid source plugin".to_string();
@@ -24,7 +29,12 @@ impl GuiApp {
             }
         };
 
-        let to_plugin = match self.workspace_manager.workspace.plugins.get(self.connection_editor.to_idx) {
+        let to_plugin = match self
+            .workspace_manager
+            .workspace
+            .plugins
+            .get(self.connection_editor.to_idx)
+        {
             Some(plugin) => plugin.id,
             None => {
                 self.status = "Invalid target plugin".to_string();
@@ -52,7 +62,9 @@ impl GuiApp {
             let message = match err {
                 ConnectionRuleError::SelfConnection => "Cannot connect a plugin to itself.",
                 ConnectionRuleError::InputLimitExceeded => "Input already has a connection.",
-                ConnectionRuleError::DuplicateConnection => "Connection between these plugins already exists.",
+                ConnectionRuleError::DuplicateConnection => {
+                    "Connection between these plugins already exists."
+                }
             };
             self.show_info("Connections", message);
             return;
@@ -62,7 +74,14 @@ impl GuiApp {
         self.mark_workspace_dirty();
     }
 
-    pub(crate) fn add_connection_direct(&mut self, from_plugin: u64, from_port: String, to_plugin: u64, to_port: String, kind: String) {
+    pub(crate) fn add_connection_direct(
+        &mut self,
+        from_plugin: u64,
+        from_port: String,
+        to_plugin: u64,
+        to_port: String,
+        kind: String,
+    ) {
         if from_plugin == to_plugin {
             self.show_info("Connections", "Cannot connect a plugin to itself");
             return;
@@ -83,7 +102,9 @@ impl GuiApp {
             let message = match err {
                 ConnectionRuleError::SelfConnection => "Cannot connect a plugin to itself.",
                 ConnectionRuleError::InputLimitExceeded => "Input already has a connection.",
-                ConnectionRuleError::DuplicateConnection => "Connection between these plugins already exists.",
+                ConnectionRuleError::DuplicateConnection => {
+                    "Connection between these plugins already exists."
+                }
             };
             self.show_info("Connections", message);
             return;
@@ -94,13 +115,26 @@ impl GuiApp {
 
     pub(crate) fn remove_connection_with_input(&mut self, connection: ConnectionDefinition) {
         if Self::extendable_input_index(&connection.to_port).is_some() {
-            let target_kind = self.workspace_manager.workspace.plugins.iter().find(|p| p.id == connection.to_plugin).map(|p| p.kind.clone());
+            let target_kind = self
+                .workspace_manager
+                .workspace
+                .plugins
+                .iter()
+                .find(|p| p.id == connection.to_plugin)
+                .map(|p| p.kind.clone());
             if let Some(kind) = target_kind {
                 if self.is_extendable_inputs(&kind) {
                     let matches = |left: &ConnectionDefinition, right: &ConnectionDefinition| {
-                        left.from_plugin == right.from_plugin && left.to_plugin == right.to_plugin && left.from_port == right.from_port && left.to_port == right.to_port && left.kind == right.kind
+                        left.from_plugin == right.from_plugin
+                            && left.to_plugin == right.to_plugin
+                            && left.from_port == right.from_port
+                            && left.to_port == right.to_port
+                            && left.kind == right.kind
                     };
-                    self.workspace_manager.workspace.connections.retain(|conn| !matches(conn, &connection));
+                    self.workspace_manager
+                        .workspace
+                        .connections
+                        .retain(|conn| !matches(conn, &connection));
                     self.reindex_extendable_inputs(connection.to_plugin);
                     self.mark_workspace_dirty();
                     self.enforce_connection_dependent();
@@ -112,9 +146,16 @@ impl GuiApp {
             }
         }
         let matches = |left: &ConnectionDefinition, right: &ConnectionDefinition| {
-            left.from_plugin == right.from_plugin && left.to_plugin == right.to_plugin && left.from_port == right.from_port && left.to_port == right.to_port && left.kind == right.kind
+            left.from_plugin == right.from_plugin
+                && left.to_plugin == right.to_plugin
+                && left.from_port == right.from_port
+                && left.to_port == right.to_port
+                && left.kind == right.kind
         };
-        self.workspace_manager.workspace.connections.retain(|conn| !matches(conn, &connection));
+        self.workspace_manager
+            .workspace
+            .connections
+            .retain(|conn| !matches(conn, &connection));
         self.mark_workspace_dirty();
         self.enforce_connection_dependent();
     }
@@ -126,10 +167,20 @@ impl GuiApp {
         dependent_by_kind.insert("csv_recorder".to_string(), true);
         dependent_by_kind.insert("live_plotter".to_string(), true);
         dependent_by_kind.insert("comedi_daq".to_string(), true);
-        
-        let incoming: HashSet<u64> = self.workspace_manager.workspace.connections.iter().map(|conn| conn.to_plugin).collect();
+
+        let incoming: HashSet<u64> = self
+            .workspace_manager
+            .workspace
+            .connections
+            .iter()
+            .map(|conn| conn.to_plugin)
+            .collect();
         for plugin in &mut self.workspace_manager.workspace.plugins {
-            if !dependent_by_kind.get(&plugin.kind).copied().unwrap_or(false) {
+            if !dependent_by_kind
+                .get(&plugin.kind)
+                .copied()
+                .unwrap_or(false)
+            {
                 continue;
             }
             if incoming.contains(&plugin.id) {
@@ -151,7 +202,10 @@ impl GuiApp {
             }
         }
         for id in stopped {
-            let _ = self.state_sync.logic_tx.send(LogicMessage::SetPluginRunning(id, false));
+            let _ = self
+                .state_sync
+                .logic_tx
+                .send(LogicMessage::SetPluginRunning(id, false));
         }
         if plotter_closed {
             self.recompute_plotter_ui_hz();
@@ -163,13 +217,26 @@ impl GuiApp {
     }
 
     pub(crate) fn next_available_extendable_input_index(&self, plugin_id: u64) -> usize {
-        core_connections::next_available_extendable_input_index(&self.workspace_manager.workspace, plugin_id)
+        core_connections::next_available_extendable_input_index(
+            &self.workspace_manager.workspace,
+            plugin_id,
+        )
     }
 
-    pub(crate) fn extendable_input_display_ports(&self, plugin_id: u64, include_placeholder: bool) -> Vec<String> {
-        let mut entries: Vec<(usize, String)> = self.workspace_manager.workspace.connections.iter()
+    pub(crate) fn extendable_input_display_ports(
+        &self,
+        plugin_id: u64,
+        include_placeholder: bool,
+    ) -> Vec<String> {
+        let mut entries: Vec<(usize, String)> = self
+            .workspace_manager
+            .workspace
+            .connections
+            .iter()
             .filter(|conn| conn.to_plugin == plugin_id)
-            .filter_map(|conn| Self::extendable_input_index(&conn.to_port).map(|idx| (idx, conn.to_port.clone())))
+            .filter_map(|conn| {
+                Self::extendable_input_index(&conn.to_port).map(|idx| (idx, conn.to_port.clone()))
+            })
             .collect();
         entries.sort_by_key(|(idx, _)| *idx);
         entries.dedup_by(|a, b| a.0 == b.0);
@@ -189,22 +256,43 @@ impl GuiApp {
     }
 
     pub(crate) fn remove_extendable_input_at(&mut self, plugin_id: u64, remove_idx: usize) {
-        let plugin_index = match self.workspace_manager.workspace.plugins.iter().position(|p| p.id == plugin_id) {
+        let plugin_index = match self
+            .workspace_manager
+            .workspace
+            .plugins
+            .iter()
+            .position(|p| p.id == plugin_id)
+        {
             Some(idx) => idx,
             None => return,
         };
-        let kind = self.workspace_manager.workspace.plugins[plugin_index].kind.clone();
+        let kind = self.workspace_manager.workspace.plugins[plugin_index]
+            .kind
+            .clone();
         if !self.is_extendable_inputs(&kind) {
             return;
         }
 
         let (current_count, mut columns, is_csv) = {
             let plugin = &self.workspace_manager.workspace.plugins[plugin_index];
-            let mut input_count = plugin.config.get("input_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            let mut input_count = plugin
+                .config
+                .get("input_count")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as usize;
             let mut columns = Vec::new();
             let is_csv = plugin.kind == "csv_recorder";
             if is_csv {
-                columns = plugin.config.get("columns").and_then(|v| v.as_array()).map(|arr| arr.iter().map(|v| v.as_str().unwrap_or("").to_string()).collect()).unwrap_or_default();
+                columns = plugin
+                    .config
+                    .get("columns")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .map(|v| v.as_str().unwrap_or("").to_string())
+                            .collect()
+                    })
+                    .unwrap_or_default();
                 if columns.len() > input_count {
                     input_count = columns.len();
                 }
@@ -228,13 +316,18 @@ impl GuiApp {
             return;
         }
 
-        remove_extendable_input(&mut self.workspace_manager.workspace.connections, plugin_id, remove_idx);
+        remove_extendable_input(
+            &mut self.workspace_manager.workspace.connections,
+            plugin_id,
+            remove_idx,
+        );
         let new_count = current_count.saturating_sub(1);
 
         let map = match self.workspace_manager.workspace.plugins[plugin_index].config {
             Value::Object(ref mut map) => map,
             _ => {
-                self.workspace_manager.workspace.plugins[plugin_index].config = Value::Object(serde_json::Map::new());
+                self.workspace_manager.workspace.plugins[plugin_index].config =
+                    Value::Object(serde_json::Map::new());
                 match self.workspace_manager.workspace.plugins[plugin_index].config {
                     Value::Object(ref mut map) => map,
                     _ => return,
@@ -251,7 +344,10 @@ impl GuiApp {
             } else if columns.len() < new_count {
                 columns.resize(new_count, String::new());
             }
-            map.insert("columns".to_string(), Value::Array(columns.into_iter().map(Value::from).collect()));
+            map.insert(
+                "columns".to_string(),
+                Value::Array(columns.into_iter().map(Value::from).collect()),
+            );
         }
 
         self.mark_workspace_dirty();
@@ -262,7 +358,14 @@ impl GuiApp {
     }
 
     pub(crate) fn reindex_extendable_inputs(&mut self, plugin_id: u64) {
-        let kind = match self.workspace_manager.workspace.plugins.iter().find(|p| p.id == plugin_id).map(|p| p.kind.clone()) {
+        let kind = match self
+            .workspace_manager
+            .workspace
+            .plugins
+            .iter()
+            .find(|p| p.id == plugin_id)
+            .map(|p| p.kind.clone())
+        {
             Some(kind) => kind,
             None => return,
         };
@@ -270,19 +373,37 @@ impl GuiApp {
             return;
         }
 
-        let mut entries: Vec<(usize, usize)> = self.workspace_manager.workspace.connections.iter().enumerate()
+        let mut entries: Vec<(usize, usize)> = self
+            .workspace_manager
+            .workspace
+            .connections
+            .iter()
+            .enumerate()
             .filter(|(_, conn)| conn.to_plugin == plugin_id)
-            .filter_map(|(idx, conn)| Self::extendable_input_index(&conn.to_port).map(|port_idx| (idx, port_idx)))
+            .filter_map(|(idx, conn)| {
+                Self::extendable_input_index(&conn.to_port).map(|port_idx| (idx, port_idx))
+            })
             .collect();
         entries.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
 
         for (new_idx, (conn_idx, _)) in entries.iter().enumerate() {
-            if let Some(conn) = self.workspace_manager.workspace.connections.get_mut(*conn_idx) {
+            if let Some(conn) = self
+                .workspace_manager
+                .workspace
+                .connections
+                .get_mut(*conn_idx)
+            {
                 conn.to_port = format!("in_{new_idx}");
             }
         }
 
-        let Some(plugin) = self.workspace_manager.workspace.plugins.iter_mut().find(|p| p.id == plugin_id) else {
+        let Some(plugin) = self
+            .workspace_manager
+            .workspace
+            .plugins
+            .iter_mut()
+            .find(|p| p.id == plugin_id)
+        else {
             return;
         };
         let map = match plugin.config {
@@ -296,20 +417,37 @@ impl GuiApp {
             }
         };
         let required_count = entries.len();
-        map.insert("input_count".to_string(), Value::from(required_count as u64));
+        map.insert(
+            "input_count".to_string(),
+            Value::from(required_count as u64),
+        );
 
         if plugin.kind == "csv_recorder" {
-            let mut columns: Vec<String> = map.get("columns").and_then(|v| v.as_array()).map(|arr| arr.iter().map(|v| v.as_str().unwrap_or("").to_string()).collect()).unwrap_or_default();
+            let mut columns: Vec<String> = map
+                .get("columns")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .map(|v| v.as_str().unwrap_or("").to_string())
+                        .collect()
+                })
+                .unwrap_or_default();
             if columns.len() > required_count {
                 columns.truncate(required_count);
             } else if columns.len() < required_count {
                 columns.resize(required_count, String::new());
             }
-            map.insert("columns".to_string(), Value::Array(columns.into_iter().map(Value::from).collect()));
+            map.insert(
+                "columns".to_string(),
+                Value::Array(columns.into_iter().map(Value::from).collect()),
+            );
         }
     }
 
     pub(crate) fn sync_extendable_input_count(&mut self, plugin_id: u64) {
-        core_connections::sync_extendable_input_count(&mut self.workspace_manager.workspace, plugin_id);
+        core_connections::sync_extendable_input_count(
+            &mut self.workspace_manager.workspace,
+            plugin_id,
+        );
     }
 }

@@ -1,6 +1,6 @@
 use crate::GuiApp;
-use rtsyn_runtime::runtime::LogicMessage;
 use rtsyn_core::plugin::PluginMetadataSource;
+use rtsyn_runtime::runtime::LogicMessage;
 use std::path::Path;
 use std::sync::mpsc;
 use std::time::Duration;
@@ -22,9 +22,10 @@ impl PluginMetadataSource for GuiMetadataSource<'_> {
         Option<rtsyn_plugin::ui::UISchema>,
     )> {
         let (tx, rx) = mpsc::channel();
-        let _ = self
-            .logic_tx
-            .send(LogicMessage::QueryPluginMetadata(library_path.to_string(), tx));
+        let _ = self.logic_tx.send(LogicMessage::QueryPluginMetadata(
+            library_path.to_string(),
+            tx,
+        ));
         rx.recv_timeout(timeout).ok().flatten()
     }
 
@@ -109,7 +110,7 @@ impl GuiApp {
         }
 
         let removed_id = self.workspace_manager.workspace.plugins[plugin_index].id;
-        
+
         if self.selected_plugin_id == Some(removed_id) {
             self.selected_plugin_id = None;
         }
@@ -118,7 +119,7 @@ impl GuiApp {
             self.windows.plugin_config_open = false;
         }
         self.plotter_manager.plotters.remove(&removed_id);
-        
+
         if let Err(err) = self
             .plugin_manager
             .remove_plugin_from_workspace(&mut self.workspace_manager.workspace, removed_id)
@@ -126,7 +127,13 @@ impl GuiApp {
             self.status = err;
             return;
         }
-        let ids: Vec<u64> = self.workspace_manager.workspace.plugins.iter().map(|p| p.id).collect();
+        let ids: Vec<u64> = self
+            .workspace_manager
+            .workspace
+            .plugins
+            .iter()
+            .map(|p| p.id)
+            .collect();
         for id in ids {
             self.sync_extendable_input_count(id);
         }
@@ -137,7 +144,10 @@ impl GuiApp {
     }
 
     pub(crate) fn uninstall_plugin(&mut self, installed_index: usize) {
-        let plugin = match self.plugin_manager.uninstall_plugin_by_index(installed_index) {
+        let plugin = match self
+            .plugin_manager
+            .uninstall_plugin_by_index(installed_index)
+        {
             Ok(plugin) => plugin,
             Err(err) => {
                 self.show_info("Plugin", &err);
@@ -145,12 +155,10 @@ impl GuiApp {
             }
         };
 
-        let removed_ids = self
-            .plugin_manager
-            .remove_plugins_by_kind_from_workspace(
-                &mut self.workspace_manager.workspace,
-                &plugin.manifest.kind,
-            );
+        let removed_ids = self.plugin_manager.remove_plugins_by_kind_from_workspace(
+            &mut self.workspace_manager.workspace,
+            &plugin.manifest.kind,
+        );
 
         for id in &removed_ids {
             if self.selected_plugin_id == Some(*id) {
@@ -167,7 +175,12 @@ impl GuiApp {
         self.show_info("Plugin", "Plugin uninstalled");
     }
 
-    pub(crate) fn install_plugin_from_folder<P: AsRef<Path>>(&mut self, folder: P, removable: bool, persist: bool) {
+    pub(crate) fn install_plugin_from_folder<P: AsRef<Path>>(
+        &mut self,
+        folder: P,
+        removable: bool,
+        persist: bool,
+    ) {
         let metadata = GuiMetadataSource {
             logic_tx: &self.state_sync.logic_tx,
         };
@@ -184,8 +197,15 @@ impl GuiApp {
     }
 
     pub(crate) fn refresh_installed_plugin(&mut self, kind: String, path: &Path) {
-        let plugin_ids: Vec<u64> = self.workspace_manager.workspace.plugins.iter().filter(|p| p.kind == kind).map(|p| p.id).collect();
-        
+        let plugin_ids: Vec<u64> = self
+            .workspace_manager
+            .workspace
+            .plugins
+            .iter()
+            .filter(|p| p.kind == kind)
+            .map(|p| p.id)
+            .collect();
+
         for id in &plugin_ids {
             if self.selected_plugin_id == Some(*id) {
                 self.selected_plugin_id = None;
@@ -196,7 +216,7 @@ impl GuiApp {
             }
             self.plotter_manager.plotters.remove(id);
         }
-        
+
         if path.as_os_str().is_empty() {
             self.status = "Plugin refreshed".to_string();
             return;
@@ -204,7 +224,10 @@ impl GuiApp {
         let metadata = GuiMetadataSource {
             logic_tx: &self.state_sync.logic_tx,
         };
-        if let Err(err) = self.plugin_manager.refresh_installed_plugin(&kind, path, &metadata) {
+        if let Err(err) = self
+            .plugin_manager
+            .refresh_installed_plugin(&kind, path, &metadata)
+        {
             self.status = err;
             return;
         }
@@ -223,5 +246,4 @@ impl GuiApp {
     pub(crate) fn load_installed_plugins(&mut self) {
         self.plugin_manager.load_installed_plugins();
     }
-
 }

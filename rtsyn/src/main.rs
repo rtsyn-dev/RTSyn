@@ -1,6 +1,9 @@
 use clap::{Parser, Subcommand};
+use rtsyn_cli::{
+    client, daemon,
+    protocol::{DaemonRequest, DaemonResponse, DEFAULT_SOCKET_PATH},
+};
 use rtsyn_gui::{run_gui, GuiConfig};
-use rtsyn_cli::{client, daemon, protocol::{DaemonRequest, DaemonResponse, DEFAULT_SOCKET_PATH}};
 use std::process::{Command, Stdio};
 
 #[derive(Parser)]
@@ -46,12 +49,24 @@ enum DaemonCommands {
 
 #[derive(Subcommand)]
 enum PluginCommands {
-    Add { name: String },
-    Install { path: String },
-    Reinstall { name: String },
-    Rebuild { name: String },
-    Remove { id: u64 },
-    Uninstall { name: String },
+    Add {
+        name: String,
+    },
+    Install {
+        path: String,
+    },
+    Reinstall {
+        name: String,
+    },
+    Rebuild {
+        name: String,
+    },
+    Remove {
+        id: u64,
+    },
+    Uninstall {
+        name: String,
+    },
     List {
         #[arg(long, alias = "jq")]
         json_query: bool,
@@ -71,7 +86,9 @@ enum WorkspaceCommands {
 #[derive(Subcommand)]
 enum ConnectionCommands {
     List,
-    Show { plugin_id: u64 },
+    Show {
+        plugin_id: u64,
+    },
     Add {
         #[arg(long)]
         from_plugin: u64,
@@ -94,7 +111,9 @@ enum ConnectionCommands {
         #[arg(long)]
         to_port: String,
     },
-    RemoveIndex { index: usize },
+    RemoveIndex {
+        index: usize,
+    },
 }
 
 #[derive(Subcommand)]
@@ -111,18 +130,35 @@ enum RuntimeCommands {
 
 #[derive(Subcommand)]
 enum RuntimePluginCommands {
-    Add { name: String },
-    Remove { id: u64 },
+    Add {
+        name: String,
+    },
+    Remove {
+        id: u64,
+    },
     List {
         #[arg(long, alias = "jq")]
         json_query: bool,
     },
-    Show { id: u64 },
-    Set { id: u64, json: String },
-    View { id: u64 },
-    Start { id: u64 },
-    Stop { id: u64 },
-    Restart { id: u64 },
+    Show {
+        id: u64,
+    },
+    Set {
+        id: u64,
+        json: String,
+    },
+    View {
+        id: u64,
+    },
+    Start {
+        id: u64,
+    },
+    Stop {
+        id: u64,
+    },
+    Restart {
+        id: u64,
+    },
 }
 
 #[derive(Subcommand)]
@@ -131,7 +167,11 @@ enum RuntimeSettingsCommands {
         #[arg(long, alias = "jq")]
         json_query: bool,
     },
-    Set { json: String },
+    Set {
+        json: String,
+    },
+    Save,
+    Restore,
     Options {
         #[arg(long, alias = "jq")]
         json_query: bool,
@@ -184,21 +224,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let request = match command {
                     PluginCommands::Add { name } => DaemonRequest::PluginAdd { name },
                     PluginCommands::Install { path } => {
-                    let install_path = std::path::Path::new(&path);
-                    let absolute_path = if install_path.is_absolute() {
-                        install_path.to_path_buf()
-                    } else {
-                        match std::fs::canonicalize(install_path) {
-                            Ok(resolved) => resolved,
-                            Err(err) => {
-                                eprintln!("[RTSyn][ERROR]: Failed to resolve install path: {err}");
-                                return Ok(());
+                        let install_path = std::path::Path::new(&path);
+                        let absolute_path = if install_path.is_absolute() {
+                            install_path.to_path_buf()
+                        } else {
+                            match std::fs::canonicalize(install_path) {
+                                Ok(resolved) => resolved,
+                                Err(err) => {
+                                    eprintln!(
+                                        "[RTSyn][ERROR]: Failed to resolve install path: {err}"
+                                    );
+                                    return Ok(());
+                                }
                             }
+                        };
+                        DaemonRequest::PluginInstall {
+                            path: absolute_path.to_string_lossy().to_string(),
                         }
-                    };
-                    DaemonRequest::PluginInstall {
-                        path: absolute_path.to_string_lossy().to_string(),
-                    }
                     }
                     PluginCommands::Reinstall { name } => DaemonRequest::PluginReinstall { name },
                     PluginCommands::Rebuild { name } => DaemonRequest::PluginRebuild { name },
@@ -209,11 +251,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         DaemonRequest::PluginList
                     }
                 };
-            match client::send_request(&request) {
+                match client::send_request(&request) {
                     Ok(response) => match response {
                         DaemonResponse::Ok { message } => println!("[RTSyn][INFO] {message}"),
                         DaemonResponse::Error { message } => eprintln!("[RTSyn][ERROR]: {message}"),
-                        DaemonResponse::PluginAdded { id } => println!("[RTSyn][INFO] Plugin added with id {id}"),
+                        DaemonResponse::PluginAdded { id } => {
+                            println!("[RTSyn][INFO] Plugin added with id {id}")
+                        }
                         DaemonResponse::PluginList { plugins } => {
                             if list_json_query {
                                 let json = serde_json::to_string_pretty(&plugins)
@@ -226,12 +270,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             } else {
                                 println!("[RTSyn][INFO] List of available plugins:");
                                 for plugin in plugins {
-                                    let version = plugin.version.unwrap_or_else(|| "unknown".to_string());
-                                    let removable = if plugin.removable { "removable" } else { "bundled" };
-                                    if let Some(path) = plugin.path {
-                                        println!("{} ({}) [{}] {}", plugin.name, plugin.kind, removable, path);
+                                    let version =
+                                        plugin.version.unwrap_or_else(|| "unknown".to_string());
+                                    let removable = if plugin.removable {
+                                        "removable"
                                     } else {
-                                        println!("{} ({}) [{}] v{}", plugin.name, plugin.kind, removable, version);
+                                        "bundled"
+                                    };
+                                    if let Some(path) = plugin.path {
+                                        println!(
+                                            "{} ({}) [{}] {}",
+                                            plugin.name, plugin.kind, removable, path
+                                        );
+                                    } else {
+                                        println!(
+                                            "{} ({}) [{}] v{}",
+                                            plugin.name, plugin.kind, removable, version
+                                        );
                                     }
                                 }
                             }
@@ -266,13 +321,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             } else {
                                 println!("[RTSyn][INFO] List of workspaces:");
                                 for ws in workspaces {
-                                    let plugins = if ws.plugins == 1 { "plugin" } else { "plugins" };
+                                    let plugins =
+                                        if ws.plugins == 1 { "plugin" } else { "plugins" };
                                     println!(
                                         "{} - {} {} ({})",
-                                        ws.name,
-                                        ws.plugins,
-                                        plugins,
-                                        ws.description
+                                        ws.name, ws.plugins, plugins, ws.description
                                     );
                                 }
                             }
@@ -382,6 +435,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         RuntimeSettingsCommands::Set { json } => {
                             DaemonRequest::RuntimeSettingsSet { json }
                         }
+                        RuntimeSettingsCommands::Save => DaemonRequest::RuntimeSettingsSave,
+                        RuntimeSettingsCommands::Restore => {
+                            DaemonRequest::RuntimeSettingsRestore
+                        }
                         RuntimeSettingsCommands::Options { json_query } => {
                             settings_json_query = json_query;
                             DaemonRequest::RuntimeSettingsOptions
@@ -403,8 +460,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 for plugin in plugins {
                                     let version =
                                         plugin.version.unwrap_or_else(|| "unknown".to_string());
-                                    let removable =
-                                        if plugin.removable { "removable" } else { "bundled" };
+                                    let removable = if plugin.removable {
+                                        "removable"
+                                    } else {
+                                        "bundled"
+                                    };
                                     if let Some(path) = plugin.path {
                                         println!(
                                             "{} ({}) [{}] {}",
@@ -463,7 +523,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             println!("min_period_value: {}", options.min_period_value);
                             println!(
                                 "max_integration_steps: {}..={}",
-                                options.max_integration_steps_min, options.max_integration_steps_max
+                                options.max_integration_steps_min,
+                                options.max_integration_steps_max
                             );
                         }
                         DaemonResponse::RuntimeShow { id, kind, state } => {

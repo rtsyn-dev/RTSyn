@@ -2,10 +2,10 @@ use csv_recorder_plugin::{normalize_path, CsvRecorderedPlugin};
 use libloading::Library;
 use live_plotter_plugin::LivePlotterPlugin;
 use performance_monitor_plugin::PerformanceMonitorPlugin;
+use rtsyn_plugin::ui::DisplaySchema;
 #[cfg(feature = "comedi")]
 use rtsyn_plugin::DeviceDriver;
 use rtsyn_plugin::{Plugin, PluginApi, PluginContext, PluginString, RTSYN_PLUGIN_API_SYMBOL};
-use rtsyn_plugin::ui::DisplaySchema;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
@@ -40,8 +40,23 @@ pub enum LogicMessage {
     UpdateWorkspace(WorkspaceDefinition),
     SetPluginRunning(u64, bool),
     RestartPlugin(u64),
-    QueryPluginBehavior(String, Option<String>, Sender<Option<rtsyn_plugin::ui::PluginBehavior>>),
-    QueryPluginMetadata(String, Sender<Option<(Vec<String>, Vec<String>, Vec<(String, f64)>, Option<rtsyn_plugin::ui::DisplaySchema>, Option<rtsyn_plugin::ui::UISchema>)>>),
+    QueryPluginBehavior(
+        String,
+        Option<String>,
+        Sender<Option<rtsyn_plugin::ui::PluginBehavior>>,
+    ),
+    QueryPluginMetadata(
+        String,
+        Sender<
+            Option<(
+                Vec<String>,
+                Vec<String>,
+                Vec<(String, f64)>,
+                Option<rtsyn_plugin::ui::DisplaySchema>,
+                Option<rtsyn_plugin::ui::UISchema>,
+            )>,
+        >,
+    ),
     GetPluginVariable(u64, String, Sender<Option<serde_json::Value>>),
     SetPluginVariable(u64, String, serde_json::Value),
 }
@@ -87,15 +102,14 @@ impl DynamicPluginInstance {
         let outputs = Self::read_ports(unsafe { &*api }, handle, unsafe { (*api).outputs_json });
         let input_bytes = inputs.iter().map(|v| v.as_bytes().to_vec()).collect();
         let output_bytes = outputs.iter().map(|v| v.as_bytes().to_vec()).collect();
-        let display_schema = unsafe { (*api).display_schema_json }
-            .and_then(|schema_fn| {
-                let raw = schema_fn(handle);
-                if raw.ptr.is_null() || raw.len == 0 {
-                    return None;
-                }
-                let json = unsafe { raw.into_string() };
-                serde_json::from_str::<DisplaySchema>(&json).ok()
-            });
+        let display_schema = unsafe { (*api).display_schema_json }.and_then(|schema_fn| {
+            let raw = schema_fn(handle);
+            if raw.ptr.is_null() || raw.len == 0 {
+                return None;
+            }
+            let json = unsafe { raw.into_string() };
+            serde_json::from_str::<DisplaySchema>(&json).ok()
+        });
         let internal_variables = display_schema
             .as_ref()
             .map(|schema| schema.variables.clone())
@@ -158,7 +172,8 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
         };
         let mut outputs: HashMap<(u64, String), f64> = HashMap::new();
         let mut input_values: HashMap<(u64, String), f64> = HashMap::new();
-        let mut internal_variable_values: HashMap<(u64, String), serde_json::Value> = HashMap::new();
+        let mut internal_variable_values: HashMap<(u64, String), serde_json::Value> =
+            HashMap::new();
         let mut viewer_values: HashMap<u64, f64> = HashMap::new();
         let mut plotter_samples: HashMap<u64, Vec<(u64, Vec<f64>)>> = HashMap::new();
         let mut runtime = crate::Runtime::new(workspace::WorkspaceDefinition {
@@ -176,243 +191,289 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
             loop {
                 match logic_rx.try_recv() {
                     Ok(message) => match message {
-                    LogicMessage::UpdateSettings(new_settings) => {
-                        settings = new_settings;
-                        period_duration = Duration::from_secs_f64(settings.period_seconds.max(0.0));
-                        sleep_deadline = ActiveRtBackend::init_sleep(period_duration);
-                        plugin_ctx.period_seconds = settings.period_seconds;
-                    }
-                    LogicMessage::UpdateWorkspace(new_workspace) => {
-                        let mut new_ids: HashSet<u64> = HashSet::new();
-                        for plugin in &new_workspace.plugins {
-                            new_ids.insert(plugin.id);
-                            plugin_running.insert(plugin.id, plugin.running);
-                            if !plugin_instances.contains_key(&plugin.id) {
-                                let instance = match plugin.kind.as_str() {
-                                    "csv_recorder" => RuntimePlugin::CsvRecorder(
-                                        CsvRecorderedPlugin::new(plugin.id),
-                                    ),
-                                    "live_plotter" => RuntimePlugin::LivePlotter(
-                                        LivePlotterPlugin::new(plugin.id),
-                                    ),
-                                    "performance_monitor" => RuntimePlugin::PerformanceMonitor(
-                                        PerformanceMonitorPlugin::new(plugin.id),
-                                    ),
-                                    #[cfg(feature = "comedi")]
-                                    "comedi_daq" => RuntimePlugin::ComediDaq(
-                                        comedi_daq_plugin::ComediDaqPlugin::new(plugin.id),
-                                    ),
-                                    _ => {
-                                        let library_path = plugin
-                                            .config
-                                            .get("library_path")
-                                            .and_then(|v| v.as_str());
-                                        if let Some(path) = library_path {
-                                            unsafe {
-                                                if let Some(dynamic) =
-                                                    DynamicPluginInstance::load(path, plugin.id)
-                                                {
-                                                    RuntimePlugin::Dynamic(dynamic)
-                                                } else {
-                                                    continue;
-                                                }
-                                            }
-                                        } else {
-                                            continue;
-                                        }
-                                    }
-                                };
-                                plugin_instances.insert(plugin.id, instance);
-                            }
+                        LogicMessage::UpdateSettings(new_settings) => {
+                            settings = new_settings;
+                            period_duration =
+                                Duration::from_secs_f64(settings.period_seconds.max(0.0));
+                            sleep_deadline = ActiveRtBackend::init_sleep(period_duration);
+                            plugin_ctx.period_seconds = settings.period_seconds;
                         }
-
-                        let removed_ids: Vec<u64> = plugin_instances
-                            .keys()
-                            .filter(|id| !new_ids.contains(id))
-                            .copied()
-                            .collect();
-                        for id in removed_ids {
-                            if let Some(instance) = plugin_instances.remove(&id) {
-                                if let RuntimePlugin::Dynamic(dynamic) = instance {
-                                    (unsafe { &*dynamic.api }.destroy)(dynamic.handle);
+                        LogicMessage::UpdateWorkspace(new_workspace) => {
+                            let mut new_ids: HashSet<u64> = HashSet::new();
+                            for plugin in &new_workspace.plugins {
+                                new_ids.insert(plugin.id);
+                                plugin_running.insert(plugin.id, plugin.running);
+                                if !plugin_instances.contains_key(&plugin.id) {
+                                    let instance = match plugin.kind.as_str() {
+                                        "csv_recorder" => RuntimePlugin::CsvRecorder(
+                                            CsvRecorderedPlugin::new(plugin.id),
+                                        ),
+                                        "live_plotter" => RuntimePlugin::LivePlotter(
+                                            LivePlotterPlugin::new(plugin.id),
+                                        ),
+                                        "performance_monitor" => RuntimePlugin::PerformanceMonitor(
+                                            PerformanceMonitorPlugin::new(plugin.id),
+                                        ),
+                                        #[cfg(feature = "comedi")]
+                                        "comedi_daq" => RuntimePlugin::ComediDaq(
+                                            comedi_daq_plugin::ComediDaqPlugin::new(plugin.id),
+                                        ),
+                                        _ => {
+                                            let library_path = plugin
+                                                .config
+                                                .get("library_path")
+                                                .and_then(|v| v.as_str());
+                                            if let Some(path) = library_path {
+                                                unsafe {
+                                                    if let Some(dynamic) =
+                                                        DynamicPluginInstance::load(path, plugin.id)
+                                                    {
+                                                        RuntimePlugin::Dynamic(dynamic)
+                                                    } else {
+                                                        continue;
+                                                    }
+                                                }
+                                            } else {
+                                                continue;
+                                            }
+                                        }
+                                    };
+                                    plugin_instances.insert(plugin.id, instance);
                                 }
                             }
-                            plugin_running.remove(&id);
-                            viewer_values.remove(&id);
-                            outputs.retain(|(pid, _), _| *pid != id);
-                            input_values.retain(|(pid, _), _| *pid != id);
-                            internal_variable_values.retain(|(pid, _), _| *pid != id);
-                            plotter_samples.remove(&id);
-                        }
-                        workspace = Some(new_workspace);
-                    }
-                    LogicMessage::SetPluginRunning(plugin_id, running) => {
-                        plugin_running.insert(plugin_id, running);
-                    }
-                    LogicMessage::QueryPluginBehavior(kind, library_path, response_tx) => {
-                        let behavior = match kind.as_str() {
-                            "csv_recorder" => Some(CsvRecorderedPlugin::new(0).behavior()),
-                            "live_plotter" => Some(LivePlotterPlugin::new(0).behavior()),
-                            "performance_monitor" => Some(PerformanceMonitorPlugin::new(0).behavior()),
-                            #[cfg(feature = "comedi")]
-                            "comedi_daq" => Some(comedi_daq_plugin::ComediDaqPlugin::new(0).behavior()),
 
-                            _ => {
-                                // Try to load behavior from dynamic plugin
-                                if let Some(path) = library_path.as_ref() {
-                                    if let Some(dynamic) = unsafe { DynamicPluginInstance::load(path, 0) } {
-                                        if let Some(behavior_json_fn) = unsafe { (*dynamic.api).behavior_json } {
-                                            let json_str = behavior_json_fn(dynamic.handle);
-                                            if !json_str.ptr.is_null() && json_str.len > 0 {
-                                                let json = unsafe { json_str.into_string() };
-                                                if let Ok(behavior) = serde_json::from_str(&json) {
-                                                    unsafe { ((*dynamic.api).destroy)(dynamic.handle); }
-                                                    let _ = response_tx.send(Some(behavior));
-                                                    continue;
-                                                }
-                                            }
-                                            unsafe { ((*dynamic.api).destroy)(dynamic.handle); }
-                                        } else {
-                                            unsafe { ((*dynamic.api).destroy)(dynamic.handle); }
-                                        }
+                            let removed_ids: Vec<u64> = plugin_instances
+                                .keys()
+                                .filter(|id| !new_ids.contains(id))
+                                .copied()
+                                .collect();
+                            for id in removed_ids {
+                                if let Some(instance) = plugin_instances.remove(&id) {
+                                    if let RuntimePlugin::Dynamic(dynamic) = instance {
+                                        (unsafe { &*dynamic.api }.destroy)(dynamic.handle);
                                     }
                                 }
-                                None
+                                plugin_running.remove(&id);
+                                viewer_values.remove(&id);
+                                outputs.retain(|(pid, _), _| *pid != id);
+                                input_values.retain(|(pid, _), _| *pid != id);
+                                internal_variable_values.retain(|(pid, _), _| *pid != id);
+                                plotter_samples.remove(&id);
                             }
-                        };
-                        let _ = response_tx.send(behavior);
-                    }
-                    LogicMessage::QueryPluginMetadata(library_path, response_tx) => {
-                        let metadata = if let Some(dynamic) = unsafe { DynamicPluginInstance::load(&library_path, 0) } {
-                            let inputs_str = unsafe { ((*dynamic.api).inputs_json)(dynamic.handle) };
-                            let outputs_str = unsafe { ((*dynamic.api).outputs_json)(dynamic.handle) };
-                            let meta_str = unsafe { ((*dynamic.api).meta_json)(dynamic.handle) };
-                            let inputs: Vec<String> = if inputs_str.ptr.is_null() || inputs_str.len == 0 {
-                                Vec::new()
-                            } else {
-                                let json = unsafe { inputs_str.into_string() };
-                                serde_json::from_str(&json).unwrap_or_default()
-                            };
-                            let outputs: Vec<String> = if outputs_str.ptr.is_null() || outputs_str.len == 0 {
-                                Vec::new()
-                            } else {
-                                let json = unsafe { outputs_str.into_string() };
-                                serde_json::from_str(&json).unwrap_or_default()
-                            };
-                            let meta: serde_json::Value = if meta_str.ptr.is_null() || meta_str.len == 0 {
-                                serde_json::json!({})
-                            } else {
-                                let json = unsafe { meta_str.into_string() };
-                                serde_json::from_str(&json).unwrap_or(serde_json::json!({}))
-                            };
-                            let variables: Vec<(String, f64)> = meta.get("default_vars")
-                                .and_then(|v| v.as_array())
-                                .map(|arr| {
-                                    arr.iter().filter_map(|item| {
-                                        if let Some(arr) = item.as_array() {
-                                            if arr.len() == 2 {
-                                                let name = arr[0].as_str()?.to_string();
-                                                let value = arr[1].as_f64()?;
-                                                return Some((name, value));
-                                            }
-                                        }
-                                        None
-                                    }).collect()
-                                })
-                                .unwrap_or_default();
-                            let display_schema = if let Some(schema_fn) = unsafe { (*dynamic.api).display_schema_json } {
-                                let schema_str = schema_fn(dynamic.handle);
-                                if schema_str.ptr.is_null() || schema_str.len == 0 {
-                                    None
-                                } else {
-                                    let json = unsafe { schema_str.into_string() };
-                                    serde_json::from_str(&json).ok()
+                            workspace = Some(new_workspace);
+                        }
+                        LogicMessage::SetPluginRunning(plugin_id, running) => {
+                            plugin_running.insert(plugin_id, running);
+                        }
+                        LogicMessage::QueryPluginBehavior(kind, library_path, response_tx) => {
+                            let behavior = match kind.as_str() {
+                                "csv_recorder" => Some(CsvRecorderedPlugin::new(0).behavior()),
+                                "live_plotter" => Some(LivePlotterPlugin::new(0).behavior()),
+                                "performance_monitor" => {
+                                    Some(PerformanceMonitorPlugin::new(0).behavior())
                                 }
-                            } else {
-                                None
-                            };
-                            let ui_schema: Option<rtsyn_plugin::ui::UISchema> = if let Some(ui_schema_fn) = unsafe { (*dynamic.api).ui_schema_json } {
-                                let schema_str = ui_schema_fn(dynamic.handle);
-                                if schema_str.ptr.is_null() || schema_str.len == 0 {
-                                    None
-                                } else {
-                                    let json = unsafe { schema_str.into_string() };
-                                    serde_json::from_str(&json).ok()
+                                #[cfg(feature = "comedi")]
+                                "comedi_daq" => {
+                                    Some(comedi_daq_plugin::ComediDaqPlugin::new(0).behavior())
                                 }
-                            } else {
-                                None
-                            };
-                            unsafe { ((*dynamic.api).destroy)(dynamic.handle); }
-                            Some((inputs, outputs, variables, display_schema, ui_schema))
-                        } else {
-                            None
-                        };
-                        let _ = response_tx.send(metadata);
-                    }
-                    LogicMessage::RestartPlugin(plugin_id) => {
-                        let Some(ws) = workspace.as_ref() else {
-                            continue;
-                        };
-                        let Some(plugin) = ws.plugins.iter().find(|p| p.id == plugin_id) else {
-                            continue;
-                        };
-                        let instance = match plugin.kind.as_str() {
-                            "csv_recorder" => {
-                                RuntimePlugin::CsvRecorder(CsvRecorderedPlugin::new(plugin.id))
-                            }
-                            #[cfg(feature = "comedi")]
-                            "comedi_daq" => RuntimePlugin::ComediDaq(
-                                comedi_daq_plugin::ComediDaqPlugin::new(plugin.id),
-                            ),
-                            _ => {
-                                let library_path =
-                                    plugin.config.get("library_path").and_then(|v| v.as_str());
-                                if let Some(path) = library_path {
-                                    unsafe {
+
+                                _ => {
+                                    // Try to load behavior from dynamic plugin
+                                    if let Some(path) = library_path.as_ref() {
                                         if let Some(dynamic) =
-                                            DynamicPluginInstance::load(path, plugin.id)
+                                            unsafe { DynamicPluginInstance::load(path, 0) }
                                         {
-                                            RuntimePlugin::Dynamic(dynamic)
-                                        } else {
-                                            continue;
+                                            if let Some(behavior_json_fn) =
+                                                unsafe { (*dynamic.api).behavior_json }
+                                            {
+                                                let json_str = behavior_json_fn(dynamic.handle);
+                                                if !json_str.ptr.is_null() && json_str.len > 0 {
+                                                    let json = unsafe { json_str.into_string() };
+                                                    if let Ok(behavior) =
+                                                        serde_json::from_str(&json)
+                                                    {
+                                                        unsafe {
+                                                            ((*dynamic.api).destroy)(
+                                                                dynamic.handle,
+                                                            );
+                                                        }
+                                                        let _ = response_tx.send(Some(behavior));
+                                                        continue;
+                                                    }
+                                                }
+                                                unsafe {
+                                                    ((*dynamic.api).destroy)(dynamic.handle);
+                                                }
+                                            } else {
+                                                unsafe {
+                                                    ((*dynamic.api).destroy)(dynamic.handle);
+                                                }
+                                            }
                                         }
                                     }
-                                } else {
-                                    continue;
+                                    None
                                 }
-                            }
-                        };
-                        plugin_instances.insert(plugin.id, instance);
-                        viewer_values.remove(&plugin.id);
-                        outputs.retain(|(pid, _), _| *pid != plugin.id);
-                        input_values.retain(|(pid, _), _| *pid != plugin.id);
-                        internal_variable_values.retain(|(pid, _), _| *pid != plugin.id);
-                    }
-                    LogicMessage::GetPluginVariable(plugin_id, var_name, response_tx) => {
-                        let value = plugin_instances.get(&plugin_id).and_then(|instance| {
-                            match instance {
-                                RuntimePlugin::CsvRecorder(p) => p.get_variable(&var_name),
-                                RuntimePlugin::LivePlotter(p) => p.get_variable(&var_name),
-                                RuntimePlugin::PerformanceMonitor(p) => p.get_variable(&var_name),
-                                #[cfg(feature = "comedi")]
-                                RuntimePlugin::ComediDaq(p) => p.get_variable(&var_name),
-                                RuntimePlugin::Dynamic(_) => None,
-                            }
-                        });
-                        let _ = response_tx.send(value);
-                    }
-                    LogicMessage::SetPluginVariable(plugin_id, var_name, value) => {
-                        if let Some(instance) = plugin_instances.get_mut(&plugin_id) {
-                            let _ = match instance {
-                                RuntimePlugin::CsvRecorder(p) => p.set_variable(&var_name, value),
-                                RuntimePlugin::LivePlotter(p) => p.set_variable(&var_name, value),
-                                RuntimePlugin::PerformanceMonitor(p) => p.set_variable(&var_name, value),
-                                #[cfg(feature = "comedi")]
-                                RuntimePlugin::ComediDaq(p) => p.set_variable(&var_name, value),
-                                RuntimePlugin::Dynamic(_) => Ok(()),
                             };
+                            let _ = response_tx.send(behavior);
                         }
-                    }
+                        LogicMessage::QueryPluginMetadata(library_path, response_tx) => {
+                            let metadata = if let Some(dynamic) =
+                                unsafe { DynamicPluginInstance::load(&library_path, 0) }
+                            {
+                                let inputs_str =
+                                    unsafe { ((*dynamic.api).inputs_json)(dynamic.handle) };
+                                let outputs_str =
+                                    unsafe { ((*dynamic.api).outputs_json)(dynamic.handle) };
+                                let meta_str =
+                                    unsafe { ((*dynamic.api).meta_json)(dynamic.handle) };
+                                let inputs: Vec<String> =
+                                    if inputs_str.ptr.is_null() || inputs_str.len == 0 {
+                                        Vec::new()
+                                    } else {
+                                        let json = unsafe { inputs_str.into_string() };
+                                        serde_json::from_str(&json).unwrap_or_default()
+                                    };
+                                let outputs: Vec<String> =
+                                    if outputs_str.ptr.is_null() || outputs_str.len == 0 {
+                                        Vec::new()
+                                    } else {
+                                        let json = unsafe { outputs_str.into_string() };
+                                        serde_json::from_str(&json).unwrap_or_default()
+                                    };
+                                let meta: serde_json::Value =
+                                    if meta_str.ptr.is_null() || meta_str.len == 0 {
+                                        serde_json::json!({})
+                                    } else {
+                                        let json = unsafe { meta_str.into_string() };
+                                        serde_json::from_str(&json).unwrap_or(serde_json::json!({}))
+                                    };
+                                let variables: Vec<(String, f64)> = meta
+                                    .get("default_vars")
+                                    .and_then(|v| v.as_array())
+                                    .map(|arr| {
+                                        arr.iter()
+                                            .filter_map(|item| {
+                                                if let Some(arr) = item.as_array() {
+                                                    if arr.len() == 2 {
+                                                        let name = arr[0].as_str()?.to_string();
+                                                        let value = arr[1].as_f64()?;
+                                                        return Some((name, value));
+                                                    }
+                                                }
+                                                None
+                                            })
+                                            .collect()
+                                    })
+                                    .unwrap_or_default();
+                                let display_schema = if let Some(schema_fn) =
+                                    unsafe { (*dynamic.api).display_schema_json }
+                                {
+                                    let schema_str = schema_fn(dynamic.handle);
+                                    if schema_str.ptr.is_null() || schema_str.len == 0 {
+                                        None
+                                    } else {
+                                        let json = unsafe { schema_str.into_string() };
+                                        serde_json::from_str(&json).ok()
+                                    }
+                                } else {
+                                    None
+                                };
+                                let ui_schema: Option<rtsyn_plugin::ui::UISchema> =
+                                    if let Some(ui_schema_fn) =
+                                        unsafe { (*dynamic.api).ui_schema_json }
+                                    {
+                                        let schema_str = ui_schema_fn(dynamic.handle);
+                                        if schema_str.ptr.is_null() || schema_str.len == 0 {
+                                            None
+                                        } else {
+                                            let json = unsafe { schema_str.into_string() };
+                                            serde_json::from_str(&json).ok()
+                                        }
+                                    } else {
+                                        None
+                                    };
+                                unsafe {
+                                    ((*dynamic.api).destroy)(dynamic.handle);
+                                }
+                                Some((inputs, outputs, variables, display_schema, ui_schema))
+                            } else {
+                                None
+                            };
+                            let _ = response_tx.send(metadata);
+                        }
+                        LogicMessage::RestartPlugin(plugin_id) => {
+                            let Some(ws) = workspace.as_ref() else {
+                                continue;
+                            };
+                            let Some(plugin) = ws.plugins.iter().find(|p| p.id == plugin_id) else {
+                                continue;
+                            };
+                            let instance = match plugin.kind.as_str() {
+                                "csv_recorder" => {
+                                    RuntimePlugin::CsvRecorder(CsvRecorderedPlugin::new(plugin.id))
+                                }
+                                #[cfg(feature = "comedi")]
+                                "comedi_daq" => RuntimePlugin::ComediDaq(
+                                    comedi_daq_plugin::ComediDaqPlugin::new(plugin.id),
+                                ),
+                                _ => {
+                                    let library_path =
+                                        plugin.config.get("library_path").and_then(|v| v.as_str());
+                                    if let Some(path) = library_path {
+                                        unsafe {
+                                            if let Some(dynamic) =
+                                                DynamicPluginInstance::load(path, plugin.id)
+                                            {
+                                                RuntimePlugin::Dynamic(dynamic)
+                                            } else {
+                                                continue;
+                                            }
+                                        }
+                                    } else {
+                                        continue;
+                                    }
+                                }
+                            };
+                            plugin_instances.insert(plugin.id, instance);
+                            viewer_values.remove(&plugin.id);
+                            outputs.retain(|(pid, _), _| *pid != plugin.id);
+                            input_values.retain(|(pid, _), _| *pid != plugin.id);
+                            internal_variable_values.retain(|(pid, _), _| *pid != plugin.id);
+                        }
+                        LogicMessage::GetPluginVariable(plugin_id, var_name, response_tx) => {
+                            let value =
+                                plugin_instances.get(&plugin_id).and_then(
+                                    |instance| match instance {
+                                        RuntimePlugin::CsvRecorder(p) => p.get_variable(&var_name),
+                                        RuntimePlugin::LivePlotter(p) => p.get_variable(&var_name),
+                                        RuntimePlugin::PerformanceMonitor(p) => {
+                                            p.get_variable(&var_name)
+                                        }
+                                        #[cfg(feature = "comedi")]
+                                        RuntimePlugin::ComediDaq(p) => p.get_variable(&var_name),
+                                        RuntimePlugin::Dynamic(_) => None,
+                                    },
+                                );
+                            let _ = response_tx.send(value);
+                        }
+                        LogicMessage::SetPluginVariable(plugin_id, var_name, value) => {
+                            if let Some(instance) = plugin_instances.get_mut(&plugin_id) {
+                                let _ = match instance {
+                                    RuntimePlugin::CsvRecorder(p) => {
+                                        p.set_variable(&var_name, value)
+                                    }
+                                    RuntimePlugin::LivePlotter(p) => {
+                                        p.set_variable(&var_name, value)
+                                    }
+                                    RuntimePlugin::PerformanceMonitor(p) => {
+                                        p.set_variable(&var_name, value)
+                                    }
+                                    #[cfg(feature = "comedi")]
+                                    RuntimePlugin::ComediDaq(p) => p.set_variable(&var_name, value),
+                                    RuntimePlugin::Dynamic(_) => Ok(()),
+                                };
+                            }
+                        }
                     },
                     Err(TryRecvError::Empty) => break,
                     Err(TryRecvError::Disconnected) => {
@@ -498,7 +559,9 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                                     outputs.insert((plugin.id, output_name.clone()), value);
                                 }
                             }
-                            for (idx, var_name) in plugin_instance.internal_variables.iter().enumerate() {
+                            for (idx, var_name) in
+                                plugin_instance.internal_variables.iter().enumerate()
+                            {
                                 let bytes = &plugin_instance.internal_variable_bytes[idx];
                                 let value = (api.get_output)(
                                     plugin_instance.handle,
@@ -871,27 +934,41 @@ pub fn run_runtime_current(
                         let behavior = match kind.as_str() {
                             "csv_recorder" => Some(CsvRecorderedPlugin::new(0).behavior()),
                             "live_plotter" => Some(LivePlotterPlugin::new(0).behavior()),
-                            "performance_monitor" => Some(PerformanceMonitorPlugin::new(0).behavior()),
+                            "performance_monitor" => {
+                                Some(PerformanceMonitorPlugin::new(0).behavior())
+                            }
                             #[cfg(feature = "comedi")]
-                            "comedi_daq" => Some(comedi_daq_plugin::ComediDaqPlugin::new(0).behavior()),
+                            "comedi_daq" => {
+                                Some(comedi_daq_plugin::ComediDaqPlugin::new(0).behavior())
+                            }
 
                             _ => {
                                 // Try to load behavior from dynamic plugin
                                 if let Some(path) = library_path.as_ref() {
-                                    if let Some(dynamic) = unsafe { DynamicPluginInstance::load(path, 0) } {
-                                        if let Some(behavior_json_fn) = unsafe { (*dynamic.api).behavior_json } {
+                                    if let Some(dynamic) =
+                                        unsafe { DynamicPluginInstance::load(path, 0) }
+                                    {
+                                        if let Some(behavior_json_fn) =
+                                            unsafe { (*dynamic.api).behavior_json }
+                                        {
                                             let json_str = behavior_json_fn(dynamic.handle);
                                             if !json_str.ptr.is_null() && json_str.len > 0 {
                                                 let json = unsafe { json_str.into_string() };
                                                 if let Ok(behavior) = serde_json::from_str(&json) {
-                                                    unsafe { ((*dynamic.api).destroy)(dynamic.handle); }
+                                                    unsafe {
+                                                        ((*dynamic.api).destroy)(dynamic.handle);
+                                                    }
                                                     let _ = response_tx.send(Some(behavior));
                                                     continue;
                                                 }
                                             }
-                                            unsafe { ((*dynamic.api).destroy)(dynamic.handle); }
+                                            unsafe {
+                                                ((*dynamic.api).destroy)(dynamic.handle);
+                                            }
                                         } else {
-                                            unsafe { ((*dynamic.api).destroy)(dynamic.handle); }
+                                            unsafe {
+                                                ((*dynamic.api).destroy)(dynamic.handle);
+                                            }
                                         }
                                     }
                                 }
@@ -901,44 +978,56 @@ pub fn run_runtime_current(
                         let _ = response_tx.send(behavior);
                     }
                     LogicMessage::QueryPluginMetadata(library_path, response_tx) => {
-                        let metadata = if let Some(dynamic) = unsafe { DynamicPluginInstance::load(&library_path, 0) } {
-                            let inputs_str = unsafe { ((*dynamic.api).inputs_json)(dynamic.handle) };
-                            let outputs_str = unsafe { ((*dynamic.api).outputs_json)(dynamic.handle) };
+                        let metadata = if let Some(dynamic) =
+                            unsafe { DynamicPluginInstance::load(&library_path, 0) }
+                        {
+                            let inputs_str =
+                                unsafe { ((*dynamic.api).inputs_json)(dynamic.handle) };
+                            let outputs_str =
+                                unsafe { ((*dynamic.api).outputs_json)(dynamic.handle) };
                             let meta_str = unsafe { ((*dynamic.api).meta_json)(dynamic.handle) };
-                            let inputs: Vec<String> = if inputs_str.ptr.is_null() || inputs_str.len == 0 {
-                                Vec::new()
-                            } else {
-                                let json = unsafe { inputs_str.into_string() };
-                                serde_json::from_str(&json).unwrap_or_default()
-                            };
-                            let outputs: Vec<String> = if outputs_str.ptr.is_null() || outputs_str.len == 0 {
-                                Vec::new()
-                            } else {
-                                let json = unsafe { outputs_str.into_string() };
-                                serde_json::from_str(&json).unwrap_or_default()
-                            };
-                            let meta: serde_json::Value = if meta_str.ptr.is_null() || meta_str.len == 0 {
-                                serde_json::json!({})
-                            } else {
-                                let json = unsafe { meta_str.into_string() };
-                                serde_json::from_str(&json).unwrap_or(serde_json::json!({}))
-                            };
-                            let variables: Vec<(String, f64)> = meta.get("default_vars")
+                            let inputs: Vec<String> =
+                                if inputs_str.ptr.is_null() || inputs_str.len == 0 {
+                                    Vec::new()
+                                } else {
+                                    let json = unsafe { inputs_str.into_string() };
+                                    serde_json::from_str(&json).unwrap_or_default()
+                                };
+                            let outputs: Vec<String> =
+                                if outputs_str.ptr.is_null() || outputs_str.len == 0 {
+                                    Vec::new()
+                                } else {
+                                    let json = unsafe { outputs_str.into_string() };
+                                    serde_json::from_str(&json).unwrap_or_default()
+                                };
+                            let meta: serde_json::Value =
+                                if meta_str.ptr.is_null() || meta_str.len == 0 {
+                                    serde_json::json!({})
+                                } else {
+                                    let json = unsafe { meta_str.into_string() };
+                                    serde_json::from_str(&json).unwrap_or(serde_json::json!({}))
+                                };
+                            let variables: Vec<(String, f64)> = meta
+                                .get("default_vars")
                                 .and_then(|v| v.as_array())
                                 .map(|arr| {
-                                    arr.iter().filter_map(|item| {
-                                        if let Some(arr) = item.as_array() {
-                                            if arr.len() == 2 {
-                                                let name = arr[0].as_str()?.to_string();
-                                                let value = arr[1].as_f64()?;
-                                                return Some((name, value));
+                                    arr.iter()
+                                        .filter_map(|item| {
+                                            if let Some(arr) = item.as_array() {
+                                                if arr.len() == 2 {
+                                                    let name = arr[0].as_str()?.to_string();
+                                                    let value = arr[1].as_f64()?;
+                                                    return Some((name, value));
+                                                }
                                             }
-                                        }
-                                        None
-                                    }).collect()
+                                            None
+                                        })
+                                        .collect()
                                 })
                                 .unwrap_or_default();
-                            let display_schema = if let Some(schema_fn) = unsafe { (*dynamic.api).display_schema_json } {
+                            let display_schema = if let Some(schema_fn) =
+                                unsafe { (*dynamic.api).display_schema_json }
+                            {
                                 let schema_str = schema_fn(dynamic.handle);
                                 if schema_str.ptr.is_null() || schema_str.len == 0 {
                                     None
@@ -949,7 +1038,11 @@ pub fn run_runtime_current(
                             } else {
                                 None
                             };
-                            let ui_schema: Option<rtsyn_plugin::ui::UISchema> = if let Some(ui_schema_fn) = unsafe { (*dynamic.api).ui_schema_json } {
+                            let ui_schema: Option<rtsyn_plugin::ui::UISchema> = if let Some(
+                                ui_schema_fn,
+                            ) =
+                                unsafe { (*dynamic.api).ui_schema_json }
+                            {
                                 let schema_str = ui_schema_fn(dynamic.handle);
                                 if schema_str.ptr.is_null() || schema_str.len == 0 {
                                     None
@@ -960,7 +1053,9 @@ pub fn run_runtime_current(
                             } else {
                                 None
                             };
-                            unsafe { ((*dynamic.api).destroy)(dynamic.handle); }
+                            unsafe {
+                                ((*dynamic.api).destroy)(dynamic.handle);
+                            }
                             Some((inputs, outputs, variables, display_schema, ui_schema))
                         } else {
                             None
@@ -1007,16 +1102,19 @@ pub fn run_runtime_current(
                         internal_variable_values.retain(|(pid, _), _| *pid != plugin.id);
                     }
                     LogicMessage::GetPluginVariable(plugin_id, var_name, response_tx) => {
-                        let value = plugin_instances.get(&plugin_id).and_then(|instance| {
-                            match instance {
-                                RuntimePlugin::CsvRecorder(p) => p.get_variable(&var_name),
-                                RuntimePlugin::LivePlotter(p) => p.get_variable(&var_name),
-                                RuntimePlugin::PerformanceMonitor(p) => p.get_variable(&var_name),
-                                #[cfg(feature = "comedi")]
-                                RuntimePlugin::ComediDaq(p) => p.get_variable(&var_name),
-                                RuntimePlugin::Dynamic(_) => None,
-                            }
-                        });
+                        let value =
+                            plugin_instances
+                                .get(&plugin_id)
+                                .and_then(|instance| match instance {
+                                    RuntimePlugin::CsvRecorder(p) => p.get_variable(&var_name),
+                                    RuntimePlugin::LivePlotter(p) => p.get_variable(&var_name),
+                                    RuntimePlugin::PerformanceMonitor(p) => {
+                                        p.get_variable(&var_name)
+                                    }
+                                    #[cfg(feature = "comedi")]
+                                    RuntimePlugin::ComediDaq(p) => p.get_variable(&var_name),
+                                    RuntimePlugin::Dynamic(_) => None,
+                                });
                         let _ = response_tx.send(value);
                     }
                     LogicMessage::SetPluginVariable(plugin_id, var_name, value) => {
@@ -1024,7 +1122,9 @@ pub fn run_runtime_current(
                             let _ = match instance {
                                 RuntimePlugin::CsvRecorder(p) => p.set_variable(&var_name, value),
                                 RuntimePlugin::LivePlotter(p) => p.set_variable(&var_name, value),
-                                RuntimePlugin::PerformanceMonitor(p) => p.set_variable(&var_name, value),
+                                RuntimePlugin::PerformanceMonitor(p) => {
+                                    p.set_variable(&var_name, value)
+                                }
                                 #[cfg(feature = "comedi")]
                                 RuntimePlugin::ComediDaq(p) => p.set_variable(&var_name, value),
                                 RuntimePlugin::Dynamic(_) => Ok(()),
@@ -1084,8 +1184,7 @@ pub fn run_runtime_current(
                             }
                         }
                         for (idx, input_name) in plugin_instance.inputs.iter().enumerate() {
-                            let value =
-                                input_sum(&ws.connections, &outputs, plugin.id, input_name);
+                            let value = input_sum(&ws.connections, &outputs, plugin.id, input_name);
                             input_values.insert((plugin.id, input_name.clone()), value);
                             let bits = value.to_bits();
                             if plugin_instance.last_inputs[idx] != bits {
@@ -1115,7 +1214,8 @@ pub fn run_runtime_current(
                                 outputs.insert((plugin.id, output_name.clone()), value);
                             }
                         }
-                        for (idx, var_name) in plugin_instance.internal_variables.iter().enumerate() {
+                        for (idx, var_name) in plugin_instance.internal_variables.iter().enumerate()
+                        {
                             let bytes = &plugin_instance.internal_variable_bytes[idx];
                             let value = (api.get_output)(
                                 plugin_instance.handle,
@@ -1133,8 +1233,7 @@ pub fn run_runtime_current(
                             .config
                             .get("input_count")
                             .and_then(|v| v.as_u64())
-                            .unwrap_or(0)
-                            as usize;
+                            .unwrap_or(0) as usize;
                         let separator = plugin
                             .config
                             .get("separator")
@@ -1273,8 +1372,7 @@ pub fn run_runtime_current(
                             .config
                             .get("input_count")
                             .and_then(|v| v.as_u64())
-                            .unwrap_or(0)
-                            as usize;
+                            .unwrap_or(0) as usize;
                         let input_count = config_input_count;
                         plugin_instance.set_config(input_count, is_running);
                         internal_variable_values.insert(

@@ -1,9 +1,9 @@
-use crate::{GuiConfig, GuiError};
 use crate::plotter::LivePlotter;
+use crate::{GuiConfig, GuiError};
 use eframe::egui;
-use rtsyn_core::plugin::PluginManager;
 use rtsyn_cli::client;
 use rtsyn_cli::protocol::{DaemonRequest, DaemonResponse, RuntimePluginState};
+use rtsyn_core::plugin::PluginManager;
 use std::time::{Duration, Instant};
 
 pub fn run_daemon_plugin_viewer(
@@ -151,7 +151,6 @@ impl DaemonPluginViewer {
         }
     }
 
-
     fn variable_map(state: &RuntimePluginState) -> std::collections::HashMap<&str, f64> {
         let mut map = std::collections::HashMap::new();
         for (key, value) in &state.variables {
@@ -229,10 +228,7 @@ impl DaemonPluginViewer {
                     };
                     kv_row_wrapped(ui, name, 140.0, |ui| {
                         ui.add_enabled_ui(false, |ui| {
-                            ui.add_sized(
-                                [80.0, 0.0],
-                                egui::TextEdit::singleline(&mut value_text),
-                            );
+                            ui.add_sized([80.0, 0.0], egui::TextEdit::singleline(&mut value_text));
                         });
                     });
                     ui.add_space(4.0);
@@ -262,10 +258,7 @@ impl DaemonPluginViewer {
                     };
                     kv_row_wrapped(ui, name, 140.0, |ui| {
                         ui.add_enabled_ui(false, |ui| {
-                            ui.add_sized(
-                                [80.0, 0.0],
-                                egui::TextEdit::singleline(&mut value_text),
-                            );
+                            ui.add_sized([80.0, 0.0], egui::TextEdit::singleline(&mut value_text));
                         });
                     });
                     ui.add_space(4.0);
@@ -291,10 +284,7 @@ impl DaemonPluginViewer {
                     let mut value_text = format!("{value:.4}");
                     kv_row_wrapped(ui, name, 140.0, |ui| {
                         ui.add_enabled_ui(false, |ui| {
-                            ui.add_sized(
-                                [80.0, 0.0],
-                                egui::TextEdit::singleline(&mut value_text),
-                            );
+                            ui.add_sized([80.0, 0.0], egui::TextEdit::singleline(&mut value_text));
                         });
                     });
                     ui.add_space(4.0);
@@ -314,15 +304,10 @@ impl DaemonPluginViewer {
         frame.show(ui, |ui| {
             ui.vertical(|ui| {
                 ui.horizontal(|ui| {
-                    let (id_rect, _) = ui.allocate_exact_size(
-                        egui::vec2(24.0, 24.0),
-                        egui::Sense::hover(),
-                    );
-                    ui.painter().rect_filled(
-                        id_rect,
-                        8.0,
-                        egui::Color32::from_gray(60),
-                    );
+                    let (id_rect, _) =
+                        ui.allocate_exact_size(egui::vec2(24.0, 24.0), egui::Sense::hover());
+                    ui.painter()
+                        .rect_filled(id_rect, 8.0, egui::Color32::from_gray(60));
                     ui.painter().text(
                         id_rect.center(),
                         egui::Align2::CENTER_CENTER,
@@ -357,15 +342,29 @@ impl DaemonPluginViewer {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        Self::render_section_values(ui, "Variables", "\u{f013}", &view.state.variables);
-                        Self::render_section_numbers(ui, "Outputs", "\u{f08b}", &view.state.outputs);
+                        Self::render_section_values(
+                            ui,
+                            "Variables",
+                            "\u{f013}",
+                            &view.state.variables,
+                        );
+                        Self::render_section_numbers(
+                            ui,
+                            "Outputs",
+                            "\u{f08b}",
+                            &view.state.outputs,
+                        );
                         Self::render_section_inputs(ui, "Inputs", "\u{f090}", &view.state.inputs);
-                        Self::render_section_values(ui, "Internal variables", "\u{f085}", &view.state.internal_variables);
+                        Self::render_section_values(
+                            ui,
+                            "Internal variables",
+                            "\u{f085}",
+                            &view.state.internal_variables,
+                        );
                     });
             });
         });
     }
-
 }
 
 impl eframe::App for DaemonPluginViewer {
@@ -423,7 +422,10 @@ impl eframe::App for DaemonPluginViewer {
         if view.kind == "live_plotter" {
             if let Some(state) = self.display_state.as_ref() {
                 let display_view = DaemonPluginView {
-                    kind: self.display_kind.clone().unwrap_or_else(|| view.kind.clone()),
+                    kind: self
+                        .display_kind
+                        .clone()
+                        .unwrap_or_else(|| view.kind.clone()),
                     state: state.clone(),
                     period_seconds: view.period_seconds,
                     time_scale: view.time_scale,
@@ -444,8 +446,13 @@ impl eframe::App for DaemonPluginViewer {
                     Self::plotter_config(&view.state, &view.samples);
                 self.last_refresh_hz = refresh_hz;
                 let period_seconds = view.period_seconds;
-                self.plotter
-                    .update_config(input_count, refresh_hz, window_ms, amplitude, period_seconds);
+                self.plotter.update_config(
+                    input_count,
+                    refresh_hz,
+                    window_ms,
+                    amplitude,
+                    period_seconds,
+                );
                 if !view.series_names.is_empty() {
                     self.plotter.set_series_names(view.series_names.clone());
                 } else {
@@ -481,7 +488,10 @@ impl eframe::App for DaemonPluginViewer {
         } else {
             if let Some(state) = self.display_state.as_ref() {
                 let display_view = DaemonPluginView {
-                    kind: self.display_kind.clone().unwrap_or_else(|| view.kind.clone()),
+                    kind: self
+                        .display_kind
+                        .clone()
+                        .unwrap_or_else(|| view.kind.clone()),
                     state: state.clone(),
                     period_seconds: view.period_seconds,
                     time_scale: view.time_scale,

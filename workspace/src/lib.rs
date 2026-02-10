@@ -111,7 +111,7 @@ pub fn add_connection(
         &connection.to_port,
         max_per_input,
     )?;
-    
+
     // Check if same output is already connected to a different input of the same target plugin
     if connections.iter().any(|conn| {
         conn.from_plugin == connection.from_plugin
@@ -121,7 +121,7 @@ pub fn add_connection(
     }) {
         return Err(ConnectionRuleError::DuplicateConnection);
     }
-    
+
     connections.push(connection);
     Ok(())
 }

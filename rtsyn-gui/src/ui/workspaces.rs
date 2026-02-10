@@ -47,7 +47,8 @@ impl GuiApp {
             }
             WorkspaceDialogMode::Save => {
                 self.workspace_dialog.name_input = self.workspace_manager.workspace.name.clone();
-                self.workspace_dialog.description_input = self.workspace_manager.workspace.description.clone();
+                self.workspace_dialog.description_input =
+                    self.workspace_manager.workspace.description.clone();
                 self.workspace_dialog.edit_path = None;
             }
             WorkspaceDialogMode::Edit => {}
@@ -194,14 +195,18 @@ impl GuiApp {
                             ui.scope(|ui| {
                                 let mut style = ui.style().as_ref().clone();
                                 style.visuals.extreme_bg_color = egui::Color32::from_gray(50);
-                                style.visuals.widgets.inactive.bg_fill = egui::Color32::from_gray(50);
-                                style.visuals.widgets.hovered.bg_fill = egui::Color32::from_gray(55);
+                                style.visuals.widgets.inactive.bg_fill =
+                                    egui::Color32::from_gray(50);
+                                style.visuals.widgets.hovered.bg_fill =
+                                    egui::Color32::from_gray(55);
                                 style.visuals.widgets.active.bg_fill = egui::Color32::from_gray(60);
                                 ui.set_style(style);
                                 ui.add_sized(
                                     [220.0, 24.0],
-                                    egui::TextEdit::singleline(&mut self.windows.manage_workspace_search)
-                                        .hint_text("Search workspaces"),
+                                    egui::TextEdit::singleline(
+                                        &mut self.windows.manage_workspace_search,
+                                    )
+                                    .hint_text("Search workspaces"),
                                 );
                             });
                             ui.add_space(6.0);
@@ -217,12 +222,23 @@ impl GuiApp {
                                         .min_scrolled_height(list_h)
                                         .show(ui, |ui| {
                                             ui.style_mut().spacing.item_spacing.y = 4.0;
-                                            for (idx, entry) in self.workspace_manager.workspace_entries.iter().enumerate() {
-                                                if !self.windows.manage_workspace_search.trim().is_empty()
-                                                    && !entry
-                                                        .name
-                                                        .to_lowercase()
-                                                        .contains(&self.windows.manage_workspace_search.to_lowercase())
+                                            for (idx, entry) in self
+                                                .workspace_manager
+                                                .workspace_entries
+                                                .iter()
+                                                .enumerate()
+                                            {
+                                                if !self
+                                                    .windows
+                                                    .manage_workspace_search
+                                                    .trim()
+                                                    .is_empty()
+                                                    && !entry.name.to_lowercase().contains(
+                                                        &self
+                                                            .windows
+                                                            .manage_workspace_search
+                                                            .to_lowercase(),
+                                                    )
                                                 {
                                                     continue;
                                                 }
@@ -230,11 +246,16 @@ impl GuiApp {
                                                 let response = ui
                                                     .allocate_ui_with_layout(
                                                         egui::vec2(ui.available_width(), 22.0),
-                                                        egui::Layout::left_to_right(egui::Align::Center),
+                                                        egui::Layout::left_to_right(
+                                                            egui::Align::Center,
+                                                        ),
                                                         |ui| {
                                                             ui.add(egui::SelectableLabel::new(
-                                                                self.windows.manage_workspace_selected_index == Some(idx),
-                                                                egui::RichText::new(label).size(14.0),
+                                                                self.windows
+                                                                    .manage_workspace_selected_index
+                                                                    == Some(idx),
+                                                                egui::RichText::new(label)
+                                                                    .size(14.0),
                                                             ))
                                                         },
                                                     )
@@ -253,11 +274,14 @@ impl GuiApp {
                                 egui::Layout::left_to_right(egui::Align::Center),
                                 |ui| {
                                     ui.label("Browse workspace file");
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        if styled_button(ui, "Browse...").clicked() {
-                                            self.open_import_dialog();
-                                        }
-                                    });
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            if styled_button(ui, "Browse...").clicked() {
+                                                self.open_import_dialog();
+                                            }
+                                        },
+                                    );
                                 },
                             );
                         },
@@ -274,11 +298,16 @@ impl GuiApp {
                                 .max_height(full_h)
                                 .min_scrolled_height(full_h)
                                 .show(ui, |ui| {
-                                    if let Some(idx) = self.windows.manage_workspace_selected_index {
-                                        if let Some(entry) = self.workspace_manager.workspace_entries.get(idx) {
+                                    if let Some(idx) = self.windows.manage_workspace_selected_index
+                                    {
+                                        if let Some(entry) =
+                                            self.workspace_manager.workspace_entries.get(idx)
+                                        {
                                             ui.add_space(4.0);
                                             ui.horizontal(|ui| {
-                                                ui.label(RichText::new(&entry.name).strong().size(18.0));
+                                                ui.label(
+                                                    RichText::new(&entry.name).strong().size(18.0),
+                                                );
                                             });
                                             ui.add_space(4.0);
                                             if !entry.description.is_empty() {
@@ -305,8 +334,10 @@ impl GuiApp {
                                                 ui.add_space(4.0);
                                                 ui.label(egui::RichText::new("Types:").strong());
                                                 ui.label(
-                                                    egui::RichText::new(entry.plugin_kinds.join(", "))
-                                                        .size(12.0)
+                                                    egui::RichText::new(
+                                                        entry.plugin_kinds.join(", "),
+                                                    )
+                                                    .size(12.0)
                                                     .color(egui::Color32::from_gray(180)),
                                                 );
                                             }
@@ -318,7 +349,8 @@ impl GuiApp {
                                                     if styled_button(ui, "Load").clicked() {
                                                         action_load = Some(entry.path.clone());
                                                     }
-                                                    if styled_button(ui, "Edit metadata").clicked() {
+                                                    if styled_button(ui, "Edit metadata").clicked()
+                                                    {
                                                         action_edit = Some(entry.path.clone());
                                                     }
                                                 },
@@ -429,14 +461,19 @@ impl GuiApp {
                                 ui.scope(|ui| {
                                     let mut style = ui.style().as_ref().clone();
                                     style.visuals.extreme_bg_color = egui::Color32::from_gray(50);
-                                    style.visuals.widgets.inactive.bg_fill = egui::Color32::from_gray(50);
-                                    style.visuals.widgets.hovered.bg_fill = egui::Color32::from_gray(55);
-                                    style.visuals.widgets.active.bg_fill = egui::Color32::from_gray(60);
+                                    style.visuals.widgets.inactive.bg_fill =
+                                        egui::Color32::from_gray(50);
+                                    style.visuals.widgets.hovered.bg_fill =
+                                        egui::Color32::from_gray(55);
+                                    style.visuals.widgets.active.bg_fill =
+                                        egui::Color32::from_gray(60);
                                     ui.set_style(style);
                                     ui.add_sized(
                                         [220.0, 24.0],
-                                        egui::TextEdit::singleline(&mut self.windows.load_workspace_search)
-                                            .hint_text("Search workspaces"),
+                                        egui::TextEdit::singleline(
+                                            &mut self.windows.load_workspace_search,
+                                        )
+                                        .hint_text("Search workspaces"),
                                     );
                                 });
                             });
@@ -452,12 +489,23 @@ impl GuiApp {
                                         .min_scrolled_height(list_h)
                                         .show(ui, |ui| {
                                             ui.style_mut().spacing.item_spacing.y = 4.0;
-                                            for (idx, entry) in self.workspace_manager.workspace_entries.iter().enumerate() {
-                                                if !self.windows.load_workspace_search.trim().is_empty()
-                                                    && !entry
-                                                        .name
-                                                        .to_lowercase()
-                                                        .contains(&self.windows.load_workspace_search.to_lowercase())
+                                            for (idx, entry) in self
+                                                .workspace_manager
+                                                .workspace_entries
+                                                .iter()
+                                                .enumerate()
+                                            {
+                                                if !self
+                                                    .windows
+                                                    .load_workspace_search
+                                                    .trim()
+                                                    .is_empty()
+                                                    && !entry.name.to_lowercase().contains(
+                                                        &self
+                                                            .windows
+                                                            .load_workspace_search
+                                                            .to_lowercase(),
+                                                    )
                                                 {
                                                     continue;
                                                 }
@@ -465,11 +513,16 @@ impl GuiApp {
                                                 let response = ui
                                                     .allocate_ui_with_layout(
                                                         egui::vec2(ui.available_width(), 22.0),
-                                                        egui::Layout::left_to_right(egui::Align::Center),
+                                                        egui::Layout::left_to_right(
+                                                            egui::Align::Center,
+                                                        ),
                                                         |ui| {
                                                             ui.add(egui::SelectableLabel::new(
-                                                                self.windows.load_workspace_selected_index == Some(idx),
-                                                                egui::RichText::new(label).size(14.0),
+                                                                self.windows
+                                                                    .load_workspace_selected_index
+                                                                    == Some(idx),
+                                                                egui::RichText::new(label)
+                                                                    .size(14.0),
                                                             ))
                                                         },
                                                     )
@@ -483,9 +536,12 @@ impl GuiApp {
                             );
                             if let Some(idx) = selected {
                                 self.windows.load_workspace_selected_index = Some(idx);
-                                if let Some(entry) = self.workspace_manager.workspace_entries.get(idx) {
+                                if let Some(entry) =
+                                    self.workspace_manager.workspace_entries.get(idx)
+                                {
                                     self.workspace_dialog.name_input = entry.name.clone();
-                                    self.workspace_dialog.description_input = entry.description.clone();
+                                    self.workspace_dialog.description_input =
+                                        entry.description.clone();
                                 }
                             }
                             ui.separator();
@@ -494,11 +550,14 @@ impl GuiApp {
                                 egui::Layout::left_to_right(egui::Align::Center),
                                 |ui| {
                                     ui.label("Browse workspace file");
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        if styled_button(ui, "Browse...").clicked() {
-                                            self.open_load_dialog();
-                                        }
-                                    });
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            if styled_button(ui, "Browse...").clicked() {
+                                                self.open_load_dialog();
+                                            }
+                                        },
+                                    );
                                 },
                             );
                         },
@@ -514,14 +573,22 @@ impl GuiApp {
                                 .min_scrolled_height(full_h)
                                 .show(ui, |ui| {
                                     if let Some(idx) = self.windows.load_workspace_selected_index {
-                                        if let Some(entry) = self.workspace_manager.workspace_entries.get(idx) {
+                                        if let Some(entry) =
+                                            self.workspace_manager.workspace_entries.get(idx)
+                                        {
                                             ui.add_space(4.0);
                                             ui.horizontal(|ui| {
-                                                ui.label(RichText::new(&entry.name).strong().size(18.0));
+                                                ui.label(
+                                                    RichText::new(&entry.name).strong().size(18.0),
+                                                );
                                             });
                                             ui.add_space(4.0);
                                             if !entry.description.is_empty() {
-                                                ui.label(egui::RichText::new(&entry.description).size(13.0).color(egui::Color32::from_gray(200)));
+                                                ui.label(
+                                                    egui::RichText::new(&entry.description)
+                                                        .size(13.0)
+                                                        .color(egui::Color32::from_gray(200)),
+                                                );
                                                 ui.add_space(8.0);
                                             }
                                             ui.label(egui::RichText::new("Workspace").strong());
@@ -539,7 +606,13 @@ impl GuiApp {
                                             if !entry.plugin_kinds.is_empty() {
                                                 ui.add_space(4.0);
                                                 ui.label(egui::RichText::new("Types:").strong());
-                                                ui.label(egui::RichText::new(entry.plugin_kinds.join(", ")).size(12.0).color(egui::Color32::from_gray(180)));
+                                                ui.label(
+                                                    egui::RichText::new(
+                                                        entry.plugin_kinds.join(", "),
+                                                    )
+                                                    .size(12.0)
+                                                    .color(egui::Color32::from_gray(180)),
+                                                );
                                             }
                                             ui.add_space(12.0);
                                             ui.horizontal(|ui| {
@@ -591,7 +664,8 @@ impl GuiApp {
         let window_size = egui::vec2(420.0, 240.0);
         let default_pos = Self::center_window(ctx, window_size);
         let mut draft = self
-            .workspace_settings.draft
+            .workspace_settings
+            .draft
             .unwrap_or(WorkspaceSettingsDraft {
                 frequency_value: self.frequency_value,
                 frequency_unit: self.frequency_unit,
@@ -601,6 +675,8 @@ impl GuiApp {
                 max_integration_steps: 10, // Default reasonable limit
             });
         let mut apply_clicked = false;
+        let mut save_clicked = false;
+        let mut factory_reset_clicked = false;
         let response = egui::Window::new("Runtime settings")
             .open(&mut open)
             .resizable(false)
@@ -812,12 +888,22 @@ impl GuiApp {
                     );
                     ui.label("(per plugin per tick)");
                 });
-                ui.label("Lower values improve real-time performance but may reduce numerical accuracy.");
+                ui.label(
+                    "Lower values improve real-time performance but may reduce numerical accuracy.",
+                );
 
                 ui.separator();
-                if styled_button(ui, "Apply").clicked() {
-                    apply_clicked = true;
-                }
+                ui.horizontal(|ui| {
+                    if styled_button(ui, "Apply").clicked() {
+                        apply_clicked = true;
+                    }
+                    if styled_button(ui, "Save").clicked() {
+                        save_clicked = true;
+                    }
+                    if styled_button(ui, "Restore default").clicked() {
+                        factory_reset_clicked = true;
+                    }
+                });
             });
         if let Some(response) = response {
             self.window_rects.push(response.response.rect);
@@ -832,13 +918,15 @@ impl GuiApp {
             }
         }
 
-        if apply_clicked {
+        if apply_clicked || save_clicked {
             self.frequency_value = draft.frequency_value;
             self.frequency_unit = draft.frequency_unit;
             self.period_value = draft.period_value;
             self.period_unit = draft.period_unit;
             self.workspace_settings.tab = draft.tab;
-            
+            self.workspace_manager.workspace.settings = self.current_workspace_settings();
+            self.mark_workspace_dirty();
+
             // Update the logic settings with the new max integration steps
             let period_seconds = self.compute_period_seconds();
             let (_, time_scale, time_label) = GuiApp::time_settings_from_selection(
@@ -857,9 +945,10 @@ impl GuiApp {
             } else {
                 selected_cores
             };
-            
+
             let _ = self
-            .state_sync.logic_tx
+                .state_sync
+                .logic_tx
                 .send(LogicMessage::UpdateSettings(LogicSettings {
                     cores,
                     period_seconds,
@@ -868,8 +957,48 @@ impl GuiApp {
                     ui_hz: self.state_sync.logic_ui_hz,
                     max_integration_steps: draft.max_integration_steps,
                 }));
-            
-            self.show_info("Runtime settings", "Sampling rate updated");
+
+            if apply_clicked && !save_clicked {
+                self.show_info("Runtime settings", "Sampling rate applied");
+            }
+        }
+        if save_clicked {
+            match self
+                .workspace_manager
+                .persist_runtime_settings_current_context()
+            {
+                Ok(rtsyn_core::workspace::RuntimeSettingsSaveTarget::Defaults) => {
+                    self.show_info("Runtime settings", "Default values saved");
+                }
+                Ok(rtsyn_core::workspace::RuntimeSettingsSaveTarget::Workspace) => {
+                    self.show_info("Runtime settings", "Workspace values saved");
+                }
+                Err(err) => {
+                    self.show_info("Runtime settings", &format!("Failed to save values: {err}"));
+                }
+            }
+        }
+        if factory_reset_clicked {
+            match self
+                .workspace_manager
+                .restore_runtime_settings_current_context()
+            {
+                Ok(_) => {
+                    self.apply_workspace_settings();
+                    draft = WorkspaceSettingsDraft {
+                        frequency_value: self.frequency_value,
+                        frequency_unit: self.frequency_unit,
+                        period_value: self.period_value,
+                        period_unit: self.period_unit,
+                        tab: self.workspace_settings.tab,
+                        max_integration_steps: draft.max_integration_steps,
+                    };
+                    self.show_info("Runtime settings", "Default values restored");
+                }
+                Err(err) => {
+                    self.show_info("Runtime settings", &format!("Restore failed: {err}"));
+                }
+            }
         }
 
         self.workspace_settings.open = open;

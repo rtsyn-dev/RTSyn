@@ -5,7 +5,9 @@ use rtsyn_plugin::prelude::*;
 #[test]
 fn csv_recorder_has_ui_schema() {
     let plugin = CsvRecorderedPlugin::new(1);
-    let schema = plugin.ui_schema().expect("CSV recorder should have UI schema");
+    let schema = plugin
+        .ui_schema()
+        .expect("CSV recorder should have UI schema");
 
     assert_eq!(schema.fields.len(), 4);
 
@@ -78,7 +80,9 @@ fn csv_recorder_dynamic_inputs() {
 #[test]
 fn live_plotter_has_ui_schema() {
     let plugin = LivePlotterPlugin::new(1);
-    let schema = plugin.ui_schema().expect("Live plotter should have UI schema");
+    let schema = plugin
+        .ui_schema()
+        .expect("Live plotter should have UI schema");
 
     assert_eq!(schema.fields.len(), 4);
 

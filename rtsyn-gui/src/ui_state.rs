@@ -1,9 +1,11 @@
 // UI state management structs
 
-use crate::state::{ConnectionEditMode, ConnectionEditTab, WorkspaceDialogMode, WorkspaceTimingTab, ConfirmAction};
+use crate::state::{
+    ConfirmAction, ConnectionEditMode, ConnectionEditTab, WorkspaceDialogMode, WorkspaceTimingTab,
+};
 use crate::WorkspaceSettingsDraft;
-use std::sync::mpsc::Receiver;
 use std::path::PathBuf;
+use std::sync::mpsc::Receiver;
 
 #[derive(Clone)]
 pub struct PlotterPreviewState {

@@ -11,7 +11,10 @@ pub struct DaemonService {
 impl DaemonService {
     pub fn new() -> Result<Self, String> {
         let (logic_tx, logic_state_rx) = spawn_runtime()?;
-        Ok(Self { logic_tx, logic_state_rx })
+        Ok(Self {
+            logic_tx,
+            logic_state_rx,
+        })
     }
 
     pub fn load_workspace(&self, workspace: WorkspaceDefinition) {
@@ -23,7 +26,9 @@ impl DaemonService {
     }
 
     pub fn set_plugin_running(&self, plugin_id: u64, running: bool) {
-        let _ = self.logic_tx.send(LogicMessage::SetPluginRunning(plugin_id, running));
+        let _ = self
+            .logic_tx
+            .send(LogicMessage::SetPluginRunning(plugin_id, running));
     }
 
     pub fn restart_plugin(&self, plugin_id: u64) {
