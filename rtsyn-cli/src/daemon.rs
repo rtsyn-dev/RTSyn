@@ -7,7 +7,9 @@ use rtsyn_core::connection::next_available_extendable_input_index;
 use rtsyn_core::plugin::{
     is_extendable_inputs, InstalledPlugin, PluginCatalog, PluginMetadataSource,
 };
-use rtsyn_core::workspace::{RuntimeSettingsSaveTarget, WorkspaceManager};
+use rtsyn_core::workspace::{
+    runtime_settings_options, RuntimeSettingsSaveTarget, WorkspaceManager,
+};
 use rtsyn_runtime::runtime::{spawn_runtime, LogicMessage, LogicState};
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -702,21 +704,27 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
         DaemonRequest::RuntimeSettingsShow => DaemonResponse::RuntimeSettings {
             settings: state.workspace_manager.workspace.settings.clone(),
         },
-        DaemonRequest::RuntimeSettingsOptions => DaemonResponse::RuntimeSettingsOptions {
-            options: RuntimeSettingsOptions {
-                frequency_units: vec!["hz".to_string(), "khz".to_string(), "mhz".to_string()],
-                period_units: vec![
-                    "ns".to_string(),
-                    "us".to_string(),
-                    "ms".to_string(),
-                    "s".to_string(),
-                ],
-                min_frequency_value: 1.0,
-                min_period_value: 1.0,
-                max_integration_steps_min: 1,
-                max_integration_steps_max: 100,
-            },
-        },
+        DaemonRequest::RuntimeSettingsOptions => {
+            let options = runtime_settings_options();
+            DaemonResponse::RuntimeSettingsOptions {
+                options: RuntimeSettingsOptions {
+                    frequency_units: options
+                        .frequency_units
+                        .into_iter()
+                        .map(str::to_string)
+                        .collect(),
+                    period_units: options
+                        .period_units
+                        .into_iter()
+                        .map(str::to_string)
+                        .collect(),
+                    min_frequency_value: options.min_frequency_value,
+                    min_period_value: options.min_period_value,
+                    max_integration_steps_min: options.max_integration_steps_min,
+                    max_integration_steps_max: options.max_integration_steps_max,
+                },
+            }
+        }
         DaemonRequest::RuntimeUmlDiagram => DaemonResponse::RuntimeUmlDiagram {
             uml: state.workspace_manager.current_workspace_uml_diagram(),
         },

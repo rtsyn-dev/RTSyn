@@ -278,7 +278,7 @@ impl GuiApp {
                                                     .default_open(true)
                                                     .show(ui, |ui| {
                                                         ui.add_space(4.0);
-                                                        for (name, __default_value) in vars {
+                                                        for (name, _default_value) in vars {
                                                             let key = &name;
                                                             if let Some(value) = map.get_mut(key) {
                                                                 // Special handling for max_latency_us

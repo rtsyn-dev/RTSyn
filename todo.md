@@ -64,3 +64,4 @@
 - [ ] Both `daemon plugin add` and daemon `runtime plugin add` do the same
 - [x] Add help tab
 - [ ] Maybe connect gui to daemon and make both processes modify the same one?
+- [ ] Change runtime plugin functions to plugin, and change the "list" into "available"

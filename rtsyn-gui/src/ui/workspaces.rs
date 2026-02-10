@@ -1,6 +1,10 @@
 use super::*;
 use crate::WindowFocus;
 use image::ImageEncoder;
+use rtsyn_core::workspace::{
+    RUNTIME_MAX_INTEGRATION_STEPS_MAX, RUNTIME_MAX_INTEGRATION_STEPS_MIN,
+    RUNTIME_MIN_FREQUENCY_VALUE, RUNTIME_MIN_PERIOD_VALUE,
+};
 use rtsyn_runtime::LogicSettings;
 use std::hash::{Hash, Hasher};
 use std::io::Read;
@@ -973,12 +977,12 @@ impl GuiApp {
                             });
                     });
 
-                    if draft.period_value < 1.0 {
-                        draft.period_value = 1.0;
+                    if draft.period_value < RUNTIME_MIN_PERIOD_VALUE {
+                        draft.period_value = RUNTIME_MIN_PERIOD_VALUE;
                         period_changed = true;
                     }
-                    if draft.frequency_value < 1.0 {
-                        draft.frequency_value = 1.0;
+                    if draft.frequency_value < RUNTIME_MIN_FREQUENCY_VALUE {
+                        draft.frequency_value = RUNTIME_MIN_FREQUENCY_VALUE;
                         frequency_changed = true;
                     }
 
@@ -1003,7 +1007,10 @@ impl GuiApp {
                     ui.add(
                         egui::DragValue::new(&mut draft.max_integration_steps)
                             .speed(1.0)
-                            .clamp_range(1..=100)
+                            .clamp_range(
+                                RUNTIME_MAX_INTEGRATION_STEPS_MIN
+                                    ..=RUNTIME_MAX_INTEGRATION_STEPS_MAX,
+                            )
                             .fixed_decimals(0),
                     );
                     ui.label("(per plugin per tick)");

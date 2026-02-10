@@ -1258,7 +1258,6 @@ impl eframe::App for GuiApp {
                 }
             }
 
-            // Connections panel removed for now.
         });
 
         self.render_workspace_dialog(ctx);

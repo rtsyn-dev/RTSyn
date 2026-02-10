@@ -37,6 +37,34 @@ pub enum RuntimeSettingsSaveTarget {
     Workspace,
 }
 
+#[derive(Debug, Clone)]
+pub struct RuntimeSettingsOptions {
+    pub frequency_units: Vec<&'static str>,
+    pub period_units: Vec<&'static str>,
+    pub min_frequency_value: f64,
+    pub min_period_value: f64,
+    pub max_integration_steps_min: usize,
+    pub max_integration_steps_max: usize,
+}
+
+pub const RUNTIME_FREQUENCY_UNITS: [&str; 3] = ["hz", "khz", "mhz"];
+pub const RUNTIME_PERIOD_UNITS: [&str; 4] = ["ns", "us", "ms", "s"];
+pub const RUNTIME_MIN_FREQUENCY_VALUE: f64 = 1.0;
+pub const RUNTIME_MIN_PERIOD_VALUE: f64 = 1.0;
+pub const RUNTIME_MAX_INTEGRATION_STEPS_MIN: usize = 1;
+pub const RUNTIME_MAX_INTEGRATION_STEPS_MAX: usize = 100;
+
+pub fn runtime_settings_options() -> RuntimeSettingsOptions {
+    RuntimeSettingsOptions {
+        frequency_units: RUNTIME_FREQUENCY_UNITS.to_vec(),
+        period_units: RUNTIME_PERIOD_UNITS.to_vec(),
+        min_frequency_value: RUNTIME_MIN_FREQUENCY_VALUE,
+        min_period_value: RUNTIME_MIN_PERIOD_VALUE,
+        max_integration_steps_min: RUNTIME_MAX_INTEGRATION_STEPS_MIN,
+        max_integration_steps_max: RUNTIME_MAX_INTEGRATION_STEPS_MAX,
+    }
+}
+
 impl WorkspaceManager {
     const RUNTIME_DEFAULTS_FILE: &'static str = "runtime_settings.defaults.json";
     const RUNTIME_FACTORY_FILE: &'static str = "runtime_settings.factory.json";
