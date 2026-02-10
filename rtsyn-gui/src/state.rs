@@ -22,6 +22,15 @@ pub(crate) enum WorkspaceTimingTab {
     Period,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HelpTopic {
+    Plugins,
+    Workspaces,
+    Runtime,
+    RTSyn,
+    CLI,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum FrequencyUnit {
     Hz,

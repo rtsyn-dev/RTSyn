@@ -62,4 +62,5 @@
 - [ ] Add id to ports for cli
 - [ ] Add a function that returns a uml diagram from the runtime
 - [ ] Both `daemon plugin add` and daemon `runtime plugin add` do the same
-- [ ] Add help tab
+- [x] Add help tab
+- [ ] Maybe connect gui to daemon and make both processes modify the same one?

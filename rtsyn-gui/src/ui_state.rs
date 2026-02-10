@@ -1,7 +1,8 @@
 // UI state management structs
 
 use crate::state::{
-    ConfirmAction, ConnectionEditMode, ConnectionEditTab, WorkspaceDialogMode, WorkspaceTimingTab,
+    ConfirmAction, ConnectionEditMode, ConnectionEditTab, HelpTopic, WorkspaceDialogMode,
+    WorkspaceTimingTab,
 };
 use crate::WorkspaceSettingsDraft;
 use std::path::PathBuf;
@@ -164,6 +165,20 @@ impl Default for WorkspaceSettingsState {
             open: false,
             draft: None,
             tab: WorkspaceTimingTab::Frequency,
+        }
+    }
+}
+
+pub struct HelpState {
+    pub open: bool,
+    pub topic: HelpTopic,
+}
+
+impl Default for HelpState {
+    fn default() -> Self {
+        Self {
+            open: false,
+            topic: HelpTopic::RTSyn,
         }
     }
 }

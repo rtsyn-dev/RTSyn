@@ -156,6 +156,7 @@ enum WindowFocus {
     ConnectionEditorAdd,
     ConnectionEditorRemove,
     PluginConfig,
+    Help,
 }
 
 #[derive(Debug)]
@@ -242,6 +243,7 @@ struct GuiApp {
     build_dialog: ui_state::BuildDialogState,
     confirm_dialog: ui_state::ConfirmDialogState,
     workspace_settings: ui_state::WorkspaceSettingsState,
+    help_state: ui_state::HelpState,
     windows: ui_state::WindowState,
 
     // Remaining UI State
@@ -320,6 +322,7 @@ impl GuiApp {
             build_dialog: ui_state::BuildDialogState::default(),
             confirm_dialog: ui_state::ConfirmDialogState::default(),
             workspace_settings: ui_state::WorkspaceSettingsState::default(),
+            help_state: ui_state::HelpState::default(),
             windows: ui_state::WindowState::default(),
             status: String::new(),
             csv_path_target_plugin_id: None,
@@ -1189,6 +1192,10 @@ impl eframe::App for GuiApp {
                             ui.close_menu();
                         }
                     });
+                    if ui.button("Help").clicked() {
+                        self.help_state.open = true;
+                        self.pending_window_focus = Some(WindowFocus::Help);
+                    }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.add_space(6.0);
@@ -1231,6 +1238,7 @@ impl eframe::App for GuiApp {
         self.render_plugin_config_window(ctx);
         self.render_plotter_windows(ctx);
         self.render_workspace_settings_window(ctx);
+        self.render_help_window(ctx);
         self.render_build_dialog(ctx);
         self.render_confirm_remove_dialog(ctx);
         self.render_info_dialog(ctx);
