@@ -494,6 +494,48 @@ fn runtime_settings_save_and_restore_commands_work() {
 
 #[test]
 #[serial]
+fn runtime_uml_diagram_command_returns_uml_text() {
+    let exe = env!("CARGO_BIN_EXE_rtsyn");
+    let mut installed_db_backup: Option<Vec<u8>> = None;
+    if Path::new(INSTALLED_DB).exists() {
+        installed_db_backup = std::fs::read(INSTALLED_DB).ok();
+        let _ = std::fs::remove_file(INSTALLED_DB);
+    }
+    if std::path::Path::new(SOCKET_PATH).exists() {
+        if std::os::unix::net::UnixStream::connect(SOCKET_PATH).is_ok() {
+            let _ = Command::new(exe).args(["daemon", "stop"]).status();
+        }
+        let _ = std::fs::remove_file(SOCKET_PATH);
+    }
+
+    let mut child = Command::new(exe)
+        .args(["daemon", "run"])
+        .spawn()
+        .expect("run rtsyn daemon");
+    assert!(wait_for_daemon(exe));
+
+    let output = Command::new(exe)
+        .args(["daemon", "runtime", "uml-diagram"])
+        .output()
+        .expect("runtime uml diagram");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains("[RTSyn][ERROR]"));
+    assert!(stdout.contains("@startuml"));
+    assert!(stdout.contains("@enduml"));
+
+    let _ = Command::new(exe).args(["daemon", "stop"]).status();
+    let _ = child.wait();
+
+    if let Some(data) = installed_db_backup {
+        let _ = std::fs::write(INSTALLED_DB, data);
+    } else {
+        let _ = std::fs::remove_file(INSTALLED_DB);
+    }
+}
+
+#[test]
+#[serial]
 fn runtime_plugin_set_updates_config() {
     let exe = env!("CARGO_BIN_EXE_rtsyn");
     let mut installed_db_backup: Option<Vec<u8>> = None;

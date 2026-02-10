@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use workspace::{WorkspaceDefinition, WorkspaceSettings};
+use crate::plugin::PluginManager;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceEntry {
@@ -536,4 +537,65 @@ impl WorkspaceManager {
     pub fn runtime_factory(&self) -> &WorkspaceSettings {
         &self.runtime_factory
     }
+
+    pub fn current_workspace_uml_diagram(&self) -> String {
+        workspace_to_uml_diagram(&self.workspace)
+    }
+}
+
+fn uml_escape(text: &str) -> String {
+    text.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+pub fn workspace_to_uml_diagram(workspace: &WorkspaceDefinition) -> String {
+    let mut lines = Vec::new();
+    lines.push("@startuml".to_string());
+    lines.push("skinparam componentStyle rectangle".to_string());
+    lines.push("skinparam ranksep 120".to_string());
+    lines.push("skinparam nodesep 120".to_string());
+    lines.push("skinparam ArrowFontSize 11".to_string());
+    lines.push(String::new());
+    lines.push(format!(
+        "title RTSyn Workspace - {}",
+        uml_escape(&workspace.name)
+    ));
+    lines.push(String::new());
+
+    for plugin in &workspace.plugins {
+        let display_name = PluginManager::display_kind(&plugin.kind);
+        let plugin_name = plugin
+            .config
+            .get("name")
+            .and_then(|v| v.as_str())
+            .filter(|v| !v.trim().is_empty())
+            .unwrap_or(&display_name);
+        let label = format!("{}-{}", uml_escape(plugin_name), plugin.id);
+        lines.push(format!("component \"{label}\" as P{}", plugin.id));
+    }
+    lines.push(String::new());
+
+    if workspace.plugins.is_empty() {
+        lines.push("note \"No plugins in workspace\" as N0".to_string());
+    }
+
+    for conn in &workspace.connections {
+        let from_port = uml_escape(&conn.from_port);
+        let to_port = uml_escape(&conn.to_port);
+        lines.push(format!("P{} --> P{}", conn.from_plugin, conn.to_plugin));
+        lines.push("note on link".to_string());
+        if from_port == to_port {
+            lines.push(from_port);
+        } else {
+            lines.push(format!("{from_port} to {to_port}"));
+        }
+        lines.push("end note".to_string());
+        lines.push(String::new());
+    }
+
+    if workspace.connections.is_empty() {
+        lines.push("note \"No connections in workspace\" as N1".to_string());
+    }
+
+    lines.push("@enduml".to_string());
+    lines.join("\n")
 }

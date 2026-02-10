@@ -203,6 +203,7 @@ pub struct WindowState {
     pub plugin_search: String,
     pub plugin_selected_index: Option<usize>,
     pub manage_connections_open: bool,
+    pub uml_diagram_open: bool,
     pub plugin_config_open: bool,
     pub plugin_config_id: Option<u64>,
 }
@@ -229,6 +230,7 @@ impl Default for WindowState {
             plugin_search: String::new(),
             plugin_selected_index: None,
             manage_connections_open: false,
+            uml_diagram_open: false,
             plugin_config_open: false,
             plugin_config_id: None,
         }

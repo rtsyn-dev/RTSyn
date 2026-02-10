@@ -140,6 +140,7 @@ pub enum DaemonRequest {
     RuntimeSettingsSave,
     RuntimeSettingsRestore,
     RuntimeSettingsOptions,
+    RuntimeUmlDiagram,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -186,5 +187,8 @@ pub enum DaemonResponse {
     },
     RuntimeSettingsOptions {
         options: RuntimeSettingsOptions,
+    },
+    RuntimeUmlDiagram {
+        uml: String,
     },
 }

@@ -717,6 +717,9 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
                 max_integration_steps_max: 100,
             },
         },
+        DaemonRequest::RuntimeUmlDiagram => DaemonResponse::RuntimeUmlDiagram {
+            uml: state.workspace_manager.current_workspace_uml_diagram(),
+        },
         DaemonRequest::RuntimeSettingsSet { json } => {
             match state.workspace_manager.apply_runtime_settings_json(&json) {
                 Ok(()) => match state.workspace_manager.runtime_settings() {

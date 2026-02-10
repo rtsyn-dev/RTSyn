@@ -82,6 +82,9 @@ impl GuiApp {
     }
 
     pub(crate) fn render_plugin_cards(&mut self, ctx: &egui::Context, panel_rect: egui::Rect) {
+        const CARD_WIDTH: f32 = 280.0;
+        const CARD_FIXED_HEIGHT: f32 = 132.0;
+        const PANEL_PAD: f32 = 8.0;
         let mut pending_info: Option<String> = None;
         let incoming_connections: HashSet<u64> = self
             .workspace_manager
@@ -95,12 +98,6 @@ impl GuiApp {
             .installed_plugins
             .iter()
             .map(|plugin| (plugin.manifest.kind.clone(), plugin.manifest.name.clone()))
-            .collect();
-        let __manifest_by_kind: HashMap<String, PluginManifest> = self
-            .plugin_manager
-            .installed_plugins
-            .iter()
-            .map(|plugin| (plugin.manifest.kind.clone(), plugin.manifest.clone()))
             .collect();
         let metadata_by_kind: HashMap<String, Vec<(String, f64)>> = self
             .plugin_manager
@@ -129,16 +126,26 @@ impl GuiApp {
         let mut workspace_changed = false;
         let mut recompute_plotter_needed = false;
         let right_down = ctx.input(|i| i.pointer.secondary_down());
+        let card_height_cap = (panel_rect.height() - PANEL_PAD * 2.0).max(220.0);
+        let scroll_max_height = (card_height_cap - CARD_FIXED_HEIGHT).max(72.0);
         for plugin in &mut self.workspace_manager.workspace.plugins {
             let col = index % max_per_row;
             let row = index / max_per_row;
             let default_pos = panel_rect.min
                 + egui::vec2(12.0 + (col as f32 * 240.0), 12.0 + (row as f32 * 140.0));
-            let pos = self
+            let requested_pos = self
                 .plugin_positions
                 .get(&plugin.id)
                 .cloned()
                 .unwrap_or(default_pos);
+            let min_x = panel_rect.left() + PANEL_PAD;
+            let max_x = (panel_rect.right() - CARD_WIDTH - PANEL_PAD).max(min_x);
+            let min_y = panel_rect.top() + PANEL_PAD;
+            let max_y = (panel_rect.bottom() - card_height_cap - PANEL_PAD).max(min_y);
+            let pos = egui::pos2(
+                requested_pos.x.clamp(min_x, max_x),
+                requested_pos.y.clamp(min_y, max_y),
+            );
             let area_id = egui::Id::new(("plugin_window", plugin.id));
             let mut plugin_changed = false;
             let current_id = self.connection_editor.plugin_id;
@@ -173,8 +180,8 @@ impl GuiApp {
                 .movable(!right_down)
                 .constrain_to(panel_rect)
                 .show(ctx, |ui| {
-                    let card_width = 280.0;
-                    ui.set_width(card_width);
+                    ui.set_width(CARD_WIDTH);
+                    ui.set_max_height(card_height_cap);
                     
                     frame.show(ui, |ui| {
                         ui.vertical(|ui| {
@@ -246,7 +253,7 @@ impl GuiApp {
                                 ui.style_mut().spacing.scroll = scroll_style;
                                 
                                 egui::ScrollArea::vertical()
-                                    .max_height(400.0)
+                                    .max_height(scroll_max_height)
                                     .drag_to_scroll(false)
                                     .show(ui, |ui| {
                                         ui.push_id(("plugin_content", plugin.id), |ui| {
@@ -841,8 +848,11 @@ impl GuiApp {
                     });
                 });
 
-            self.plugin_positions
-                .insert(plugin.id, response.response.rect.min);
+            let clamped_pos = egui::pos2(
+                response.response.rect.min.x.clamp(min_x, max_x),
+                response.response.rect.min.y.clamp(min_y, max_y),
+            );
+            self.plugin_positions.insert(plugin.id, clamped_pos);
             self.plugin_rects.insert(plugin.id, response.response.rect);
             if ctx.input(|i| {
                 i.pointer

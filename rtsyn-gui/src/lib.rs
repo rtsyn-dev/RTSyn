@@ -152,6 +152,7 @@ enum WindowFocus {
     UninstallPlugins,
     Plugins,
     WorkspaceSettings,
+    UmlDiagram,
     ManageConnections,
     ConnectionEditorAdd,
     ConnectionEditorRemove,
@@ -268,6 +269,16 @@ struct GuiApp {
     number_edit_buffers: HashMap<(u64, String), String>,
     window_rects: Vec<egui::Rect>,
     pending_window_focus: Option<WindowFocus>,
+    uml_preview_texture: Option<egui::TextureHandle>,
+    uml_preview_hash: Option<u64>,
+    uml_preview_error: Option<String>,
+    uml_preview_loading: bool,
+    uml_preview_rx: Option<Receiver<(u64, Result<Vec<u8>, String>)>>,
+    uml_text_buffer: String,
+    uml_export_svg: bool,
+    uml_export_width: u32,
+    uml_export_height: u32,
+    uml_preview_zoom: f32,
 }
 
 impl GuiApp {
@@ -345,6 +356,16 @@ impl GuiApp {
             number_edit_buffers: HashMap::new(),
             window_rects: Vec::new(),
             pending_window_focus: None,
+            uml_preview_texture: None,
+            uml_preview_hash: None,
+            uml_preview_error: None,
+            uml_preview_loading: false,
+            uml_preview_rx: None,
+            uml_text_buffer: String::new(),
+            uml_export_svg: false,
+            uml_export_width: 1920,
+            uml_export_height: 1080,
+            uml_preview_zoom: 0.0,
         };
         app.apply_workspace_settings();
         app
@@ -1186,6 +1207,22 @@ impl eframe::App for GuiApp {
                     });
 
                     ui.menu_button("Runtime", |ui| {
+                        if ui.button("UML diagram").clicked() {
+                            self.windows.uml_diagram_open = true;
+                            self.pending_window_focus = Some(WindowFocus::UmlDiagram);
+                            self.uml_text_buffer =
+                                self.workspace_manager.current_workspace_uml_diagram();
+                            self.uml_preview_hash = None;
+                            self.uml_preview_error = None;
+                            self.uml_preview_texture = None;
+                            self.uml_preview_loading = false;
+                            self.uml_preview_rx = None;
+                            self.uml_export_svg = false;
+                            self.uml_export_width = 1920;
+                            self.uml_export_height = 1080;
+                            self.uml_preview_zoom = 0.0;
+                            ui.close_menu();
+                        }
                         if ui.button("Settings").clicked() {
                             self.workspace_settings.open = true;
                             self.pending_window_focus = Some(WindowFocus::WorkspaceSettings);
@@ -1238,6 +1275,7 @@ impl eframe::App for GuiApp {
         self.render_plugin_config_window(ctx);
         self.render_plotter_windows(ctx);
         self.render_workspace_settings_window(ctx);
+        self.render_uml_diagram_window(ctx);
         self.render_help_window(ctx);
         self.render_build_dialog(ctx);
         self.render_confirm_remove_dialog(ctx);

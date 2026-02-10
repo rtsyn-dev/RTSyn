@@ -60,7 +60,7 @@
 - [x] Change plugin config ID badge on plugin config menu so its the same as the plugin card
 - [ ] Sometimes the plotter window cant be closed
 - [ ] Add id to ports for cli
-- [ ] Add a function that returns a uml diagram from the runtime
+- [x] Add a function that returns a uml diagram from the runtime
 - [ ] Both `daemon plugin add` and daemon `runtime plugin add` do the same
 - [x] Add help tab
 - [ ] Maybe connect gui to daemon and make both processes modify the same one?

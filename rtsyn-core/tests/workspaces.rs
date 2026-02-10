@@ -1,4 +1,6 @@
-use rtsyn_core::workspace::{RuntimeSettingsSaveTarget, WorkspaceManager};
+use rtsyn_core::workspace::{
+    workspace_to_uml_diagram, RuntimeSettingsSaveTarget, WorkspaceManager,
+};
 use workspace::WorkspaceSettings;
 
 #[test]
@@ -154,4 +156,53 @@ fn restore_runtime_settings_restores_factory_for_current_context() {
         manager.runtime_defaults().frequency_value,
         WorkspaceSettings::default().frequency_value
     );
+}
+
+#[test]
+fn uml_diagram_includes_plugins_and_connections() {
+    let mut ws = workspace::WorkspaceDefinition {
+        name: "uml_test".to_string(),
+        description: String::new(),
+        target_hz: 1000,
+        plugins: vec![
+            workspace::PluginDefinition {
+                id: 1,
+                kind: "source".to_string(),
+                config: serde_json::json!({"name":"src"}),
+                priority: 0,
+                running: true,
+            },
+            workspace::PluginDefinition {
+                id: 2,
+                kind: "sink".to_string(),
+                config: serde_json::json!({}),
+                priority: 0,
+                running: false,
+            },
+        ],
+        connections: vec![workspace::ConnectionDefinition {
+            from_plugin: 1,
+            from_port: "out".to_string(),
+            to_plugin: 2,
+            to_port: "in".to_string(),
+            kind: "shared_memory".to_string(),
+        }],
+        settings: WorkspaceSettings::default(),
+    };
+
+    let uml = workspace_to_uml_diagram(&ws);
+    assert!(uml.contains("@startuml"));
+    assert!(uml.contains("component \"src-1\""));
+    assert!(uml.contains("component \"Sink-2\""));
+    assert!(uml.contains("P1 --> P2"));
+    assert!(uml.contains("note on link"));
+    assert!(uml.contains("out to in"));
+    assert!(uml.contains("end note"));
+    assert!(uml.contains("@enduml"));
+
+    ws.plugins.clear();
+    ws.connections.clear();
+    let uml_empty = workspace_to_uml_diagram(&ws);
+    assert!(uml_empty.contains("No plugins in workspace"));
+    assert!(uml_empty.contains("No connections in workspace"));
 }

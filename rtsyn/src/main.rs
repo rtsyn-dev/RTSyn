@@ -126,6 +126,7 @@ enum RuntimeCommands {
         #[command(subcommand)]
         command: RuntimeSettingsCommands,
     },
+    UmlDiagram,
 }
 
 #[derive(Subcommand)]
@@ -298,6 +299,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         DaemonResponse::RuntimePluginView { .. } => {}
                         DaemonResponse::RuntimeSettings { .. } => {}
                         DaemonResponse::RuntimeSettingsOptions { .. } => {}
+                        DaemonResponse::RuntimeUmlDiagram { .. } => {}
                     },
                     Err(err) => eprintln!("[RTSyn][ERROR]: {err}"),
                 }
@@ -444,6 +446,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             DaemonRequest::RuntimeSettingsOptions
                         }
                     },
+                    RuntimeCommands::UmlDiagram => DaemonRequest::RuntimeUmlDiagram,
                 };
                 match client::send_request(&request) {
                     Ok(response) => match response {
@@ -561,6 +564,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     println!("\t{name}: {value}");
                                 }
                             }
+                        }
+                        DaemonResponse::RuntimeUmlDiagram { uml } => {
+                            println!("{uml}");
                         }
                         _ => {}
                     },

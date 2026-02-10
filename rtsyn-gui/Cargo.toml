@@ -19,6 +19,10 @@ toml = "0.8"
 rfd = "0.15.3"
 thiserror = { workspace = true }
 log = { workspace = true }
+plantuml_encoding = "2.0.3"
+ureq = "2"
+image = { version = "0.25", default-features = false, features = ["png"] }
+arboard = "3"
 csv_recorder_plugin = { path = "../app_plugins/csv_recorder" }
 live_plotter_plugin = { path = "../app_plugins/live_plotter" }
 performance_monitor_plugin = { path = "../app_plugins/performance_monitor" }
