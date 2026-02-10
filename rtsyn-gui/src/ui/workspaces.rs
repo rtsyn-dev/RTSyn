@@ -1277,10 +1277,6 @@ impl GuiApp {
                 let content_h = (ui.available_height() - controls_h).max(140.0);
                 ui.columns(2, |columns| {
                     columns[0].set_height(content_h);
-                    columns[0].vertical_centered(|ui| {
-                        ui.label(RichText::new("UML").strong().size(20.0));
-                    });
-                    columns[0].add_space(4.0);
                     egui::Frame::none()
                         .fill(egui::Color32::from_gray(30))
                         .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(64)))
@@ -1353,10 +1349,6 @@ impl GuiApp {
                         });
 
                     columns[1].set_height(content_h);
-                    columns[1].vertical_centered(|ui| {
-                        ui.label(RichText::new("Preview").strong().size(20.0));
-                    });
-                    columns[1].add_space(4.0);
                     egui::Frame::none()
                         .fill(egui::Color32::from_gray(30))
                         .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(64)))
