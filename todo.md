@@ -8,7 +8,7 @@
 - [ ] Impove, change and refactor the plotter: It shall generate plots from different inputs, this should be the y value and the x the time (period of collection)
 - [ ] Let the installed plugins be organized in folders (virtual view), there is one reserved for the System ones
 - [x] Allow changing the color of the plotter lines and names
-- [ ] When confirmation dialog is shown, the connections on background dissapear visually while is shown.
+- [x] When confirmation dialog is shown, the connections on background dissapear visually while is shown.
 - [ ] When you right click on empty space (not plugin or window), a menu with Add plugin must appear
 - [x] Fix warning `warning: the following packages contain code that will be rejected by a future version of Rust: ashpd v0.8.1`
 - [x] Click to highlight the connections must be ON the plugin (right now, if you click a window over the plugin they highlight). Instead of one click, do te connection highlighting activation and deactivation with double click.
@@ -61,7 +61,7 @@
 - [ ] Sometimes the plotter window cant be closed
 - [ ] Add id to ports for cli
 - [x] Add a function that returns a uml diagram from the runtime
-- [ ] Both `daemon plugin add` and daemon `runtime plugin add` do the same
+- [x] Both `daemon plugin add` and daemon `runtime plugin add` do the same
 - [x] Add help tab
 - [ ] Maybe connect gui to daemon and make both processes modify the same one?
-- [ ] Change runtime plugin functions to plugin, and change the "list" into "available"
+- [x] Change runtime plugin functions to plugin, and change the "list" into "available"

@@ -9,7 +9,7 @@ const INSTALLED_DB: &str = "app_plugins/installed_plugins.json";
 fn wait_for_daemon(exe: &str) -> bool {
     for _ in 0..20 {
         let output = Command::new(exe)
-            .args(["daemon", "plugin", "list"])
+            .args(["daemon", "plugin", "available"])
             .output()
             .expect("query daemon");
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -153,7 +153,7 @@ fn daemon_reload_resets_state() {
     assert!(!stderr.contains("[RTSyn][ERROR]"));
 
     let output = Command::new(exe)
-        .args(["daemon", "plugin", "list"])
+        .args(["daemon", "plugin", "available"])
         .output()
         .expect("list plugins");
     let output = String::from_utf8_lossy(&output.stdout);
@@ -166,7 +166,7 @@ fn daemon_reload_resets_state() {
     assert!(status.success());
 
     let output = Command::new(exe)
-        .args(["daemon", "plugin", "list"])
+        .args(["daemon", "plugin", "available"])
         .output()
         .expect("list plugins after reload");
     let output = String::from_utf8_lossy(&output.stdout);
@@ -191,7 +191,7 @@ fn daemon_reload_resets_state() {
 
 #[test]
 #[serial]
-fn runtime_commands_match_plugin_commands() {
+fn plugin_commands_cover_runtime_actions() {
     let exe = env!("CARGO_BIN_EXE_rtsyn");
     let mut installed_db_backup: Option<Vec<u8>> = None;
     if Path::new(INSTALLED_DB).exists() {
@@ -233,23 +233,23 @@ fn runtime_commands_match_plugin_commands() {
     assert!(!stderr.contains("[RTSyn][ERROR]"));
 
     let output = Command::new(exe)
-        .args(["daemon", "plugin", "list"])
+        .args(["daemon", "plugin", "available"])
         .output()
         .expect("list available plugins");
     let output = String::from_utf8_lossy(&output.stdout);
     assert!(output.contains("temp_runtime_plugin"));
 
     let output = Command::new(exe)
-        .args(["daemon", "runtime", "plugin", "add", "temp_runtime_plugin"])
+        .args(["daemon", "plugin", "add", "temp_runtime_plugin"])
         .output()
-        .expect("add runtime plugin");
+        .expect("add runtime plugin through daemon plugin command");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!stderr.contains("[RTSyn][ERROR]"));
 
     let output = Command::new(exe)
-        .args(["daemon", "runtime", "plugin", "remove", "1"])
+        .args(["daemon", "plugin", "remove", "1"])
         .output()
-        .expect("remove runtime plugin");
+        .expect("remove runtime plugin through daemon plugin command");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!stderr.contains("[RTSyn][ERROR]"));
 
@@ -286,28 +286,28 @@ fn runtime_list_reflects_workspace() {
     assert!(wait_for_daemon(exe));
 
     let output = Command::new(exe)
-        .args(["daemon", "runtime", "plugin", "list"])
+        .args(["daemon", "plugin", "list"])
         .output()
         .expect("list runtime plugins");
     let output = String::from_utf8_lossy(&output.stdout);
     assert!(output.contains("No runtime plugins"));
 
     let output = Command::new(exe)
-        .args(["daemon", "runtime", "plugin", "add", "live_plotter"])
+        .args(["daemon", "plugin", "add", "live_plotter"])
         .output()
         .expect("add runtime plugin");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!stderr.contains("[RTSyn][ERROR]"));
 
     let output = Command::new(exe)
-        .args(["daemon", "runtime", "plugin", "list"])
+        .args(["daemon", "plugin", "list"])
         .output()
         .expect("list runtime plugins after add");
     let output = String::from_utf8_lossy(&output.stdout);
     assert!(output.contains("(live_plotter)"));
 
     let _ = Command::new(exe)
-        .args(["daemon", "runtime", "plugin", "remove", "1"])
+        .args(["daemon", "plugin", "remove", "1"])
         .status();
 
     let _ = Command::new(exe).args(["daemon", "stop"]).status();
@@ -557,20 +557,19 @@ fn runtime_plugin_set_updates_config() {
     assert!(wait_for_daemon(exe));
 
     let output = Command::new(exe)
-        .args(["daemon", "runtime", "plugin", "add", "performance_monitor"])
+        .args(["daemon", "plugin", "add", "performance_monitor"])
         .output()
         .expect("add runtime plugin");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!stderr.contains("[RTSyn][ERROR]"));
 
     let _ = Command::new(exe)
-        .args(["daemon", "runtime", "plugin", "start", "1"])
+        .args(["daemon", "plugin", "start", "1"])
         .status();
 
     let status = Command::new(exe)
         .args([
             "daemon",
-            "runtime",
             "plugin",
             "set",
             "1",
@@ -583,7 +582,7 @@ fn runtime_plugin_set_updates_config() {
     let mut found = false;
     for _ in 0..20 {
         let output = Command::new(exe)
-            .args(["daemon", "runtime", "plugin", "show", "1"])
+            .args(["daemon", "plugin", "show", "1"])
             .output()
             .expect("show runtime plugin");
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -601,7 +600,7 @@ fn runtime_plugin_set_updates_config() {
     assert!(found);
 
     let _ = Command::new(exe)
-        .args(["daemon", "runtime", "plugin", "remove", "1"])
+        .args(["daemon", "plugin", "remove", "1"])
         .status();
 
     let _ = Command::new(exe).args(["daemon", "stop"]).status();
@@ -651,14 +650,14 @@ fn connection_add_validates_ports() {
     assert!(status.success());
 
     let output = Command::new(exe)
-        .args(["daemon", "runtime", "plugin", "add", "performance_monitor"])
+        .args(["daemon", "plugin", "add", "performance_monitor"])
         .output()
         .expect("add performance_monitor");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!stderr.contains("[RTSyn][ERROR]"));
 
     let output = Command::new(exe)
-        .args(["daemon", "runtime", "plugin", "add", "live_plotter"])
+        .args(["daemon", "plugin", "add", "live_plotter"])
         .output()
         .expect("add live_plotter");
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -767,10 +766,10 @@ fn connection_add_validates_ports() {
     assert!(stdout.contains("1:period_us -> 2:in_0"));
 
     let _ = Command::new(exe)
-        .args(["daemon", "runtime", "plugin", "remove", "2"])
+        .args(["daemon", "plugin", "remove", "2"])
         .status();
     let _ = Command::new(exe)
-        .args(["daemon", "runtime", "plugin", "remove", "1"])
+        .args(["daemon", "plugin", "remove", "1"])
         .status();
 
     let _ = Command::new(exe).args(["daemon", "stop"]).status();

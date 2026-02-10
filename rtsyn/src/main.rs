@@ -67,9 +67,32 @@ enum PluginCommands {
     Uninstall {
         name: String,
     },
+    Available {
+        #[arg(long, alias = "jq")]
+        json_query: bool,
+    },
     List {
         #[arg(long, alias = "jq")]
         json_query: bool,
+    },
+    Show {
+        id: u64,
+    },
+    Set {
+        id: u64,
+        json: String,
+    },
+    View {
+        id: u64,
+    },
+    Start {
+        id: u64,
+    },
+    Stop {
+        id: u64,
+    },
+    Restart {
+        id: u64,
     },
 }
 
@@ -118,48 +141,11 @@ enum ConnectionCommands {
 
 #[derive(Subcommand)]
 enum RuntimeCommands {
-    Plugin {
-        #[command(subcommand)]
-        command: RuntimePluginCommands,
-    },
     Settings {
         #[command(subcommand)]
         command: RuntimeSettingsCommands,
     },
     UmlDiagram,
-}
-
-#[derive(Subcommand)]
-enum RuntimePluginCommands {
-    Add {
-        name: String,
-    },
-    Remove {
-        id: u64,
-    },
-    List {
-        #[arg(long, alias = "jq")]
-        json_query: bool,
-    },
-    Show {
-        id: u64,
-    },
-    Set {
-        id: u64,
-        json: String,
-    },
-    View {
-        id: u64,
-    },
-    Start {
-        id: u64,
-    },
-    Stop {
-        id: u64,
-    },
-    Restart {
-        id: u64,
-    },
 }
 
 #[derive(Subcommand)]
@@ -221,7 +207,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             DaemonCommands::Plugin { command } => {
-                let mut list_json_query = false;
+                let mut available_json_query = false;
+                let mut runtime_list_json_query = false;
                 let request = match command {
                     PluginCommands::Add { name } => DaemonRequest::PluginAdd { name },
                     PluginCommands::Install { path } => {
@@ -247,10 +234,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     PluginCommands::Rebuild { name } => DaemonRequest::PluginRebuild { name },
                     PluginCommands::Remove { id } => DaemonRequest::PluginRemove { id },
                     PluginCommands::Uninstall { name } => DaemonRequest::PluginUninstall { name },
-                    PluginCommands::List { json_query } => {
-                        list_json_query = json_query;
+                    PluginCommands::Available { json_query } => {
+                        available_json_query = json_query;
                         DaemonRequest::PluginList
                     }
+                    PluginCommands::List { json_query } => {
+                        runtime_list_json_query = json_query;
+                        DaemonRequest::RuntimeList
+                    }
+                    PluginCommands::Show { id } => DaemonRequest::RuntimeShow { id },
+                    PluginCommands::Set { id, json } => {
+                        DaemonRequest::RuntimeSetVariables { id, json }
+                    }
+                    PluginCommands::View { id } => {
+                        if let Err(err) = spawn_daemon_viewer(id) {
+                            eprintln!("[RTSyn][ERROR]: {err}");
+                        }
+                        return Ok(());
+                    }
+                    PluginCommands::Start { id } => DaemonRequest::RuntimePluginStart { id },
+                    PluginCommands::Stop { id } => DaemonRequest::RuntimePluginStop { id },
+                    PluginCommands::Restart { id } => DaemonRequest::RuntimePluginRestart { id },
                 };
                 match client::send_request(&request) {
                     Ok(response) => match response {
@@ -260,7 +264,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             println!("[RTSyn][INFO] Plugin added with id {id}")
                         }
                         DaemonResponse::PluginList { plugins } => {
-                            if list_json_query {
+                            if available_json_query {
                                 let json = serde_json::to_string_pretty(&plugins)
                                     .unwrap_or_else(|_| "[]".to_string());
                                 println!("{json}");
@@ -292,10 +296,59 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
                         }
+                        DaemonResponse::RuntimeList { plugins } => {
+                            if runtime_list_json_query {
+                                let json = serde_json::to_string_pretty(&plugins)
+                                    .unwrap_or_else(|_| "[]".to_string());
+                                println!("{json}");
+                                return Ok(());
+                            }
+                            if plugins.is_empty() {
+                                println!("[RTSyn][INFO] No plugins in runtime");
+                            } else {
+                                println!("[RTSyn][INFO] Runtime plugins:");
+                                for plugin in plugins {
+                                    println!("{} ({})", plugin.id, plugin.kind);
+                                }
+                            }
+                        }
+                        DaemonResponse::RuntimeShow { id, kind, state } => {
+                            println!("[RTSyn][INFO] {id} - {kind}");
+                            println!("Variables:");
+                            if state.variables.is_empty() {
+                                println!("\t(none)");
+                            } else {
+                                for (name, value) in state.variables {
+                                    println!("\t{name}: {value}");
+                                }
+                            }
+                            println!("Outputs:");
+                            if state.outputs.is_empty() {
+                                println!("\t(none)");
+                            } else {
+                                for (name, value) in state.outputs {
+                                    println!("\t{name}: {value}");
+                                }
+                            }
+                            println!("Inputs:");
+                            if state.inputs.is_empty() {
+                                println!("\t(none)");
+                            } else {
+                                for (name, value) in state.inputs {
+                                    println!("\t{name}: {value}");
+                                }
+                            }
+                            println!("Internal variables:");
+                            if state.internal_variables.is_empty() {
+                                println!("\t(none)");
+                            } else {
+                                for (name, value) in state.internal_variables {
+                                    println!("\t{name}: {value}");
+                                }
+                            }
+                        }
                         DaemonResponse::WorkspaceList { .. } => {}
                         DaemonResponse::ConnectionList { .. } => {}
-                        DaemonResponse::RuntimeList { .. } => {}
-                        DaemonResponse::RuntimeShow { .. } => {}
                         DaemonResponse::RuntimePluginView { .. } => {}
                         DaemonResponse::RuntimeSettings { .. } => {}
                         DaemonResponse::RuntimeSettingsOptions { .. } => {}
@@ -399,36 +452,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             DaemonCommands::Runtime { command } => {
-                let mut list_json_query = false;
                 let mut settings_json_query = false;
                 let request = match command {
-                    RuntimeCommands::Plugin { command } => match command {
-                        RuntimePluginCommands::Add { name } => DaemonRequest::PluginAdd { name },
-                        RuntimePluginCommands::Remove { id } => DaemonRequest::PluginRemove { id },
-                        RuntimePluginCommands::List { json_query } => {
-                            list_json_query = json_query;
-                            DaemonRequest::RuntimeList
-                        }
-                        RuntimePluginCommands::Show { id } => DaemonRequest::RuntimeShow { id },
-                        RuntimePluginCommands::Set { id, json } => {
-                            DaemonRequest::RuntimeSetVariables { id, json }
-                        }
-                        RuntimePluginCommands::View { id } => {
-                            if let Err(err) = spawn_daemon_viewer(id) {
-                                eprintln!("[RTSyn][ERROR]: {err}");
-                            }
-                            return Ok(());
-                        }
-                        RuntimePluginCommands::Start { id } => {
-                            DaemonRequest::RuntimePluginStart { id }
-                        }
-                        RuntimePluginCommands::Stop { id } => {
-                            DaemonRequest::RuntimePluginStop { id }
-                        }
-                        RuntimePluginCommands::Restart { id } => {
-                            DaemonRequest::RuntimePluginRestart { id }
-                        }
-                    },
                     RuntimeCommands::Settings { command } => match command {
                         RuntimeSettingsCommands::Show { json_query } => {
                             settings_json_query = json_query;
@@ -452,52 +477,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Ok(response) => match response {
                         DaemonResponse::Ok { message } => println!("[RTSyn][INFO] {message}"),
                         DaemonResponse::Error { message } => eprintln!("[RTSyn][ERROR]: {message}"),
-                        DaemonResponse::PluginAdded { id } => {
-                            println!("[RTSyn][INFO] Plugin added with id {id}")
-                        }
-                        DaemonResponse::PluginList { plugins } => {
-                            if plugins.is_empty() {
-                                println!("[RTSyn][INFO] No plugins installed");
-                            } else {
-                                println!("[RTSyn][INFO] List of available plugins:");
-                                for plugin in plugins {
-                                    let version =
-                                        plugin.version.unwrap_or_else(|| "unknown".to_string());
-                                    let removable = if plugin.removable {
-                                        "removable"
-                                    } else {
-                                        "bundled"
-                                    };
-                                    if let Some(path) = plugin.path {
-                                        println!(
-                                            "{} ({}) [{}] {}",
-                                            plugin.name, plugin.kind, removable, path
-                                        );
-                                    } else {
-                                        println!(
-                                            "{} ({}) [{}] v{}",
-                                            plugin.name, plugin.kind, removable, version
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                        DaemonResponse::RuntimeList { plugins } => {
-                            if list_json_query {
-                                let json = serde_json::to_string_pretty(&plugins)
-                                    .unwrap_or_else(|_| "[]".to_string());
-                                println!("{json}");
-                                return Ok(());
-                            }
-                            if plugins.is_empty() {
-                                println!("[RTSyn][INFO] No runtime plugins");
-                            } else {
-                                println!("[RTSyn][INFO] Runtime plugins:");
-                                for plugin in plugins {
-                                    println!("{} ({})", plugin.id, plugin.kind);
-                                }
-                            }
-                        }
                         DaemonResponse::RuntimeSettings { settings } => {
                             if settings_json_query {
                                 let json = serde_json::to_string_pretty(&settings)
@@ -529,41 +508,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 options.max_integration_steps_min,
                                 options.max_integration_steps_max
                             );
-                        }
-                        DaemonResponse::RuntimeShow { id, kind, state } => {
-                            println!("[RTSyn][INFO] {id} - {kind}");
-                            println!("Variables:");
-                            if state.variables.is_empty() {
-                                println!("\t(none)");
-                            } else {
-                                for (name, value) in state.variables {
-                                    println!("\t{name}: {value}");
-                                }
-                            }
-                            println!("Outputs:");
-                            if state.outputs.is_empty() {
-                                println!("\t(none)");
-                            } else {
-                                for (name, value) in state.outputs {
-                                    println!("\t{name}: {value}");
-                                }
-                            }
-                            println!("Inputs:");
-                            if state.inputs.is_empty() {
-                                println!("\t(none)");
-                            } else {
-                                for (name, value) in state.inputs {
-                                    println!("\t{name}: {value}");
-                                }
-                            }
-                            println!("Internal variables:");
-                            if state.internal_variables.is_empty() {
-                                println!("\t(none)");
-                            } else {
-                                for (name, value) in state.internal_variables {
-                                    println!("\t{name}: {value}");
-                                }
-                            }
                         }
                         DaemonResponse::RuntimeUmlDiagram { uml } => {
                             println!("{uml}");
