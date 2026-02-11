@@ -576,6 +576,13 @@ impl GuiApp {
                                                         ui.add_space(4.0);
                                                         for (name, _default_value) in vars {
                                                             let key = &name;
+                                                            if !map.contains_key(key) {
+                                                                map.insert(
+                                                                    key.clone(),
+                                                                    Value::from(_default_value),
+                                                                );
+                                                                plugin_changed = true;
+                                                            }
                                                             if let Some(value) = map.get_mut(key) {
                                                                 // Special handling for max_latency_us
                                                                 if key == "max_latency_us" {
@@ -646,9 +653,14 @@ impl GuiApp {
                                                                         .number_edit_buffers
                                                                         .entry(buffer_key)
                                                                         .or_insert_with(|| {
-                                                                            format_f64_6(
-                                                                                value.as_f64().unwrap_or(0.0),
-                                                                            )
+                                                                            let n =
+                                                                                value.as_f64().unwrap_or(0.0);
+                                                                            let mut text =
+                                                                                format_f64_6(n);
+                                                                            if !text.contains('.') {
+                                                                                text.push_str(".0");
+                                                                            }
+                                                                            text
                                                                         });
                                                                     kv_row_wrapped(ui, key, 140.0, |ui| {
                                                                         ui.add_sized(

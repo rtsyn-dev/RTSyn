@@ -67,4 +67,9 @@
 - [x] Change runtime plugin functions to plugin, and change the "list" into "available"
 - [ ] Change needs connections to be needs_outputs and needs_inputs (daq constraint, to have atleast one but doesnt need both)
 - [ ] Add a settings section for default paths (for plugins, for images, for data etc)
-- [ ] Fix what happens with long names in plugins
+- [ ] Fix no wrap with long names in plugins
+- [ ] Delete three dots and make title white on loading/building plugin
+- [ ] Checkbox on plugin config "Show on UML diagram"
+- [ ] Plotter on remove connection of i_n-1, glitches the plot (appears i_0 with no input)
+- [ ] Move plotter scale configuration to settings
+- [ ] Instead of connection add plugin name and id on hover
