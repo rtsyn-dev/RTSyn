@@ -205,6 +205,11 @@ pub struct ComediDaqPlugin {
     last_scan_nonce: u64,
     active_inputs: Vec<bool>,
     active_outputs: Vec<bool>,
+    ao_port_names: Vec<String>,
+    ai_port_names: Vec<String>,
+    ao_calibration: Vec<Option<(comedilib::comedi_range, comedilib::LsamplT)>>,
+    ai_calibration: Vec<Option<(comedilib::comedi_range, comedilib::LsamplT)>>,
+    no_device_detected: bool,
     dev: Option<std::ptr::NonNull<comedilib::comedi_t>>,
 }
 
@@ -245,6 +250,11 @@ impl ComediDaqPlugin {
             last_scan_nonce: 0,
             active_inputs: Vec::new(),
             active_outputs: Vec::new(),
+            ao_port_names: Vec::new(),
+            ai_port_names: Vec::new(),
+            ao_calibration: Vec::new(),
+            ai_calibration: Vec::new(),
+            no_device_detected: false,
             dev: None,
         };
 
@@ -315,6 +325,23 @@ impl ComediDaqPlugin {
         self.output_port_names.clear();
         self.active_inputs.clear();
         self.active_outputs.clear();
+        self.ao_port_names.clear();
+        self.ai_port_names.clear();
+        self.ao_calibration.clear();
+        self.ai_calibration.clear();
+        self.output_values.clear();
+
+        if self.no_device_detected {
+            let name = "no device detected".to_string();
+            self.outputs.push(Port {
+                id: PortId(name.clone()),
+            });
+            self.output_port_names.push(name.clone());
+            self.ai_port_names.push(name);
+            self.active_outputs.push(false);
+            self.ai_calibration.push(None);
+            return;
+        }
 
         for (sd, ch) in &self.ao_channels {
             let name = format!("ao{sd}_{ch}");
@@ -323,6 +350,8 @@ impl ComediDaqPlugin {
             });
             self.input_port_names.push(name);
             self.active_inputs.push(false);
+            self.ao_port_names.push(format!("ao{sd}_{ch}"));
+            self.ao_calibration.push(None);
         }
 
         for (sd, ch) in &self.ai_channels {
@@ -332,22 +361,17 @@ impl ComediDaqPlugin {
             });
             self.output_port_names.push(name);
             self.active_outputs.push(false);
-        }
-    }
-
-    fn mock_default_channels(&mut self) {
-        if self.ai_channels.is_empty() {
-            self.ai_channels = vec![(0, 0), (0, 1)];
-        }
-        if self.ao_channels.is_empty() {
-            self.ao_channels = vec![(1, 0)];
+            self.ai_port_names.push(format!("ai{sd}_{ch}"));
+            self.ai_calibration.push(None);
         }
     }
 
     fn auto_configure(&mut self) {
         let device_path = Self::normalize_device_path(&self.device_path);
         let Ok(dev) = (unsafe { comedilib::open(device_path) }) else {
-            self.mock_default_channels();
+            self.no_device_detected = true;
+            self.ai_channels.clear();
+            self.ao_channels.clear();
             self.update_ports();
             return;
         };
@@ -373,17 +397,44 @@ impl ComediDaqPlugin {
             }
         }
 
+        self.no_device_detected = false;
         self.ai_channels = ai;
         self.ao_channels = ao;
-        if self.ai_channels.is_empty() && self.ao_channels.is_empty() {
-            self.mock_default_channels();
-        }
         self.update_ports();
         unsafe { comedilib::close(dev) };
     }
 
     fn comedi_error<E: std::fmt::Display>(_err: E) -> PluginError {
         PluginError::ProcessingFailed
+    }
+
+    fn rebuild_calibration_cache(&mut self) -> Result<(), PluginError> {
+        let Some(dev) = self.dev.as_ref() else {
+            if self.no_device_detected {
+                if let Some(value) = self.output_values.get_mut("no device detected") {
+                    *value = 1.0;
+                } else {
+                    self.output_values.insert("no device detected".to_string(), 1.0);
+                }
+            }
+            return Ok(());
+        };
+        let dev = dev.as_ptr();
+        self.ao_calibration.clear();
+        self.ao_calibration.reserve(self.ao_channels.len());
+        for (sd, ch) in &self.ao_channels {
+            let range = unsafe { comedilib::get_range(dev, *sd, *ch) }.map_err(Self::comedi_error)?;
+            let max = unsafe { comedilib::get_maxdata(dev, *sd, *ch) }.map_err(Self::comedi_error)?;
+            self.ao_calibration.push(Some((range, max)));
+        }
+        self.ai_calibration.clear();
+        self.ai_calibration.reserve(self.ai_channels.len());
+        for (sd, ch) in &self.ai_channels {
+            let range = unsafe { comedilib::get_range(dev, *sd, *ch) }.map_err(Self::comedi_error)?;
+            let max = unsafe { comedilib::get_maxdata(dev, *sd, *ch) }.map_err(Self::comedi_error)?;
+            self.ai_calibration.push(Some((range, max)));
+        }
+        Ok(())
     }
 }
 
@@ -417,12 +468,15 @@ impl Plugin for ComediDaqPlugin {
             if !self.active_inputs.get(idx).copied().unwrap_or(false) {
                 continue;
             }
-            let port = format!("ao{sd}_{ch}");
-            if let Some(v) = self.input_values.get(&port) {
-                let range =
-                    unsafe { comedilib::get_range(dev, *sd, *ch) }.map_err(Self::comedi_error)?;
-                let max =
-                    unsafe { comedilib::get_maxdata(dev, *sd, *ch) }.map_err(Self::comedi_error)?;
+            let port = self
+                .ao_port_names
+                .get(idx)
+                .map(String::as_str)
+                .unwrap_or("");
+            if let Some(v) = self.input_values.get(port) {
+                let Some((range, max)) = self.ao_calibration.get(idx).and_then(|v| *v) else {
+                    continue;
+                };
                 let raw = unsafe { comedilib::from_phys(*v, &range, max) };
                 unsafe { comedilib::write(dev, *sd, *ch, raw) }.map_err(Self::comedi_error)?;
             }
@@ -433,14 +487,14 @@ impl Plugin for ComediDaqPlugin {
                 continue;
             }
             let raw = unsafe { comedilib::read(dev, *sd, *ch) }.map_err(Self::comedi_error)?;
-            let range =
-                unsafe { comedilib::get_range(dev, *sd, *ch) }.map_err(Self::comedi_error)?;
-            let max =
-                unsafe { comedilib::get_maxdata(dev, *sd, *ch) }.map_err(Self::comedi_error)?;
+            let Some((range, max)) = self.ai_calibration.get(idx).and_then(|v| *v) else {
+                continue;
+            };
             let phys = unsafe { comedilib::to_phys(raw, &range, max) };
 
-            let port = format!("ai{sd}_{ch}");
-            self.output_values.insert(port, phys);
+            if let Some(port) = self.ai_port_names.get(idx) {
+                self.output_values.insert(port.clone(), phys);
+            }
         }
 
         Ok(())
@@ -466,11 +520,6 @@ impl Plugin for ComediDaqPlugin {
                     ConfigField::text("device_path", "Device")
                         .default_value(Value::String("/dev/comedi0".to_string()))
                         .hint("Comedi device node (e.g. /dev/comedi0)"),
-                )
-                .field(
-                    ConfigField::boolean("scan_devices", "Scan Channels")
-                        .default_value(Value::Bool(false))
-                        .hint("Toggle to rescan channels"),
                 ),
         )
     }
@@ -479,13 +528,17 @@ impl Plugin for ComediDaqPlugin {
         Some(DisplaySchema {
             inputs: self.input_port_names.clone(),
             outputs: self.output_port_names.clone(),
-            variables: vec!["running".to_string()],
+            variables: Vec::new(),
         })
     }
 
     fn get_variable(&self, name: &str) -> Option<Value> {
         match name {
-            "device_path" => Some(Value::String(self.device_path.clone())),
+            "device_path" => Some(Value::String(if self.no_device_detected {
+                "no device detected".to_string()
+            } else {
+                self.device_path.clone()
+            })),
             "scan_devices" => Some(Value::Bool(self.last_scan_devices)),
             "scan_nonce" => Some(Value::from(self.last_scan_nonce)),
             _ => None,
@@ -529,6 +582,7 @@ impl DeviceDriver for ComediDaqPlugin {
         let device_path = Self::normalize_device_path(&self.device_path);
         let dev = unsafe { comedilib::open(device_path) }.map_err(Self::comedi_error)?;
         self.dev = std::ptr::NonNull::new(dev);
+        self.rebuild_calibration_cache()?;
         self.is_open = true;
         Ok(())
     }
@@ -537,6 +591,8 @@ impl DeviceDriver for ComediDaqPlugin {
         if let Some(dev) = self.dev.take() {
             unsafe { comedilib::close(dev.as_ptr()) };
         }
+        self.ao_calibration.clear();
+        self.ai_calibration.clear();
         self.is_open = false;
         Ok(())
     }

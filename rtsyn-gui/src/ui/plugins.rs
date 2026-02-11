@@ -468,6 +468,49 @@ impl GuiApp {
                                                                                         });
                                                                                     }
                                                                                 });
+                                                                            } else if let Some(field) = field_info {
+                                                                                if let rtsyn_plugin::ui::FieldType::Choice { options } = &field.field_type {
+                                                                                    let mut changed = false;
+                                                                                    egui::ComboBox::from_id_source((plugin.id, var_name.clone(), "choice"))
+                                                                                        .selected_text(text.clone())
+                                                                                        .width(value_w)
+                                                                                        .show_ui(ui, |ui| {
+                                                                                            for option in options {
+                                                                                                if ui
+                                                                                                    .selectable_value(&mut text, option.clone(), option)
+                                                                                                    .clicked()
+                                                                                                {
+                                                                                                    changed = true;
+                                                                                                }
+                                                                                            }
+                                                                                        });
+                                                                                    if changed {
+                                                                                        let new_text = text.clone();
+                                                                                        let _ = self.state_sync.logic_tx.send(LogicMessage::SetPluginVariable(
+                                                                                            plugin.id,
+                                                                                            var_name.clone(),
+                                                                                            Value::String(new_text.clone())
+                                                                                        ));
+                                                                                        if let Value::Object(ref mut map) = plugin.config {
+                                                                                            map.insert(var_name.clone(), Value::String(new_text));
+                                                                                            plugin_changed = true;
+                                                                                        }
+                                                                                    }
+                                                                                } else if ui.add_sized([value_w, 0.0], egui::TextEdit::singleline(&mut text)).changed() {
+                                                                                    let new_text = text.clone();
+                                                                                    let _ = self.state_sync.logic_tx.send(LogicMessage::SetPluginVariable(
+                                                                                        plugin.id,
+                                                                                        var_name.clone(),
+                                                                                        Value::String(new_text.clone())
+                                                                                    ));
+                                                                                    if let Value::Object(ref mut map) = plugin.config {
+                                                                                        map.insert(var_name.clone(), Value::String(new_text));
+                                                                                        if var_name == "path" {
+                                                                                            map.insert("path_autogen".to_string(), Value::from(false));
+                                                                                        }
+                                                                                        plugin_changed = true;
+                                                                                    }
+                                                                                }
                                                                             } else if ui.add_sized([value_w, 0.0], egui::TextEdit::singleline(&mut text)).changed() {
                                                                                 let new_text = text.clone();
                                                                                 let _ = self.state_sync.logic_tx.send(LogicMessage::SetPluginVariable(
@@ -836,6 +879,24 @@ impl GuiApp {
                                             .unwrap_or(false);  // Default to false
                                         if supports_restart {
                                             if styled_button(ui, "Restart").clicked() {
+                                                if plugin.kind == "comedi_daq" {
+                                                    if let Value::Object(ref mut map) = plugin.config {
+                                                        let next_nonce = map
+                                                            .get("scan_nonce")
+                                                            .and_then(|v| v.as_u64())
+                                                            .unwrap_or(0)
+                                                            .saturating_add(1);
+                                                        map.insert(
+                                                            "scan_nonce".to_string(),
+                                                            Value::from(next_nonce),
+                                                        );
+                                                        map.insert(
+                                                            "scan_devices".to_string(),
+                                                            Value::Bool(false),
+                                                        );
+                                                        workspace_changed = true;
+                                                    }
+                                                }
                                                 pending_restart.push(plugin.id);
                                             }
                                         }

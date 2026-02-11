@@ -695,22 +695,32 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                                 let _ = plugin_instance.close();
                             }
 
-                            let input_ports: Vec<String> =
-                                plugin_instance.input_port_names().iter().cloned().collect();
-                            for port in input_ports {
-                                let value = input_sum(&ws.connections, &outputs, plugin.id, &port);
+                            let mut comedi_input_sums: HashMap<String, f64> = HashMap::new();
+                            for conn in &ws.connections {
+                                if conn.to_plugin != plugin.id {
+                                    continue;
+                                }
+                                if let Some(value) =
+                                    outputs.get(&(conn.from_plugin, conn.from_port.clone()))
+                                {
+                                    *comedi_input_sums.entry(conn.to_port.clone()).or_insert(0.0) +=
+                                        *value;
+                                }
+                            }
+                            let input_port_len = plugin_instance.input_port_names().len();
+                            for idx in 0..input_port_len {
+                                let port =
+                                    plugin_instance.input_port_names()[idx].clone();
+                                let value = comedi_input_sums.get(&port).copied().unwrap_or(0.0);
                                 input_values.insert((plugin.id, port.clone()), value);
                                 plugin_instance.set_input(&port, value);
                             }
 
                             let _ = plugin_instance.process(&mut plugin_ctx);
 
-                            let output_ports: Vec<String> = plugin_instance
-                                .output_port_names()
-                                .iter()
-                                .cloned()
-                                .collect();
-                            for port in output_ports {
+                            let output_port_len = plugin_instance.output_port_names().len();
+                            for idx in 0..output_port_len {
+                                let port = plugin_instance.output_port_names()[idx].clone();
                                 let value = plugin_instance.get_output(&port);
                                 outputs.insert((plugin.id, port), value);
                             }
@@ -754,21 +764,43 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                             }
                         }
                         RuntimePlugin::PerformanceMonitor(plugin_instance) => {
+                            let period_unit = plugin
+                                .config
+                                .get("units")
+                                .and_then(|v| v.as_str())
+                                .or_else(|| {
+                                    plugin.config.get("period_unit").and_then(|v| v.as_str())
+                                })
+                                .unwrap_or("us");
+
+                            let latency_us_from_unit = |value: f64, unit: &str| -> f64 {
+                                match unit {
+                                    "ns" => value / 1_000.0,
+                                    "us" => value,
+                                    "ms" => value * 1_000.0,
+                                    "s" => value * 1_000_000.0,
+                                    _ => value,
+                                }
+                            };
                             let max_latency_us = plugin
                                 .config
-                                .get("max_latency_us")
+                                .get("latency")
                                 .and_then(|v| v.as_f64())
+                                .map(|v| latency_us_from_unit(v, period_unit))
+                                .or_else(|| {
+                                    plugin.config.get("max_latency_us").and_then(|v| v.as_f64())
+                                })
                                 .unwrap_or(1000.0);
-
                             let workspace_period_us = settings.period_seconds * 1_000_000.0;
-                            plugin_instance.set_config(max_latency_us, workspace_period_us);
+                            plugin_instance.set_config(
+                                max_latency_us,
+                                workspace_period_us,
+                                period_unit,
+                            );
                             let _ = plugin_instance.process(&mut plugin_ctx);
 
-                            // Output the performance values
                             for (idx, output_name) in
-                                ["period_us", "latency_us", "jitter_us", "realtime_violation"]
-                                    .iter()
-                                    .enumerate()
+                                plugin_instance.outputs().iter().map(|port| port.id.0.as_str()).enumerate()
                             {
                                 let value = plugin_instance.get_output_values()[idx];
                                 outputs.insert((plugin.id, output_name.to_string()), value);
@@ -1347,22 +1379,31 @@ pub fn run_runtime_current(
                             let _ = plugin_instance.close();
                         }
 
-                        let input_ports: Vec<String> =
-                            plugin_instance.input_port_names().iter().cloned().collect();
-                        for port in input_ports {
-                            let value = input_sum(&ws.connections, &outputs, plugin.id, &port);
+                        let mut comedi_input_sums: HashMap<String, f64> = HashMap::new();
+                        for conn in &ws.connections {
+                            if conn.to_plugin != plugin.id {
+                                continue;
+                            }
+                            if let Some(value) =
+                                outputs.get(&(conn.from_plugin, conn.from_port.clone()))
+                            {
+                                *comedi_input_sums.entry(conn.to_port.clone()).or_insert(0.0) +=
+                                    *value;
+                            }
+                        }
+                        let input_port_len = plugin_instance.input_port_names().len();
+                        for idx in 0..input_port_len {
+                            let port = plugin_instance.input_port_names()[idx].clone();
+                            let value = comedi_input_sums.get(&port).copied().unwrap_or(0.0);
                             input_values.insert((plugin.id, port.clone()), value);
                             plugin_instance.set_input(&port, value);
                         }
 
                         let _ = plugin_instance.process(&mut plugin_ctx);
 
-                        let output_ports: Vec<String> = plugin_instance
-                            .output_port_names()
-                            .iter()
-                            .cloned()
-                            .collect();
-                        for port in output_ports {
+                        let output_port_len = plugin_instance.output_port_names().len();
+                        for idx in 0..output_port_len {
+                            let port = plugin_instance.output_port_names()[idx].clone();
                             let value = plugin_instance.get_output(&port);
                             outputs.insert((plugin.id, port), value);
                         }
@@ -1405,21 +1446,43 @@ pub fn run_runtime_current(
                         }
                     }
                     RuntimePlugin::PerformanceMonitor(plugin_instance) => {
+                        let period_unit = plugin
+                            .config
+                            .get("units")
+                            .and_then(|v| v.as_str())
+                            .or_else(|| {
+                                plugin.config.get("period_unit").and_then(|v| v.as_str())
+                            })
+                            .unwrap_or("us");
+
+                        let latency_us_from_unit = |value: f64, unit: &str| -> f64 {
+                            match unit {
+                                "ns" => value / 1_000.0,
+                                "us" => value,
+                                "ms" => value * 1_000.0,
+                                "s" => value * 1_000_000.0,
+                                _ => value,
+                            }
+                        };
                         let max_latency_us = plugin
                             .config
-                            .get("max_latency_us")
+                            .get("latency")
                             .and_then(|v| v.as_f64())
+                            .map(|v| latency_us_from_unit(v, period_unit))
+                            .or_else(|| {
+                                plugin.config.get("max_latency_us").and_then(|v| v.as_f64())
+                            })
                             .unwrap_or(1000.0);
-
                         let workspace_period_us = settings.period_seconds * 1_000_000.0;
-                        plugin_instance.set_config(max_latency_us, workspace_period_us);
+                        plugin_instance.set_config(
+                            max_latency_us,
+                            workspace_period_us,
+                            period_unit,
+                        );
                         let _ = plugin_instance.process(&mut plugin_ctx);
 
-                        // Output the performance values
                         for (idx, output_name) in
-                            ["period_us", "latency_us", "jitter_us", "realtime_violation"]
-                                .iter()
-                                .enumerate()
+                            plugin_instance.outputs().iter().map(|port| port.id.0.as_str()).enumerate()
                         {
                             let value = plugin_instance.get_output_values()[idx];
                             outputs.insert((plugin.id, output_name.to_string()), value);

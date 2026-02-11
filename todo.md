@@ -65,3 +65,4 @@
 - [x] Add help tab
 - [ ] Maybe connect gui to daemon and make both processes modify the same one?
 - [x] Change runtime plugin functions to plugin, and change the "list" into "available"
+- [ ] Change needs connections to be needs_outputs and needs_inputs (daq constraint, to have atleast one but doesnt need both)
