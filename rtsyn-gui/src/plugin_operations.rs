@@ -1,7 +1,7 @@
 use crate::GuiApp;
 use rtsyn_core::plugin::PluginMetadataSource;
 use rtsyn_runtime::runtime::LogicMessage;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -245,5 +245,27 @@ impl GuiApp {
 
     pub(crate) fn load_installed_plugins(&mut self) {
         self.plugin_manager.load_installed_plugins();
+    }
+
+    pub(crate) fn refresh_installed_plugin_metadata_cache(&mut self) {
+        let targets: Vec<(String, PathBuf)> = self
+            .plugin_manager
+            .installed_plugins
+            .iter()
+            .filter(|plugin| plugin.removable && !plugin.path.as_os_str().is_empty())
+            .map(|plugin| (plugin.manifest.kind.clone(), plugin.path.clone()))
+            .collect();
+        if targets.is_empty() {
+            return;
+        }
+
+        let metadata = GuiMetadataSource {
+            logic_tx: &self.state_sync.logic_tx,
+        };
+        for (kind, path) in targets {
+            let _ = self
+                .plugin_manager
+                .refresh_installed_plugin(&kind, &path, &metadata);
+        }
     }
 }

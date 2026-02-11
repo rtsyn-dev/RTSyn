@@ -117,6 +117,7 @@ impl Plugin for LivePlotterPlugin {
                 pattern: "in_{}".to_string(),
             },
             loads_started: false,
+            external_window: false,
         }
     }
 

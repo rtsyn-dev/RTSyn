@@ -141,6 +141,31 @@ impl GuiApp {
         }
     }
 
+    pub(crate) fn poll_plugin_creator_dialog(&mut self) {
+        let result = match &self.file_dialogs.plugin_creator_dialog_rx {
+            Some(rx) => rx.try_recv().ok(),
+            None => None,
+        };
+        if let Some(selection) = result {
+            self.file_dialogs.plugin_creator_dialog_rx = None;
+            if let Some(parent) = selection {
+                self.plugin_creator_last_path = Some(parent.clone());
+                match self.create_plugin_from_draft(&parent) {
+                    Ok(path) => {
+                        self.status = format!("Plugin scaffold created at {}", path.display());
+                        self.show_info("Plugin Creator", &self.status.clone());
+                    }
+                    Err(err) => {
+                        self.status = err.clone();
+                        self.show_info("Plugin Creator", &err);
+                    }
+                }
+            } else {
+                self.status = "Plugin creation cancelled".to_string();
+            }
+        }
+    }
+
     pub(crate) fn poll_export_dialog(&mut self) {
         let result = match &self.file_dialogs.export_dialog_rx {
             Some(rx) => rx.try_recv().ok(),

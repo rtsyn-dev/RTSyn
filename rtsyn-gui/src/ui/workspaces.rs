@@ -98,8 +98,7 @@ impl GuiApp {
         let bytes = match result {
             Ok(bytes) => bytes,
             Err(_err) => {
-                self.uml_preview_error =
-                    Some("Render failed, please regenerate UML".to_string());
+                self.uml_preview_error = Some("Render failed, please regenerate UML".to_string());
                 self.uml_preview_texture = None;
                 return;
             }
@@ -108,8 +107,7 @@ impl GuiApp {
         let image = match image::load_from_memory_with_format(&bytes, image::ImageFormat::Png) {
             Ok(image) => image.to_rgba8(),
             Err(_err) => {
-                self.uml_preview_error =
-                    Some("Render failed, please regenerate UML".to_string());
+                self.uml_preview_error = Some("Render failed, please regenerate UML".to_string());
                 self.uml_preview_texture = None;
                 return;
             }
@@ -1288,15 +1286,16 @@ impl GuiApp {
                                 style.visuals.code_bg_color = egui::Color32::from_gray(34);
                                 style.visuals.widgets.inactive.bg_fill =
                                     egui::Color32::from_gray(34);
-                                style.visuals.widgets.hovered.bg_fill = egui::Color32::from_gray(38);
+                                style.visuals.widgets.hovered.bg_fill =
+                                    egui::Color32::from_gray(38);
                                 style.visuals.widgets.active.bg_fill = egui::Color32::from_gray(40);
                                 ui.set_style(style);
                                 let w = (ui.available_width() - 12.0).max(260.0);
                                 let h = (ui.available_height() - 8.0).max(180.0);
                                 ui.vertical_centered(|ui| {
-                                    egui::ScrollArea::both()
-                                        .auto_shrink([false, false])
-                                        .show(ui, |ui| {
+                                    egui::ScrollArea::both().auto_shrink([false, false]).show(
+                                        ui,
+                                        |ui| {
                                             let text_response = ui.add_sized(
                                                 [w, h],
                                                 egui::TextEdit::multiline(
@@ -1325,8 +1324,9 @@ impl GuiApp {
                                                         egui::Modifiers::COMMAND,
                                                         egui::Key::V,
                                                     );
-                                                    let triggered = ui
-                                                        .input_mut(|i| i.consume_shortcut(&shortcut));
+                                                    let triggered = ui.input_mut(|i| {
+                                                        i.consume_shortcut(&shortcut)
+                                                    });
                                                     if triggered {
                                                         if let Ok(mut clipboard) =
                                                             arboard::Clipboard::new()
@@ -1343,7 +1343,8 @@ impl GuiApp {
                                                     self.uml_preview_error = None;
                                                 }
                                             }
-                                        });
+                                        },
+                                    );
                                 });
                             });
                         });

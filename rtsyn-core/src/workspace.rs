@@ -1,7 +1,7 @@
+use crate::plugin::PluginManager;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use workspace::{WorkspaceDefinition, WorkspaceSettings};
-use crate::plugin::PluginManager;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceEntry {

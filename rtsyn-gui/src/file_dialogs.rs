@@ -7,6 +7,7 @@ pub struct FileDialogManager {
     pub load_dialog_rx: Option<Receiver<Option<PathBuf>>>,
     pub export_dialog_rx: Option<Receiver<(PathBuf, Option<PathBuf>)>>,
     pub csv_path_dialog_rx: Option<Receiver<Option<PathBuf>>>,
+    pub plugin_creator_dialog_rx: Option<Receiver<Option<PathBuf>>>,
     pub plotter_screenshot_rx: Option<Receiver<Option<PathBuf>>>,
 }
 
@@ -18,6 +19,7 @@ impl FileDialogManager {
             load_dialog_rx: None,
             export_dialog_rx: None,
             csv_path_dialog_rx: None,
+            plugin_creator_dialog_rx: None,
             plotter_screenshot_rx: None,
         }
     }

@@ -230,7 +230,18 @@ impl PluginManager {
 
     pub fn resolve_library_path(manifest: &PluginManifest, folder: &Path) -> Option<PathBuf> {
         let lib_name = manifest.kind.replace('-', "_");
-        let candidates = [
+        let mut candidates: Vec<PathBuf> = Vec::new();
+
+        if let Some(lib) = manifest.library.as_deref() {
+            let lib_path = Path::new(lib);
+            candidates.push(folder.join(lib_path));
+            if let Some(file_name) = lib_path.file_name() {
+                candidates.push(folder.join("target/release").join(file_name));
+                candidates.push(folder.join("target/debug").join(file_name));
+            }
+        }
+
+        candidates.extend([
             folder
                 .join("target/release")
                 .join(format!("lib{}.so", lib_name)),
@@ -249,7 +260,7 @@ impl PluginManager {
             folder
                 .join("target/debug")
                 .join(format!("{}.dll", lib_name)),
-        ];
+        ]);
         candidates.into_iter().find(|p| p.exists())
     }
 
@@ -464,6 +475,9 @@ impl PluginManager {
                         Ok(parsed) => parsed,
                         Err(_) => continue,
                     };
+                    if manifest.kind == "plugin_creator" {
+                        continue;
+                    }
                     if manifest.kind == "comedi_daq" && !cfg!(feature = "comedi") {
                         continue;
                     }
@@ -823,6 +837,9 @@ impl PluginCatalog {
                         Ok(parsed) => parsed,
                         Err(_) => continue,
                     };
+                    if manifest.kind == "plugin_creator" {
+                        continue;
+                    }
                     if manifest.kind == "comedi_daq" && !cfg!(feature = "comedi") {
                         continue;
                     }

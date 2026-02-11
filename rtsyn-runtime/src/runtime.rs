@@ -412,6 +412,12 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                                 "csv_recorder" => {
                                     RuntimePlugin::CsvRecorder(CsvRecorderedPlugin::new(plugin.id))
                                 }
+                                "live_plotter" => {
+                                    RuntimePlugin::LivePlotter(LivePlotterPlugin::new(plugin.id))
+                                }
+                                "performance_monitor" => RuntimePlugin::PerformanceMonitor(
+                                    PerformanceMonitorPlugin::new(plugin.id),
+                                ),
                                 #[cfg(feature = "comedi")]
                                 "comedi_daq" => RuntimePlugin::ComediDaq(
                                     comedi_daq_plugin::ComediDaqPlugin::new(plugin.id),
@@ -703,14 +709,14 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                                 if let Some(value) =
                                     outputs.get(&(conn.from_plugin, conn.from_port.clone()))
                                 {
-                                    *comedi_input_sums.entry(conn.to_port.clone()).or_insert(0.0) +=
-                                        *value;
+                                    *comedi_input_sums
+                                        .entry(conn.to_port.clone())
+                                        .or_insert(0.0) += *value;
                                 }
                             }
                             let input_port_len = plugin_instance.input_port_names().len();
                             for idx in 0..input_port_len {
-                                let port =
-                                    plugin_instance.input_port_names()[idx].clone();
+                                let port = plugin_instance.input_port_names()[idx].clone();
                                 let value = comedi_input_sums.get(&port).copied().unwrap_or(0.0);
                                 input_values.insert((plugin.id, port.clone()), value);
                                 plugin_instance.set_input(&port, value);
@@ -799,8 +805,11 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                             );
                             let _ = plugin_instance.process(&mut plugin_ctx);
 
-                            for (idx, output_name) in
-                                plugin_instance.outputs().iter().map(|port| port.id.0.as_str()).enumerate()
+                            for (idx, output_name) in plugin_instance
+                                .outputs()
+                                .iter()
+                                .map(|port| port.id.0.as_str())
+                                .enumerate()
                             {
                                 let value = plugin_instance.get_output_values()[idx];
                                 outputs.insert((plugin.id, output_name.to_string()), value);
@@ -1105,6 +1114,12 @@ pub fn run_runtime_current(
                             "csv_recorder" => {
                                 RuntimePlugin::CsvRecorder(CsvRecorderedPlugin::new(plugin.id))
                             }
+                            "live_plotter" => {
+                                RuntimePlugin::LivePlotter(LivePlotterPlugin::new(plugin.id))
+                            }
+                            "performance_monitor" => RuntimePlugin::PerformanceMonitor(
+                                PerformanceMonitorPlugin::new(plugin.id),
+                            ),
                             #[cfg(feature = "comedi")]
                             "comedi_daq" => RuntimePlugin::ComediDaq(
                                 comedi_daq_plugin::ComediDaqPlugin::new(plugin.id),
@@ -1450,9 +1465,7 @@ pub fn run_runtime_current(
                             .config
                             .get("units")
                             .and_then(|v| v.as_str())
-                            .or_else(|| {
-                                plugin.config.get("period_unit").and_then(|v| v.as_str())
-                            })
+                            .or_else(|| plugin.config.get("period_unit").and_then(|v| v.as_str()))
                             .unwrap_or("us");
 
                         let latency_us_from_unit = |value: f64, unit: &str| -> f64 {
@@ -1481,8 +1494,11 @@ pub fn run_runtime_current(
                         );
                         let _ = plugin_instance.process(&mut plugin_ctx);
 
-                        for (idx, output_name) in
-                            plugin_instance.outputs().iter().map(|port| port.id.0.as_str()).enumerate()
+                        for (idx, output_name) in plugin_instance
+                            .outputs()
+                            .iter()
+                            .map(|port| port.id.0.as_str())
+                            .enumerate()
                         {
                             let value = plugin_instance.get_output_values()[idx];
                             outputs.insert((plugin.id, output_name.to_string()), value);

@@ -151,6 +151,7 @@ enum WindowFocus {
     InstallPlugins,
     UninstallPlugins,
     Plugins,
+    NewPlugin,
     WorkspaceSettings,
     UmlDiagram,
     ManageConnections,
@@ -158,6 +159,46 @@ enum WindowFocus {
     ConnectionEditorRemove,
     PluginConfig,
     Help,
+}
+
+#[derive(Debug, Clone)]
+struct PluginFieldDraft {
+    name: String,
+    type_name: String,
+}
+
+impl Default for PluginFieldDraft {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            type_name: "f64".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct NewPluginDraft {
+    name: String,
+    language: String,
+    main_characteristics: String,
+    variables: Vec<PluginFieldDraft>,
+    inputs: Vec<PluginFieldDraft>,
+    outputs: Vec<PluginFieldDraft>,
+    internal_variables: Vec<PluginFieldDraft>,
+}
+
+impl Default for NewPluginDraft {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            language: "rust".to_string(),
+            main_characteristics: String::new(),
+            variables: Vec::new(),
+            inputs: Vec::new(),
+            outputs: Vec::new(),
+            internal_variables: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -250,6 +291,8 @@ struct GuiApp {
     // Remaining UI State
     status: String,
     csv_path_target_plugin_id: Option<u64>,
+    plugin_creator_last_path: Option<PathBuf>,
+    new_plugin_draft: NewPluginDraft,
     notifications: Vec<Notification>,
     plugin_positions: HashMap<u64, egui::Pos2>,
     plugin_rects: HashMap<u64, egui::Rect>,
@@ -337,6 +380,8 @@ impl GuiApp {
             windows: ui_state::WindowState::default(),
             status: String::new(),
             csv_path_target_plugin_id: None,
+            plugin_creator_last_path: None,
+            new_plugin_draft: NewPluginDraft::default(),
             notifications: Vec::new(),
             plugin_positions: HashMap::new(),
             plugin_rects: HashMap::new(),
@@ -367,6 +412,7 @@ impl GuiApp {
             uml_export_height: 1080,
             uml_preview_zoom: 0.0,
         };
+        app.refresh_installed_plugin_metadata_cache();
         app.apply_workspace_settings();
         app
     }
@@ -1066,6 +1112,7 @@ impl eframe::App for GuiApp {
         self.poll_load_dialog();
         self.poll_export_dialog();
         self.poll_csv_path_dialog();
+        self.poll_plugin_creator_dialog();
         self.poll_plotter_screenshot_dialog();
         self.poll_logic_state();
         let mut plotter_refresh = 0.0;
@@ -1171,6 +1218,10 @@ impl eframe::App for GuiApp {
                             self.open_plugins();
                             ui.close_menu();
                         }
+                        if ui.button("New plugin").clicked() {
+                            self.open_new_plugin_window();
+                            ui.close_menu();
+                        }
                         if ui.button("Install plugin").clicked() {
                             self.open_install_plugins();
                             ui.close_menu();
@@ -1257,7 +1308,6 @@ impl eframe::App for GuiApp {
                     }
                 }
             }
-
         });
 
         self.render_workspace_dialog(ctx);
@@ -1267,6 +1317,7 @@ impl eframe::App for GuiApp {
         self.render_install_plugins_window(ctx);
         self.render_uninstall_plugins_window(ctx);
         self.render_plugins_window(ctx);
+        self.render_new_plugin_window(ctx);
         self.render_manage_connections_window(ctx);
         self.render_connection_editor(ctx);
         self.render_plugin_context_menu(ctx);

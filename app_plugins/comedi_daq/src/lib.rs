@@ -506,6 +506,7 @@ impl Plugin for ComediDaqPlugin {
             supports_restart: true,
             extendable_inputs: ExtendableInputs::None,
             loads_started: false,
+            external_window: false,
         }
     }
 

@@ -66,3 +66,5 @@
 - [ ] Maybe connect gui to daemon and make both processes modify the same one?
 - [x] Change runtime plugin functions to plugin, and change the "list" into "available"
 - [ ] Change needs connections to be needs_outputs and needs_inputs (daq constraint, to have atleast one but doesnt need both)
+- [ ] Add a settings section for default paths (for plugins, for images, for data etc)
+- [ ] Fix what happens with long names in plugins

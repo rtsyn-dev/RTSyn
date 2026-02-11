@@ -3,7 +3,9 @@ use crate::utils::{format_f64_with_input, normalize_numeric_input, parse_f64_inp
 use crate::WindowFocus;
 use crate::{
     has_rt_capabilities, spawn_file_dialog_thread, zenity_file_dialog, BuildAction, LivePlotter,
+    PluginFieldDraft,
 };
+use std::fmt::Write as _;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
@@ -35,6 +37,8 @@ fn kv_row_wrapped(
 }
 
 impl GuiApp {
+    const NEW_PLUGIN_TYPES: [&'static str; 6] = ["f64", "f32", "i64", "i32", "bool", "string"];
+
     fn open_install_dialog(&mut self) {
         if self.file_dialogs.install_dialog_rx.is_some() {
             self.status = "Plugin dialog already open".to_string();
@@ -53,6 +57,286 @@ impl GuiApp {
             };
             let _ = tx.send(folder);
         });
+    }
+
+    fn open_plugin_creator_folder_dialog(&mut self) {
+        if self.file_dialogs.plugin_creator_dialog_rx.is_some() {
+            self.status = "Plugin creator dialog already open".to_string();
+            return;
+        }
+
+        let (tx, rx) = mpsc::channel();
+        self.file_dialogs.plugin_creator_dialog_rx = Some(rx);
+        self.status = "Select destination folder for new plugin".to_string();
+
+        let start_dir = self.plugin_creator_last_path.clone();
+        spawn_file_dialog_thread(move || {
+            let folder = if has_rt_capabilities() {
+                zenity_file_dialog("folder", None)
+            } else {
+                let mut dialog = rfd::FileDialog::new();
+                if let Some(dir) = start_dir {
+                    dialog = dialog.set_directory(dir);
+                }
+                dialog.pick_folder()
+            };
+            let _ = tx.send(folder);
+        });
+    }
+
+    pub(crate) fn open_new_plugin_window(&mut self) {
+        self.windows.new_plugin_open = true;
+        self.pending_window_focus = Some(WindowFocus::NewPlugin);
+    }
+
+    fn plugin_creator_draft_to_spec(entries: &[PluginFieldDraft]) -> String {
+        entries
+            .iter()
+            .filter_map(|entry| {
+                let name = entry.name.trim();
+                if name.is_empty() {
+                    None
+                } else {
+                    Some(format!("{name}:{}", entry.type_name.trim()))
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn plugin_creator_parse_spec(spec: &str) -> Vec<(String, String)> {
+        spec.lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(|line| {
+                let mut parts = line.splitn(2, ':');
+                let name = parts.next().unwrap_or("").trim().to_string();
+                let ty = parts.next().unwrap_or("f64").trim().to_string();
+                (name, ty)
+            })
+            .filter(|(name, _)| !name.is_empty())
+            .collect()
+    }
+
+    fn plugin_creator_slug(input: &str) -> String {
+        let mut out = String::new();
+        let mut prev_dash = false;
+        for ch in input.chars().flat_map(|c| c.to_lowercase()) {
+            let keep = ch.is_ascii_alphanumeric() || ch == '_';
+            if keep {
+                out.push(ch);
+                prev_dash = false;
+            } else if !prev_dash {
+                out.push('_');
+                prev_dash = true;
+            }
+        }
+        let out = out.trim_matches('_').to_string();
+        if out.is_empty() {
+            "generated_plugin".to_string()
+        } else {
+            out
+        }
+    }
+
+    fn plugin_creator_unique_dir(parent: &Path, base: &str) -> PathBuf {
+        let mut candidate = parent.join(base);
+        if !candidate.exists() {
+            return candidate;
+        }
+        let mut idx = 1usize;
+        loop {
+            candidate = parent.join(format!("{base}_{idx}"));
+            if !candidate.exists() {
+                return candidate;
+            }
+            idx += 1;
+        }
+    }
+
+    fn plugin_creator_const_json(items: &[String]) -> String {
+        serde_json::to_string(items).unwrap_or_else(|_| "[]".to_string())
+    }
+
+    fn plugin_creator_serde_default(ty: &str) -> &'static str {
+        let normalized = ty.trim().to_ascii_lowercase();
+        match normalized.as_str() {
+            "bool" | "boolean" => "Value::Bool(false)",
+            "string" | "str" | "&str" => "Value::String(String::new())",
+            _ => "Value::from(0.0)",
+        }
+    }
+
+    pub(crate) fn create_plugin_from_draft(&self, parent: &Path) -> Result<PathBuf, String> {
+        let name = self.new_plugin_draft.name.trim();
+        if name.is_empty() {
+            return Err("Plugin name is required".to_string());
+        }
+        let vars_spec = Self::plugin_creator_draft_to_spec(&self.new_plugin_draft.variables);
+        let inputs_spec = Self::plugin_creator_draft_to_spec(&self.new_plugin_draft.inputs);
+        let outputs_spec = Self::plugin_creator_draft_to_spec(&self.new_plugin_draft.outputs);
+        let internal_spec =
+            Self::plugin_creator_draft_to_spec(&self.new_plugin_draft.internal_variables);
+        self.create_plugin_from_specs(
+            name,
+            &self.new_plugin_draft.language,
+            &self.new_plugin_draft.main_characteristics,
+            &vars_spec,
+            &inputs_spec,
+            &outputs_spec,
+            &internal_spec,
+            parent,
+        )
+    }
+
+    fn create_plugin_from_specs(
+        &self,
+        name: &str,
+        language: &str,
+        main: &str,
+        vars_spec: &str,
+        inputs_spec: &str,
+        outputs_spec: &str,
+        internals_spec: &str,
+        parent: &Path,
+    ) -> Result<PathBuf, String> {
+        let title = name.trim().to_string();
+        if title.is_empty() {
+            return Err("Plugin name is required".to_string());
+        }
+        let kind_base = Self::plugin_creator_slug(&title);
+        let kind = match language {
+            "c" => format!("{kind_base}_c"),
+            "cpp" => format!("{kind_base}_cpp"),
+            _ => format!("{kind_base}_rust"),
+        };
+        let plugin_dir = Self::plugin_creator_unique_dir(parent, &kind);
+        let src_dir = plugin_dir.join("src");
+        fs::create_dir_all(&src_dir)
+            .map_err(|e| format!("Failed to create {}: {e}", src_dir.display()))?;
+
+        let vars = Self::plugin_creator_parse_spec(vars_spec);
+        let inputs: Vec<String> = Self::plugin_creator_parse_spec(inputs_spec)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        let outputs: Vec<String> = Self::plugin_creator_parse_spec(outputs_spec)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        let internals: Vec<String> = Self::plugin_creator_parse_spec(internals_spec)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+
+        let inputs = if inputs.is_empty() {
+            vec!["in".to_string()]
+        } else {
+            inputs
+        };
+        let outputs = if outputs.is_empty() {
+            vec!["out".to_string()]
+        } else {
+            outputs
+        };
+
+        let input_json = Self::plugin_creator_const_json(&inputs);
+        let output_json = Self::plugin_creator_const_json(&outputs);
+        let internal_json = Self::plugin_creator_const_json(&internals);
+
+        let mut default_vars_code = String::new();
+        for (name, ty) in &vars {
+            let default_expr = Self::plugin_creator_serde_default(ty);
+            let _ = writeln!(
+                &mut default_vars_code,
+                "            vars.insert({name:?}.to_string(), {default_expr});"
+            );
+        }
+        if default_vars_code.is_empty() {
+            default_vars_code.push_str("            // Add variable defaults here\n");
+        }
+
+        let description = if main.trim().is_empty() {
+            "Generated by plugin_creator".to_string()
+        } else {
+            main.lines()
+                .next()
+                .unwrap_or("Generated by plugin_creator")
+                .to_string()
+        };
+        let plugin_toml = format!(
+            "name = {title:?}\nkind = {kind:?}\nversion = \"0.1.0\"\ndescription = {description:?}\n"
+        );
+        fs::write(plugin_dir.join("plugin.toml"), plugin_toml)
+            .map_err(|e| format!("Failed to write plugin.toml: {e}"))?;
+
+        let rtsyn_plugin_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../rtsyn-plugin")
+            .canonicalize()
+            .unwrap_or_else(|_| {
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../rtsyn-plugin")
+            })
+            .to_string_lossy()
+            .to_string();
+        match language {
+            "c" | "cpp" => {
+                let use_cpp = language == "cpp";
+                let source_ext = if use_cpp { "cpp" } else { "c" };
+                let cargo_toml = format!(
+                    "[package]\nname = {kind:?}\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\ncrate-type = [\"cdylib\"]\n\n[dependencies]\nrtsyn_plugin = {{ path = {rtsyn_plugin_path:?} }}\nserde_json = \"1\"\n\n[build-dependencies]\ncc = \"1\"\n"
+                );
+                fs::write(plugin_dir.join("Cargo.toml"), cargo_toml)
+                    .map_err(|e| format!("Failed to write Cargo.toml: {e}"))?;
+
+                let build_rs = if use_cpp {
+                    format!(
+                        "fn main() {{\n    cc::Build::new().cpp(true).flag_if_supported(\"-std=c++17\").file(\"src/plugin.{source_ext}\").compile({kind:?});\n}}\n"
+                    )
+                } else {
+                    format!(
+                        "fn main() {{\n    cc::Build::new().file(\"src/plugin.{source_ext}\").compile({kind:?});\n}}\n"
+                    )
+                };
+                fs::write(plugin_dir.join("build.rs"), build_rs)
+                    .map_err(|e| format!("Failed to write build.rs: {e}"))?;
+
+                let header = "#ifndef RTSYN_GENERATED_PLUGIN_H\n#define RTSYN_GENERATED_PLUGIN_H\n\n#include <stddef.h>\n\n#ifdef __cplusplus\nextern \"C\" {\n#endif\n\ntypedef struct PluginState {\n    double first_input;\n    double first_output;\n} PluginState;\n\nvoid plugin_init(PluginState* s);\nvoid plugin_free(PluginState* s);\nvoid plugin_set_config(PluginState* s, const char* key, size_t len, double value);\nvoid plugin_set_input(PluginState* s, const char* name, size_t len, double value);\nvoid plugin_process(PluginState* s, double period_seconds);\ndouble plugin_get_output(const PluginState* s, const char* name, size_t len);\n\n#ifdef __cplusplus\n}\n#endif\n\n#endif\n";
+                fs::write(src_dir.join("plugin.h"), header)
+                    .map_err(|e| format!("Failed to write src/plugin.h: {e}"))?;
+
+                let source = if use_cpp {
+                    "#include \"plugin.h\"\n#include <cstring>\n\nvoid plugin_init(PluginState* s) {\n    if (!s) return;\n    s->first_input = 0.0;\n    s->first_output = 0.0;\n}\n\nvoid plugin_free(PluginState* s) {\n    (void)s;\n}\n\nvoid plugin_set_config(PluginState* s, const char* key, size_t len, double value) {\n    (void)s;\n    (void)key;\n    (void)len;\n    (void)value;\n}\n\nvoid plugin_set_input(PluginState* s, const char* name, size_t len, double value) {\n    if (!s || !name) return;\n    if (len == 2 && std::strncmp(name, \"in\", 2) == 0) {\n        s->first_input = value;\n    }\n}\n\nvoid plugin_process(PluginState* s, double period_seconds) {\n    (void)period_seconds;\n    if (!s) return;\n    s->first_output = s->first_input;\n}\n\ndouble plugin_get_output(const PluginState* s, const char* name, size_t len) {\n    if (!s || !name) return 0.0;\n    if (len == 3 && std::strncmp(name, \"out\", 3) == 0) {\n        return s->first_output;\n    }\n    return 0.0;\n}\n"
+                } else {
+                    "#include \"plugin.h\"\n#include <string.h>\n\nvoid plugin_init(PluginState* s) {\n    if (!s) return;\n    s->first_input = 0.0;\n    s->first_output = 0.0;\n}\n\nvoid plugin_free(PluginState* s) {\n    (void)s;\n}\n\nvoid plugin_set_config(PluginState* s, const char* key, size_t len, double value) {\n    (void)s;\n    (void)key;\n    (void)len;\n    (void)value;\n}\n\nvoid plugin_set_input(PluginState* s, const char* name, size_t len, double value) {\n    if (!s || !name) return;\n    if (len == 2 && strncmp(name, \"in\", 2) == 0) {\n        s->first_input = value;\n    }\n}\n\nvoid plugin_process(PluginState* s, double period_seconds) {\n    (void)period_seconds;\n    if (!s) return;\n    s->first_output = s->first_input;\n}\n\ndouble plugin_get_output(const PluginState* s, const char* name, size_t len) {\n    if (!s || !name) return 0.0;\n    if (len == 3 && strncmp(name, \"out\", 3) == 0) {\n        return s->first_output;\n    }\n    return 0.0;\n}\n"
+                };
+                fs::write(src_dir.join(format!("plugin.{source_ext}")), source)
+                    .map_err(|e| format!("Failed to write src/plugin.{source_ext}: {e}"))?;
+
+                let lib_rs = format!(
+                    "use rtsyn_plugin::{{PluginApi, PluginString}};\nuse serde_json::Value;\nuse std::collections::HashMap;\nuse std::ffi::c_void;\n\nconst INPUTS_JSON: &str = {input_json:?};\nconst OUTPUTS_JSON: &str = {output_json:?};\nconst INTERNALS_JSON: &str = {internal_json:?};\n\n#[repr(C)]\nstruct PluginState {{\n    first_input: f64,\n    first_output: f64,\n}}\n\nextern \"C\" {{\n    fn plugin_init(s: *mut PluginState);\n    fn plugin_free(s: *mut PluginState);\n    fn plugin_set_config(s: *mut PluginState, key: *const u8, len: usize, value: f64);\n    fn plugin_set_input(s: *mut PluginState, name: *const u8, len: usize, value: f64);\n    fn plugin_process(s: *mut PluginState, period_seconds: f64);\n    fn plugin_get_output(s: *const PluginState, name: *const u8, len: usize) -> f64;\n}}\n\nstruct Wrapper {{\n    state: PluginState,\n    vars: HashMap<String, Value>,\n}}\n\nextern \"C\" fn create(_id: u64) -> *mut c_void {{\n    let mut wrapper = Box::new(Wrapper {{\n        state: PluginState {{ first_input: 0.0, first_output: 0.0 }},\n        vars: HashMap::new(),\n    }});\n    unsafe {{ plugin_init(&mut wrapper.state) }};\n    Box::into_raw(wrapper) as *mut c_void\n}}\n\nextern \"C\" fn destroy(handle: *mut c_void) {{\n    if handle.is_null() {{ return; }}\n    unsafe {{\n        let mut wrapper = Box::from_raw(handle as *mut Wrapper);\n        plugin_free(&mut wrapper.state);\n    }}\n}}\n\nextern \"C\" fn meta_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(serde_json::json!({{\"name\": {title:?}, \"default_vars\": []}}).to_string())\n}}\n\nextern \"C\" fn inputs_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(INPUTS_JSON.to_string())\n}}\n\nextern \"C\" fn outputs_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(OUTPUTS_JSON.to_string())\n}}\n\nextern \"C\" fn behavior_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(serde_json::json!({{\"supports_start_stop\": true, \"supports_restart\": true, \"extendable_inputs\": {{\"type\": \"none\"}}, \"loads_started\": true}}).to_string())\n}}\n\nextern \"C\" fn display_schema_json(_handle: *mut c_void) -> PluginString {{\n    let outputs: Vec<String> = serde_json::from_str(OUTPUTS_JSON).unwrap_or_default();\n    let inputs: Vec<String> = serde_json::from_str(INPUTS_JSON).unwrap_or_default();\n    let variables: Vec<String> = serde_json::from_str(INTERNALS_JSON).unwrap_or_default();\n    PluginString::from_string(serde_json::json!({{\"outputs\": outputs, \"inputs\": inputs, \"variables\": variables}}).to_string())\n}}\n\nextern \"C\" fn set_config_json(handle: *mut c_void, data: *const u8, len: usize) {{\n    if handle.is_null() || data.is_null() {{ return; }}\n    let wrapper = unsafe {{ &mut *(handle as *mut Wrapper) }};\n    let bytes = unsafe {{ std::slice::from_raw_parts(data, len) }};\n    if let Ok(Value::Object(map)) = serde_json::from_slice::<Value>(bytes) {{\n        for (k, v) in map {{\n            if let Some(num) = v.as_f64() {{\n                unsafe {{ plugin_set_config(&mut wrapper.state, k.as_bytes().as_ptr(), k.len(), num) }};\n            }}\n            wrapper.vars.insert(k, v);\n        }}\n    }}\n}}\n\nextern \"C\" fn set_input(handle: *mut c_void, name: *const u8, len: usize, value: f64) {{\n    if handle.is_null() || name.is_null() {{ return; }}\n    let wrapper = unsafe {{ &mut *(handle as *mut Wrapper) }};\n    unsafe {{ plugin_set_input(&mut wrapper.state, name, len, value) }};\n}}\n\nextern \"C\" fn process(handle: *mut c_void, _tick: u64, period_seconds: f64) {{\n    if handle.is_null() {{ return; }}\n    let wrapper = unsafe {{ &mut *(handle as *mut Wrapper) }};\n    unsafe {{ plugin_process(&mut wrapper.state, period_seconds) }};\n}}\n\nextern \"C\" fn get_output(handle: *mut c_void, name: *const u8, len: usize) -> f64 {{\n    if handle.is_null() || name.is_null() {{ return 0.0; }}\n    let wrapper = unsafe {{ &*(handle as *mut Wrapper) }};\n    unsafe {{ plugin_get_output(&wrapper.state, name, len) }}\n}}\n\n#[no_mangle]\npub extern \"C\" fn rtsyn_plugin_api() -> *const PluginApi {{\n    static API: PluginApi = PluginApi {{\n        create,\n        destroy,\n        meta_json,\n        inputs_json,\n        outputs_json,\n        behavior_json: Some(behavior_json),\n        ui_schema_json: None,\n        display_schema_json: Some(display_schema_json),\n        set_config_json,\n        set_input,\n        process,\n        get_output,\n    }};\n    &API\n}}\n"
+                );
+                fs::write(src_dir.join("lib.rs"), lib_rs)
+                    .map_err(|e| format!("Failed to write src/lib.rs: {e}"))?;
+            }
+            _ => {
+                let cargo_toml = format!(
+                    "[package]\nname = {kind:?}\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\ncrate-type = [\"cdylib\"]\n\n[dependencies]\nrtsyn_plugin = {{ path = {rtsyn_plugin_path:?} }}\nserde_json = \"1\"\n"
+                );
+                fs::write(plugin_dir.join("Cargo.toml"), cargo_toml)
+                    .map_err(|e| format!("Failed to write Cargo.toml: {e}"))?;
+
+                let mut vars_init = String::new();
+                vars_init.push_str(&default_vars_code);
+
+                let lib_rs = format!(
+                    "use rtsyn_plugin::{{PluginApi, PluginString}};\nuse serde_json::Value;\nuse std::collections::HashMap;\nuse std::ffi::c_void;\n\nconst INPUTS_JSON: &str = {input_json:?};\nconst OUTPUTS_JSON: &str = {output_json:?};\nconst INTERNALS_JSON: &str = {internal_json:?};\n\nstruct GeneratedPlugin {{\n    inputs: HashMap<String, f64>,\n    outputs: HashMap<String, f64>,\n    vars: HashMap<String, Value>,\n}}\n\nimpl GeneratedPlugin {{\n    fn new() -> Self {{\n        let mut vars = HashMap::new();\n{vars_init}        Self {{\n            inputs: HashMap::new(),\n            outputs: HashMap::new(),\n            vars,\n        }}\n    }}\n}}\n\nextern \"C\" fn create(_id: u64) -> *mut c_void {{\n    Box::into_raw(Box::new(GeneratedPlugin::new())) as *mut c_void\n}}\n\nextern \"C\" fn destroy(handle: *mut c_void) {{\n    if handle.is_null() {{ return; }}\n    unsafe {{ drop(Box::from_raw(handle as *mut GeneratedPlugin)); }}\n}}\n\nextern \"C\" fn meta_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(serde_json::json!({{\"name\": {title:?}, \"default_vars\": []}}).to_string())\n}}\n\nextern \"C\" fn inputs_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(INPUTS_JSON.to_string())\n}}\n\nextern \"C\" fn outputs_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(OUTPUTS_JSON.to_string())\n}}\n\nextern \"C\" fn behavior_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(serde_json::json!({{\"supports_start_stop\": true, \"supports_restart\": true, \"extendable_inputs\": {{\"type\": \"none\"}}, \"loads_started\": true}}).to_string())\n}}\n\nextern \"C\" fn display_schema_json(_handle: *mut c_void) -> PluginString {{\n    let outputs: Vec<String> = serde_json::from_str(OUTPUTS_JSON).unwrap_or_default();\n    let inputs: Vec<String> = serde_json::from_str(INPUTS_JSON).unwrap_or_default();\n    let variables: Vec<String> = serde_json::from_str(INTERNALS_JSON).unwrap_or_default();\n    PluginString::from_string(serde_json::json!({{\"outputs\": outputs, \"inputs\": inputs, \"variables\": variables}}).to_string())\n}}\n\nextern \"C\" fn set_config_json(handle: *mut c_void, data: *const u8, len: usize) {{\n    if handle.is_null() || data.is_null() {{ return; }}\n    let plugin = unsafe {{ &mut *(handle as *mut GeneratedPlugin) }};\n    let bytes = unsafe {{ std::slice::from_raw_parts(data, len) }};\n    if let Ok(Value::Object(map)) = serde_json::from_slice::<Value>(bytes) {{\n        for (k, v) in map {{\n            plugin.vars.insert(k, v);\n        }}\n    }}\n}}\n\nextern \"C\" fn set_input(handle: *mut c_void, name: *const u8, len: usize, value: f64) {{\n    if handle.is_null() || name.is_null() {{ return; }}\n    let plugin = unsafe {{ &mut *(handle as *mut GeneratedPlugin) }};\n    let key = unsafe {{ std::str::from_utf8_unchecked(std::slice::from_raw_parts(name, len)) }};\n    plugin.inputs.insert(key.to_string(), value);\n}}\n\nextern \"C\" fn process(handle: *mut c_void, _tick: u64, _period_seconds: f64) {{\n    if handle.is_null() {{ return; }}\n    let plugin = unsafe {{ &mut *(handle as *mut GeneratedPlugin) }};\n    let first = plugin.inputs.values().copied().next().unwrap_or(0.0);\n    let outputs: Vec<String> = serde_json::from_str(OUTPUTS_JSON).unwrap_or_default();\n    for name in outputs {{\n        plugin.outputs.insert(name, first);\n    }}\n}}\n\nextern \"C\" fn get_output(handle: *mut c_void, name: *const u8, len: usize) -> f64 {{\n    if handle.is_null() || name.is_null() {{ return 0.0; }}\n    let plugin = unsafe {{ &mut *(handle as *mut GeneratedPlugin) }};\n    let key = unsafe {{ std::str::from_utf8_unchecked(std::slice::from_raw_parts(name, len)) }};\n    if let Some(value) = plugin.outputs.get(key) {{\n        return *value;\n    }}\n    plugin.vars.get(key).and_then(Value::as_f64).unwrap_or(0.0)\n}}\n\n#[no_mangle]\npub extern \"C\" fn rtsyn_plugin_api() -> *const PluginApi {{\n    static API: PluginApi = PluginApi {{\n        create,\n        destroy,\n        meta_json,\n        inputs_json,\n        outputs_json,\n        behavior_json: Some(behavior_json),\n        ui_schema_json: None,\n        display_schema_json: Some(display_schema_json),\n        set_config_json,\n        set_input,\n        process,\n        get_output,\n    }};\n    &API\n}}\n"
+                );
+                fs::write(src_dir.join("lib.rs"), lib_rs)
+                    .map_err(|e| format!("Failed to write src/lib.rs: {e}"))?;
+            }
+        }
+
+        Ok(plugin_dir)
     }
 
     pub(crate) fn open_manage_plugins(&mut self) {
@@ -129,6 +413,16 @@ impl GuiApp {
         let card_height_cap = (panel_rect.height() - PANEL_PAD * 2.0).max(220.0);
         let scroll_max_height = (card_height_cap - CARD_FIXED_HEIGHT).max(72.0);
         for plugin in &mut self.workspace_manager.workspace.plugins {
+            let opens_external_window = self
+                .plugin_manager
+                .plugin_behaviors
+                .get(&plugin.kind)
+                .map(|b| b.external_window)
+                .unwrap_or(false);
+            if opens_external_window {
+                self.plugin_rects.remove(&plugin.id);
+                continue;
+            }
             let col = index % max_per_row;
             let row = index / max_per_row;
             let default_pos = panel_rect.min
@@ -182,7 +476,7 @@ impl GuiApp {
                 .show(ctx, |ui| {
                     ui.set_width(CARD_WIDTH);
                     ui.set_max_height(card_height_cap);
-                    
+
                     frame.show(ui, |ui| {
                         ui.vertical(|ui| {
                             // Header
@@ -204,16 +498,16 @@ impl GuiApp {
                                     egui::FontId::proportional(12.0),
                                     egui::Color32::from_rgb(200, 200, 210),
                                 );
-                                
+
                                 ui.add_space(8.0);
-                                
+
                                 // Plugin name
                                 let display_name = name_by_kind
                                     .get(&plugin.kind)
                                     .cloned()
                                     .unwrap_or_else(|| Self::display_kind(&plugin.kind));
                                 ui.label(RichText::new(display_name).size(15.0).strong());
-                                
+
                                 // Close button
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     let (close_rect, close_resp) = ui.allocate_exact_size(
@@ -237,11 +531,11 @@ impl GuiApp {
                                     }
                                 });
                             });
-                            
+
                             ui.add_space(8.0);
                             ui.separator();
                             ui.add_space(4.0);
-                            
+
                             // Body with sections
                             ui.scope(|ui| {
                                 // Set thin scrollbar BEFORE creating ScrollArea
@@ -251,19 +545,21 @@ impl GuiApp {
                                 scroll_style.floating_width = 2.0;  // Thinner when not hovered
                                 scroll_style.floating_allocated_width = 2.0;
                                 ui.style_mut().spacing.scroll = scroll_style;
-                                
+
                                 egui::ScrollArea::vertical()
                                     .max_height(scroll_max_height)
                                     .drag_to_scroll(false)
                                     .show(ui, |ui| {
                                         ui.push_id(("plugin_content", plugin.id), |ui| {
                                         ui.style_mut().spacing.item_spacing = egui::vec2(0.0, 6.0);
-                                    
+
                                     let is_app_plugin = matches!(
                                         plugin.kind.as_str(),
-                                        "csv_recorder" | "live_plotter" | "performance_monitor" | "comedi_daq"
+                                        "csv_recorder"
+                                            | "live_plotter"
+                                            | "performance_monitor"
+                                            | "comedi_daq"
                                     );
-
                                     if !is_app_plugin {
                                         match plugin.config {
                                             Value::Object(ref mut map) => {
@@ -286,7 +582,7 @@ impl GuiApp {
                                                                     let us_value = value.as_f64().unwrap_or(1000.0);
                                                                     let value_key = (plugin.id, "max_latency_value".to_string());
                                                                     let unit_key = (plugin.id, "max_latency_unit".to_string());
-                                                                    
+
                                                                     // Determine display value and unit
                                                                     let (display_value, default_unit) = if us_value >= 1000.0 {
                                                                         (us_value / 1000.0, "ms")
@@ -295,17 +591,17 @@ impl GuiApp {
                                                                     } else {
                                                                         (us_value * 1000.0, "ns")
                                                                     };
-                                                                    
+
                                                                     if !self.number_edit_buffers.contains_key(&value_key) {
                                                                         self.number_edit_buffers.insert(value_key.clone(), display_value.to_string());
                                                                     }
                                                                     if !self.number_edit_buffers.contains_key(&unit_key) {
                                                                         self.number_edit_buffers.insert(unit_key.clone(), default_unit.to_string());
                                                                     }
-                                                                    
+
                                                                     let mut drag_value = self.number_edit_buffers[&value_key].parse::<f64>().unwrap_or(display_value);
                                                                     let mut unit_clone = self.number_edit_buffers[&unit_key].clone();
-                                                                    
+
                                                                     kv_row_wrapped(ui, "max_latency", 140.0, |ui| {
                                                                         let mut changed = false;
                                                                         if ui.add(egui::DragValue::new(&mut drag_value).speed(10.0).clamp_range(1.0..=f64::INFINITY).fixed_decimals(0)).changed() {
@@ -329,7 +625,7 @@ impl GuiApp {
                                                                                     changed = true;
                                                                                 }
                                                                             });
-                                                                        
+
                                                                         if changed {
                                                                             let us_val = match unit_clone.as_str() {
                                                                                 "ms" => drag_value * 1000.0,
@@ -341,7 +637,7 @@ impl GuiApp {
                                                                             plugin_changed = true;
                                                                         }
                                                                     });
-                                                                    
+
                                                                     self.number_edit_buffers.insert(value_key, drag_value.to_string());
                                                                     self.number_edit_buffers.insert(unit_key, unit_clone);
                                                                 } else {
@@ -406,11 +702,11 @@ impl GuiApp {
                                                         ui.add_space(4.0);
                                                         let label_w = 140.0;
                                                         let value_w = (ui.available_width() - label_w - 8.0).max(80.0);
-                                                        
+
                                                         for var_name in &vars {
                                                             let (tx, rx) = mpsc::channel();
                                                             let _ = self.state_sync.logic_tx.send(LogicMessage::GetPluginVariable(plugin.id, var_name.clone(), tx));
-                                                            
+
                                                             if let Ok(Some(value)) = rx.recv() {
                                                                 if plugin.kind == "csv_recorder"
                                                                     && var_name == "columns"
@@ -426,7 +722,7 @@ impl GuiApp {
                                                                 let is_filepath = field_info
                                                                     .map(|field| matches!(field.field_type, rtsyn_plugin::ui::FieldType::FilePath { .. }))
                                                                     .unwrap_or(false);
-                                                                
+
                                                                 kv_row_wrapped(ui, label, label_w, |ui| {
                                                                     match &value {
                                                                         Value::String(s) => {
@@ -676,7 +972,7 @@ impl GuiApp {
                                                         }
                                                     });
                                                 }
-                                                
+
                                                 // Inputs second
                                                 if !schema.inputs.is_empty() {
                                                     egui::CollapsingHeader::new(
@@ -703,7 +999,7 @@ impl GuiApp {
                                                         }
                                                     });
                                                 }
-                                                
+
                                                 // Outputs third
                                                 if !schema.outputs.is_empty() {
                                                     egui::CollapsingHeader::new(
@@ -803,12 +1099,12 @@ impl GuiApp {
                                         });  // close push_id
                                     });  // close ScrollArea.show
                             });  // close scope
-                            
+
                             // Controls at bottom
                             ui.add_space(8.0);
                             ui.separator();
                             ui.add_space(8.0);
-                            
+
                             let mut controls_changed = false;
                             ui.horizontal(|ui| {
                                 let mut blocked_start = false;
@@ -856,7 +1152,7 @@ impl GuiApp {
                                                     plugin.running = !plugin.running;
                                                     pending_running.push((plugin.id, plugin.running));
                                                     controls_changed = true;
-                                                    
+
                                                     // Auto-open plotter when starting live_plotter
                                                     if plugin.kind == "live_plotter" && plugin.running {
                                                         let plotter = self.plotter_manager.plotters.entry(plugin.id).or_insert_with(|| {
@@ -867,7 +1163,7 @@ impl GuiApp {
                                                         }
                                                         recompute_plotter_needed = true;
                                                     }
-                                                    
+
                                                     if plugin.kind == "csv_recorder" && plugin.running {
                                                         pending_workspace_update = true;
                                                     }
@@ -901,7 +1197,7 @@ impl GuiApp {
                                             }
                                         }
                                     });
-                                    
+
                                     if controls_changed {
                                         workspace_changed = true;
                                     }
@@ -1331,6 +1627,245 @@ impl GuiApp {
             }
         }
         self.windows.plugins_open = window_open;
+    }
+
+    fn render_new_plugin_fields_section(
+        ui: &mut egui::Ui,
+        id_key: &str,
+        title: &str,
+        add_label: &str,
+        fields: &mut Vec<PluginFieldDraft>,
+    ) -> bool {
+        let mut changed = false;
+        egui::Frame::group(ui.style())
+            .inner_margin(egui::Margin::same(10.0))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(title).strong());
+                    ui.add_space(8.0);
+                    if ui.button(add_label).clicked() {
+                        fields.push(PluginFieldDraft::default());
+                        changed = true;
+                    }
+                });
+                ui.add_space(6.0);
+            });
+        let mut idx = 0usize;
+        while idx < fields.len() {
+            let mut remove = false;
+            ui.horizontal(|ui| {
+                let mut style = ui.style().as_ref().clone();
+                style.visuals.extreme_bg_color = egui::Color32::from_rgb(58, 58, 62);
+                style.visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(58, 58, 62);
+                style.visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(66, 66, 72);
+                style.visuals.widgets.active.bg_fill = egui::Color32::from_rgb(72, 72, 78);
+                ui.set_style(style);
+
+                if ui
+                    .add_sized(
+                        [240.0, 26.0],
+                        egui::TextEdit::singleline(&mut fields[idx].name).hint_text("Name"),
+                    )
+                    .changed()
+                {
+                    changed = true;
+                }
+                egui::ComboBox::from_id_source((id_key, idx, "type"))
+                    .width(120.0)
+                    .selected_text(fields[idx].type_name.clone())
+                    .show_ui(ui, |ui| {
+                        for ty in Self::NEW_PLUGIN_TYPES {
+                            if ui
+                                .selectable_label(fields[idx].type_name == ty, ty)
+                                .clicked()
+                            {
+                                fields[idx].type_name = ty.to_string();
+                                changed = true;
+                            }
+                        }
+                    });
+                if ui.small_button("Remove").clicked() {
+                    remove = true;
+                }
+            });
+            if remove {
+                fields.remove(idx);
+                changed = true;
+            } else {
+                idx += 1;
+            }
+        }
+        changed
+    }
+
+    pub(crate) fn render_new_plugin_window(&mut self, ctx: &egui::Context) {
+        if !self.windows.new_plugin_open {
+            return;
+        }
+
+        let viewport_id = egui::ViewportId::from_hash_of("new_plugin_window");
+        let builder = egui::ViewportBuilder::default()
+            .with_title("New Plugin")
+            .with_inner_size([760.0, 620.0])
+            .with_close_button(true);
+        ctx.show_viewport_immediate(viewport_id, builder, |ctx, class| {
+            if class == egui::ViewportClass::Embedded {
+                return;
+            }
+            if ctx.input(|i| i.viewport().close_requested()) {
+                self.windows.new_plugin_open = false;
+                return;
+            }
+
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let mut changed = false;
+                ui.heading(RichText::new("New Plugin").size(24.0));
+                ui.label(
+                    "Create a Rust/C/C++ scaffold with structured inputs, outputs and runtime variables.",
+                );
+                ui.add_space(10.0);
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    egui::Frame::group(ui.style())
+                        .inner_margin(egui::Margin::same(12.0))
+                        .show(ui, |ui| {
+                            ui.label(RichText::new("1. Name and language").strong());
+                            ui.add_space(8.0);
+                            ui.scope(|ui| {
+                                let mut style = ui.style().as_ref().clone();
+                                style.visuals.extreme_bg_color = egui::Color32::from_rgb(58, 58, 62);
+                                style.visuals.widgets.inactive.bg_fill =
+                                    egui::Color32::from_rgb(58, 58, 62);
+                                style.visuals.widgets.hovered.bg_fill =
+                                    egui::Color32::from_rgb(66, 66, 72);
+                                style.visuals.widgets.active.bg_fill =
+                                    egui::Color32::from_rgb(72, 72, 78);
+                                ui.set_style(style);
+                                if ui
+                                    .add_sized(
+                                        [ui.available_width(), 28.0],
+                                        egui::TextEdit::singleline(&mut self.new_plugin_draft.name)
+                                            .hint_text("Plugin name (required)"),
+                                    )
+                                    .changed()
+                                {
+                                    changed = true;
+                                }
+                            });
+                            ui.add_space(8.0);
+                            egui::ComboBox::from_id_source("new_plugin_language")
+                                .selected_text(self.new_plugin_draft.language.clone())
+                                .show_ui(ui, |ui| {
+                                    for lang in ["rust", "c", "cpp"] {
+                                        if ui
+                                            .selectable_label(
+                                                self.new_plugin_draft.language == lang,
+                                                lang,
+                                            )
+                                            .clicked()
+                                        {
+                                            self.new_plugin_draft.language = lang.to_string();
+                                            changed = true;
+                                        }
+                                    }
+                                });
+                        });
+
+                    ui.add_space(10.0);
+                    egui::Frame::group(ui.style())
+                        .inner_margin(egui::Margin::same(12.0))
+                        .show(ui, |ui| {
+                            ui.label(RichText::new("2. Main characteristics").strong());
+                            ui.add_space(8.0);
+                            ui.scope(|ui| {
+                                let mut style = ui.style().as_ref().clone();
+                                style.visuals.extreme_bg_color = egui::Color32::from_rgb(58, 58, 62);
+                                style.visuals.widgets.inactive.bg_fill =
+                                    egui::Color32::from_rgb(58, 58, 62);
+                                style.visuals.widgets.hovered.bg_fill =
+                                    egui::Color32::from_rgb(66, 66, 72);
+                                style.visuals.widgets.active.bg_fill =
+                                    egui::Color32::from_rgb(72, 72, 78);
+                                ui.set_style(style);
+                                if ui
+                                    .add_sized(
+                                        [ui.available_width(), 110.0],
+                                        egui::TextEdit::multiline(
+                                            &mut self.new_plugin_draft.main_characteristics,
+                                        )
+                                        .hint_text("Describe what the plugin should do"),
+                                    )
+                                    .changed()
+                                {
+                                    changed = true;
+                                }
+                            });
+                        });
+
+                    ui.add_space(10.0);
+                    egui::Frame::group(ui.style())
+                        .inner_margin(egui::Margin::same(12.0))
+                        .show(ui, |ui| {
+                            ui.label(
+                                RichText::new("3. Variables, Inputs, Outputs, Internal Variables")
+                                    .strong(),
+                            );
+                            ui.small("Each section lets you add rows with a name and a type.");
+                        });
+                    ui.add_space(8.0);
+                    changed |= Self::render_new_plugin_fields_section(
+                        ui,
+                        "new_plugin_variables",
+                        "Variables",
+                        "Add Variable",
+                        &mut self.new_plugin_draft.variables,
+                    );
+                    ui.add_space(8.0);
+                    changed |= Self::render_new_plugin_fields_section(
+                        ui,
+                        "new_plugin_inputs",
+                        "Inputs",
+                        "Add Input",
+                        &mut self.new_plugin_draft.inputs,
+                    );
+                    ui.add_space(8.0);
+                    changed |= Self::render_new_plugin_fields_section(
+                        ui,
+                        "new_plugin_outputs",
+                        "Outputs",
+                        "Add Output",
+                        &mut self.new_plugin_draft.outputs,
+                    );
+                    ui.add_space(8.0);
+                    changed |= Self::render_new_plugin_fields_section(
+                        ui,
+                        "new_plugin_internal",
+                        "Internal Variables",
+                        "Add Internal Variable",
+                        &mut self.new_plugin_draft.internal_variables,
+                    );
+
+                    ui.add_space(10.0);
+                    let can_create = !self.new_plugin_draft.name.trim().is_empty();
+                    ui.label(RichText::new("4. Create").strong());
+                    let create_response = ui.add_enabled_ui(can_create, |ui| {
+                        styled_button(ui, "Create")
+                    });
+                    if create_response.inner.clicked() {
+                        self.open_plugin_creator_folder_dialog();
+                    }
+                    if !can_create {
+                        ui.label("Plugin name is required before creating.");
+                    }
+                    if let Some(path) = &self.plugin_creator_last_path {
+                        ui.small(format!("Last destination: {}", path.display()));
+                    }
+                });
+
+                if changed {
+                    self.mark_workspace_dirty();
+                }
+            });
+        });
     }
 
     fn is_app_plugins_path(path: &std::path::Path) -> bool {
@@ -2195,20 +2730,77 @@ impl GuiApp {
         }
     }
 
-    pub(crate) fn render_plugin_config_window(&mut self, ctx: &egui::Context) {
-        if !self.windows.plugin_config_open {
-            return;
+    fn plugin_config_window_size(plugin_kind: &str) -> egui::Vec2 {
+        match plugin_kind {
+            "csv_recorder" => egui::vec2(520.0, 360.0),
+            "live_plotter" => egui::vec2(420.0, 240.0),
+            _ => egui::vec2(320.0, 180.0),
         }
+    }
 
-        let mut open = self.windows.plugin_config_open;
-        let plugin_id = match self.windows.plugin_config_id {
-            Some(id) => id,
-            None => {
-                self.windows.plugin_config_open = false;
-                return;
-            }
+    fn render_plugin_config_contents(
+        &mut self,
+        ui: &mut egui::Ui,
+        plugin_id: u64,
+        name_by_kind: &HashMap<String, String>,
+    ) {
+        let Some(plugin_index) = self
+            .workspace_manager
+            .workspace
+            .plugins
+            .iter()
+            .position(|p| p.id == plugin_id)
+        else {
+            ui.label("Plugin not found.");
+            return;
         };
 
+        let plugin_kind = self.workspace_manager.workspace.plugins[plugin_index]
+            .kind
+            .clone();
+        let display_name = name_by_kind
+            .get(&plugin_kind)
+            .cloned()
+            .unwrap_or_else(|| Self::display_kind(&plugin_kind));
+        let mut plugin_changed = false;
+
+        ui.horizontal(|ui| {
+            let (id_rect, _) = ui.allocate_exact_size(egui::vec2(24.0, 24.0), egui::Sense::hover());
+            ui.painter()
+                .rect_filled(id_rect, 8.0, egui::Color32::from_gray(60));
+            ui.painter().text(
+                id_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                plugin_id.to_string(),
+                egui::FontId::proportional(12.0),
+                egui::Color32::from_rgb(200, 200, 210),
+            );
+            ui.label(RichText::new(display_name).strong().size(16.0));
+        });
+        ui.add_space(6.0);
+
+        let plugin = &mut self.workspace_manager.workspace.plugins[plugin_index];
+        let mut priority = plugin.priority;
+        kv_row_wrapped(ui, "Priority", 140.0, |ui| {
+            if ui
+                .add_sized([90.0, 0.0], egui::DragValue::new(&mut priority).speed(1))
+                .changed()
+            {
+                plugin_changed = true;
+            }
+        });
+        priority = priority.clamp(0, 99);
+        if plugin.priority != priority {
+            plugin.priority = priority;
+            plugin_changed = true;
+        }
+
+        if plugin_changed {
+            self.mark_workspace_dirty();
+        }
+    }
+
+    pub(crate) fn render_plugin_config_window(&mut self, ctx: &egui::Context) {
         let name_by_kind: HashMap<String, String> = self
             .plugin_manager
             .installed_plugins
@@ -2216,23 +2808,83 @@ impl GuiApp {
             .map(|plugin| (plugin.manifest.kind.clone(), plugin.manifest.name.clone()))
             .collect();
 
-        let window_size = if let Some(plugin) = self
+        let external_plugin_ids: Vec<u64> = self
+            .workspace_manager
+            .workspace
+            .plugins
+            .iter()
+            .filter(|plugin| {
+                self.plugin_manager
+                    .plugin_behaviors
+                    .get(&plugin.kind)
+                    .map(|b| b.external_window)
+                    .unwrap_or(false)
+            })
+            .map(|plugin| plugin.id)
+            .collect();
+        for plugin_id in external_plugin_ids {
+            let plugin_kind = self
+                .workspace_manager
+                .workspace
+                .plugins
+                .iter()
+                .find(|p| p.id == plugin_id)
+                .map(|p| p.kind.as_str())
+                .unwrap_or("");
+            let window_size = Self::plugin_config_window_size(plugin_kind);
+            let display_name = name_by_kind
+                .get(plugin_kind)
+                .cloned()
+                .unwrap_or_else(|| Self::display_kind(plugin_kind));
+            let viewport_id = egui::ViewportId::from_hash_of(("plugin_config", plugin_id));
+            let builder = egui::ViewportBuilder::default()
+                .with_title(format!("{display_name} #{plugin_id}"))
+                .with_inner_size([window_size.x, window_size.y])
+                .with_close_button(false);
+            ctx.show_viewport_immediate(viewport_id, builder, |ctx, class| {
+                if class == egui::ViewportClass::Embedded {
+                    return;
+                }
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    self.render_plugin_config_contents(ui, plugin_id, &name_by_kind);
+                });
+            });
+        }
+
+        if !self.windows.plugin_config_open {
+            self.windows.plugin_config_id = None;
+            return;
+        }
+
+        let plugin_id = match self.windows.plugin_config_id {
+            Some(id) => id,
+            None => {
+                self.windows.plugin_config_open = false;
+                return;
+            }
+        };
+        let plugin_kind = self
             .workspace_manager
             .workspace
             .plugins
             .iter()
             .find(|p| p.id == plugin_id)
-        {
-            if plugin.kind == "csv_recorder" {
-                egui::vec2(520.0, 360.0)
-            } else if plugin.kind == "live_plotter" {
-                egui::vec2(420.0, 240.0)
-            } else {
-                egui::vec2(320.0, 180.0)
-            }
-        } else {
-            egui::vec2(320.0, 180.0)
-        };
+            .map(|p| p.kind.as_str())
+            .unwrap_or("");
+        let external_window = self
+            .plugin_manager
+            .plugin_behaviors
+            .get(plugin_kind)
+            .map(|b| b.external_window)
+            .unwrap_or(false);
+        if external_window {
+            self.windows.plugin_config_open = false;
+            self.windows.plugin_config_id = None;
+            return;
+        }
+
+        let window_size = Self::plugin_config_window_size(plugin_kind);
+        let mut open = self.windows.plugin_config_open;
         let default_pos = Self::center_window(ctx, window_size);
         let response = egui::Window::new("Plugin config")
             .open(&mut open)
@@ -2241,76 +2893,7 @@ impl GuiApp {
             .default_size(window_size)
             .fixed_size(window_size)
             .show(ctx, |ui| {
-                let plugin_index = self
-                    .workspace_manager
-                    .workspace
-                    .plugins
-                    .iter()
-                    .position(|p| p.id == plugin_id);
-                if let Some(plugin_index) = plugin_index {
-                    let plugin_kind = self.workspace_manager.workspace.plugins[plugin_index]
-                        .kind
-                        .clone();
-                    let display_name = name_by_kind
-                        .get(&plugin_kind)
-                        .cloned()
-                        .unwrap_or_else(|| Self::display_kind(&plugin_kind));
-                    let mut priority =
-                        self.workspace_manager.workspace.plugins[plugin_index].priority;
-                    let config = self.workspace_manager.workspace.plugins[plugin_index]
-                        .config
-                        .clone();
-                    let mut config_changed = false;
-                    let pending_start: Option<bool> = None;
-
-                    ui.horizontal(|ui| {
-                        let (id_rect, _) =
-                            ui.allocate_exact_size(egui::vec2(24.0, 24.0), egui::Sense::hover());
-                        ui.painter()
-                            .rect_filled(id_rect, 8.0, egui::Color32::from_gray(60));
-                        ui.painter().text(
-                            id_rect.center(),
-                            egui::Align2::CENTER_CENTER,
-                            plugin_id.to_string(),
-                            egui::FontId::proportional(12.0),
-                            egui::Color32::from_rgb(200, 200, 210),
-                        );
-                        ui.label(RichText::new(display_name).strong().size(16.0));
-                    });
-                    ui.add_space(6.0);
-                    let label_w = 140.0;
-                    let value_w = 90.0;
-                    kv_row_wrapped(ui, "Priority", label_w, |ui| {
-                        if ui
-                            .add_sized([value_w, 0.0], egui::DragValue::new(&mut priority).speed(1))
-                            .changed()
-                        {
-                            config_changed = true;
-                        }
-                    });
-                    if priority < 0 {
-                        priority = 0;
-                        config_changed = true;
-                    } else if priority > 99 {
-                        priority = 99;
-                        config_changed = true;
-                    }
-
-                    if config_changed {
-                        self.workspace_manager.workspace.plugins[plugin_index].priority = priority;
-                        self.workspace_manager.workspace.plugins[plugin_index].config = config;
-                        self.mark_workspace_dirty();
-                    }
-                    if let Some(running) = pending_start {
-                        let _ = self
-                            .state_sync
-                            .logic_tx
-                            .send(LogicMessage::SetPluginRunning(plugin_id, running));
-                        self.mark_workspace_dirty();
-                    }
-                } else {
-                    ui.label("Plugin not found.");
-                }
+                self.render_plugin_config_contents(ui, plugin_id, &name_by_kind);
             });
         if let Some(response) = response {
             self.window_rects.push(response.response.rect);
@@ -2324,9 +2907,8 @@ impl GuiApp {
                 self.pending_window_focus = None;
             }
         }
-
-        if !open {
-            self.windows.plugin_config_open = false;
+        self.windows.plugin_config_open = open;
+        if !self.windows.plugin_config_open {
             self.windows.plugin_config_id = None;
         }
     }
