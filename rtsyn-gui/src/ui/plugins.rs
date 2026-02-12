@@ -154,17 +154,16 @@ impl GuiApp {
         }
     }
 
-    fn plugin_creator_const_json(items: &[String]) -> String {
-        serde_json::to_string(items).unwrap_or_else(|_| "[]".to_string())
-    }
-
-    fn plugin_creator_serde_default(ty: &str) -> &'static str {
-        let normalized = ty.trim().to_ascii_lowercase();
-        match normalized.as_str() {
-            "bool" | "boolean" => "Value::Bool(false)",
-            "string" | "str" | "&str" => "Value::String(String::new())",
-            _ => "Value::from(0.0)",
+    fn plugin_creator_rust_string_array_literal(items: &[String]) -> String {
+        let mut out = String::from("&[");
+        for (idx, item) in items.iter().enumerate() {
+            if idx > 0 {
+                out.push_str(", ");
+            }
+            out.push_str(&format!("{item:?}"));
         }
+        out.push(']');
+        out
     }
 
     fn plugin_creator_default_value_json(ty: &str) -> Value {
@@ -173,6 +172,68 @@ impl GuiApp {
             "bool" | "boolean" => Value::Bool(false),
             "string" | "str" | "&str" => Value::String(String::new()),
             _ => Value::from(0.0),
+        }
+    }
+
+    fn plugin_creator_rust_ident(input: &str) -> String {
+        let mut ident = Self::plugin_creator_slug(input);
+        if ident.is_empty() {
+            ident = "field".to_string();
+        }
+        if ident.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+            ident = format!("f_{ident}");
+        }
+        match ident.as_str() {
+            "type" | "match" | "fn" | "struct" | "impl" | "let" | "self" | "crate" | "mod"
+            | "use" | "pub" | "const" | "static" | "enum" | "trait" | "where" | "as" | "in"
+            | "for" | "loop" | "while" | "if" | "else" | "move" | "return" => {
+                format!("{ident}_field")
+            }
+            _ => ident,
+        }
+    }
+
+    fn plugin_creator_rust_type_name(ty: &str) -> &'static str {
+        match ty.trim().to_ascii_lowercase().as_str() {
+            "f32" => "f32",
+            "i64" => "i64",
+            "i32" => "i32",
+            "bool" | "boolean" => "bool",
+            "string" | "str" | "&str" => "String",
+            _ => "f64",
+        }
+    }
+
+    fn plugin_creator_rust_default_expr(ty: &str) -> &'static str {
+        match Self::plugin_creator_rust_type_name(ty) {
+            "f32" => "0.0_f32",
+            "i64" => "0_i64",
+            "i32" => "0_i32",
+            "bool" => "false",
+            "String" => "String::new()",
+            _ => "0.0_f64",
+        }
+    }
+
+    fn plugin_creator_rust_var_assign_expr(value_ident: &str, ty: &str) -> String {
+        match Self::plugin_creator_rust_type_name(ty) {
+            "f32" => format!("{value_ident}.as_f64().map(|v| v as f32)"),
+            "i64" => format!("{value_ident}.as_i64()"),
+            "i32" => format!("{value_ident}.as_i64().map(|v| v as i32)"),
+            "bool" => format!("{value_ident}.as_bool()"),
+            "String" => format!("{value_ident}.as_str().map(|v| v.to_string())"),
+            _ => format!("{value_ident}.as_f64()"),
+        }
+    }
+
+    fn plugin_creator_rust_to_f64_expr(field_expr: &str, ty: &str) -> String {
+        match Self::plugin_creator_rust_type_name(ty) {
+            "f32" => format!("({field_expr}) as f64"),
+            "i64" => format!("({field_expr}) as f64"),
+            "i32" => format!("({field_expr}) as f64"),
+            "bool" => format!("if {field_expr} {{ 1.0 }} else {{ 0.0 }}"),
+            "String" => "0.0".to_string(),
+            _ => field_expr.to_string(),
         }
     }
 
@@ -190,20 +251,20 @@ impl GuiApp {
 
     fn generated_c_wrapper_lib_rs(
         title: &str,
-        input_json: &str,
-        output_json: &str,
-        internal_json: &str,
+        inputs_literal: &str,
+        outputs_literal: &str,
+        internals_literal: &str,
         default_vars_json: &str,
         behavior_json: &str,
     ) -> String {
         let imports = "use rtsyn_plugin::{PluginApi, PluginString};\nuse serde_json::Value;\nuse std::collections::HashMap;\nuse std::ffi::c_void;";
         let constants = format!(
-            "const INPUTS_JSON: &str = {input_json:?};\nconst OUTPUTS_JSON: &str = {output_json:?};\nconst INTERNALS_JSON: &str = {internal_json:?};\nconst DEFAULT_VARS_JSON: &str = {default_vars_json:?};\nconst BEHAVIOR_JSON: &str = {behavior_json:?};"
+            "const INPUTS: &[&str] = {inputs_literal};\nconst OUTPUTS: &[&str] = {outputs_literal};\nconst INTERNAL_VARIABLES: &[&str] = {internals_literal};\nconst DEFAULT_VARS_JSON: &str = {default_vars_json:?};\nconst BEHAVIOR_JSON: &str = {behavior_json:?};"
         );
         let ffi_types = "#[repr(C)]\nstruct PluginState {\n    first_input: f64,\n    first_output: f64,\n}\n\nextern \"C\" {\n    fn plugin_init(s: *mut PluginState);\n    fn plugin_free(s: *mut PluginState);\n    fn plugin_set_config(s: *mut PluginState, key: *const u8, len: usize, value: f64);\n    fn plugin_set_input(s: *mut PluginState, name: *const u8, len: usize, value: f64);\n    fn plugin_process(s: *mut PluginState, period_seconds: f64);\n    fn plugin_get_output(s: *const PluginState, name: *const u8, len: usize) -> f64;\n}\n\nstruct Wrapper {\n    state: PluginState,\n    vars: HashMap<String, Value>,\n}";
         let lifecycle = "extern \"C\" fn create(_id: u64) -> *mut c_void {\n    let mut wrapper = Box::new(Wrapper {\n        state: PluginState { first_input: 0.0, first_output: 0.0 },\n        vars: HashMap::new(),\n    });\n    unsafe { plugin_init(&mut wrapper.state) };\n    Box::into_raw(wrapper) as *mut c_void\n}\n\nextern \"C\" fn destroy(handle: *mut c_void) {\n    if handle.is_null() { return; }\n    unsafe {\n        let mut wrapper = Box::from_raw(handle as *mut Wrapper);\n        plugin_free(&mut wrapper.state);\n    }\n}";
         let metadata = format!(
-            "extern \"C\" fn meta_json(_handle: *mut c_void) -> PluginString {{\n    let default_vars: Vec<(String, Value)> = serde_json::from_str(DEFAULT_VARS_JSON).unwrap_or_default();\n    PluginString::from_string(serde_json::json!({{\"name\": {title:?}, \"default_vars\": default_vars}}).to_string())\n}}\n\nextern \"C\" fn inputs_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(INPUTS_JSON.to_string())\n}}\n\nextern \"C\" fn outputs_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(OUTPUTS_JSON.to_string())\n}}\n\nextern \"C\" fn behavior_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(BEHAVIOR_JSON.to_string())\n}}\n\nextern \"C\" fn display_schema_json(_handle: *mut c_void) -> PluginString {{\n    let outputs: Vec<String> = serde_json::from_str(OUTPUTS_JSON).unwrap_or_default();\n    let inputs: Vec<String> = serde_json::from_str(INPUTS_JSON).unwrap_or_default();\n    let variables: Vec<String> = serde_json::from_str(INTERNALS_JSON).unwrap_or_default();\n    PluginString::from_string(serde_json::json!({{\"outputs\": outputs, \"inputs\": inputs, \"variables\": variables}}).to_string())\n}}"
+            "extern \"C\" fn meta_json(_handle: *mut c_void) -> PluginString {{\n    let default_vars: Vec<(String, Value)> = serde_json::from_str(DEFAULT_VARS_JSON).unwrap_or_default();\n    PluginString::from_string(serde_json::json!({{\"name\": {title:?}, \"default_vars\": default_vars}}).to_string())\n}}\n\nextern \"C\" fn inputs_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(serde_json::to_string(INPUTS).unwrap_or_default())\n}}\n\nextern \"C\" fn outputs_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(serde_json::to_string(OUTPUTS).unwrap_or_default())\n}}\n\nextern \"C\" fn behavior_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(BEHAVIOR_JSON.to_string())\n}}\n\nextern \"C\" fn display_schema_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(serde_json::json!({{\"outputs\": OUTPUTS, \"inputs\": INPUTS, \"variables\": INTERNAL_VARIABLES}}).to_string())\n}}"
         );
         let runtime = "extern \"C\" fn set_config_json(handle: *mut c_void, data: *const u8, len: usize) {\n    if handle.is_null() || data.is_null() { return; }\n    let wrapper = unsafe { &mut *(handle as *mut Wrapper) };\n    let bytes = unsafe { std::slice::from_raw_parts(data, len) };\n    if let Ok(Value::Object(map)) = serde_json::from_slice::<Value>(bytes) {\n        for (k, v) in map {\n            if let Some(num) = v.as_f64() {\n                unsafe { plugin_set_config(&mut wrapper.state, k.as_bytes().as_ptr(), k.len(), num) };\n            }\n            wrapper.vars.insert(k, v);\n        }\n    }\n}\n\nextern \"C\" fn set_input(handle: *mut c_void, name: *const u8, len: usize, value: f64) {\n    if handle.is_null() || name.is_null() { return; }\n    let wrapper = unsafe { &mut *(handle as *mut Wrapper) };\n    unsafe { plugin_set_input(&mut wrapper.state, name, len, value) };\n}\n\nextern \"C\" fn process(handle: *mut c_void, _tick: u64, period_seconds: f64) {\n    if handle.is_null() { return; }\n    let wrapper = unsafe { &mut *(handle as *mut Wrapper) };\n    unsafe { plugin_process(&mut wrapper.state, period_seconds) };\n}\n\nextern \"C\" fn get_output(handle: *mut c_void, name: *const u8, len: usize) -> f64 {\n    if handle.is_null() || name.is_null() { return 0.0; }\n    let wrapper = unsafe { &*(handle as *mut Wrapper) };\n    unsafe { plugin_get_output(&wrapper.state, name, len) }\n}";
         let api = "#[no_mangle]\npub extern \"C\" fn rtsyn_plugin_api() -> *const PluginApi {\n    static API: PluginApi = PluginApi {\n        create,\n        destroy,\n        meta_json,\n        inputs_json,\n        outputs_json,\n        behavior_json: Some(behavior_json),\n        ui_schema_json: None,\n        display_schema_json: Some(display_schema_json),\n        set_config_json,\n        set_input,\n        process,\n        get_output,\n    };\n    &API\n}";
@@ -213,28 +274,103 @@ impl GuiApp {
 
     fn generated_rust_plugin_lib_rs(
         title: &str,
-        input_json: &str,
-        output_json: &str,
-        internal_json: &str,
+        inputs_literal: &str,
+        outputs_literal: &str,
+        internals_literal: &str,
         default_vars_json: &str,
         behavior_json: &str,
-        vars_init: &str,
+        vars: &[(String, String)],
+        inputs: &[String],
+        outputs: &[String],
+        internals: &[String],
     ) -> String {
-        let imports = "use rtsyn_plugin::{PluginApi, PluginString};\nuse serde_json::Value;\nuse std::collections::HashMap;\nuse std::ffi::c_void;";
+        let imports = "use rtsyn_plugin::{PluginApi, PluginString};\nuse serde_json::Value;\nuse std::ffi::c_void;";
         let constants = format!(
-            "const INPUTS_JSON: &str = {input_json:?};\nconst OUTPUTS_JSON: &str = {output_json:?};\nconst INTERNALS_JSON: &str = {internal_json:?};\nconst DEFAULT_VARS_JSON: &str = {default_vars_json:?};\nconst BEHAVIOR_JSON: &str = {behavior_json:?};"
+            "const INPUTS: &[&str] = {inputs_literal};\nconst OUTPUTS: &[&str] = {outputs_literal};\nconst INTERNAL_VARIABLES: &[&str] = {internals_literal};\nconst DEFAULT_VARS_JSON: &str = {default_vars_json:?};\nconst BEHAVIOR_JSON: &str = {behavior_json:?};"
         );
+
+        let mut struct_fields = String::new();
+        let mut ctor_fields = String::new();
+        let mut var_set_arms = String::new();
+        let mut input_set_arms = String::new();
+        let mut output_set_lines = String::new();
+        let mut output_get_arms = String::new();
+        let mut internal_get_arms = String::new();
+
+        let first_input_ident = inputs
+            .first()
+            .map(|name| format!("input_{}", Self::plugin_creator_rust_ident(name)))
+            .unwrap_or_else(|| "input_in".to_string());
+
+        for (var_name, var_ty) in vars {
+            let field = format!("var_{}", Self::plugin_creator_rust_ident(var_name));
+            let type_name = Self::plugin_creator_rust_type_name(var_ty);
+            let default_expr = Self::plugin_creator_rust_default_expr(var_ty);
+            let assign_expr = Self::plugin_creator_rust_var_assign_expr("value", var_ty);
+            let value_expr = Self::plugin_creator_rust_to_f64_expr(&format!("plugin.{field}"), var_ty);
+
+            let _ = writeln!(&mut struct_fields, "    {}: {},", field, type_name);
+            let _ = writeln!(&mut ctor_fields, "            {}: {},", field, default_expr);
+            let _ = writeln!(
+                &mut var_set_arms,
+                "            {var_name:?} => {{ if let Some(v) = {assign_expr} {{ plugin.{field} = v; }} }},"
+            );
+
+            if internals.iter().any(|iv| iv == var_name) {
+                let _ = writeln!(
+                    &mut internal_get_arms,
+                    "            {var_name:?} => return {value_expr},"
+                );
+            }
+        }
+
+        for input_name in inputs {
+            let field = format!("input_{}", Self::plugin_creator_rust_ident(input_name));
+            let _ = writeln!(&mut struct_fields, "    {}: f64,", field);
+            let _ = writeln!(&mut ctor_fields, "            {}: 0.0,", field);
+            let _ = writeln!(
+                &mut input_set_arms,
+                "        {input_name:?} => plugin.{field} = value,"
+            );
+        }
+
+        for output_name in outputs {
+            let field = format!("output_{}", Self::plugin_creator_rust_ident(output_name));
+            let _ = writeln!(&mut struct_fields, "    {}: f64,", field);
+            let _ = writeln!(&mut ctor_fields, "            {}: 0.0,", field);
+            let _ = writeln!(
+                &mut output_set_lines,
+                "    plugin.{field} = first_input;"
+            );
+            let _ = writeln!(
+                &mut output_get_arms,
+                "        {output_name:?} => plugin.{field},"
+            );
+        }
+
+        if output_set_lines.trim().is_empty() {
+            output_set_lines.push_str("    let _ = first_input;\n");
+        }
+
+        if var_set_arms.trim().is_empty() {
+            var_set_arms.push_str("            _ => {}\n");
+        } else {
+            var_set_arms.push_str("            _ => {}\n");
+        }
+
         let plugin_struct = format!(
-            "struct GeneratedPlugin {{\n    inputs: HashMap<String, f64>,\n    outputs: HashMap<String, f64>,\n    vars: HashMap<String, Value>,\n}}\n\nimpl GeneratedPlugin {{\n    fn new() -> Self {{\n        let mut vars = HashMap::new();\n{vars_init}        Self {{\n            inputs: HashMap::new(),\n            outputs: HashMap::new(),\n            vars,\n        }}\n    }}\n}}"
+            "struct GeneratedPlugin {{\n{struct_fields}}}\n\nimpl GeneratedPlugin {{\n    fn new() -> Self {{\n        Self {{\n{ctor_fields}        }}\n    }}\n}}"
         );
         let lifecycle = "extern \"C\" fn create(_id: u64) -> *mut c_void {\n    Box::into_raw(Box::new(GeneratedPlugin::new())) as *mut c_void\n}\n\nextern \"C\" fn destroy(handle: *mut c_void) {\n    if handle.is_null() { return; }\n    unsafe { drop(Box::from_raw(handle as *mut GeneratedPlugin)); }\n}";
         let metadata = format!(
-            "extern \"C\" fn meta_json(_handle: *mut c_void) -> PluginString {{\n    let default_vars: Vec<(String, Value)> = serde_json::from_str(DEFAULT_VARS_JSON).unwrap_or_default();\n    PluginString::from_string(serde_json::json!({{\"name\": {title:?}, \"default_vars\": default_vars}}).to_string())\n}}\n\nextern \"C\" fn inputs_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(INPUTS_JSON.to_string())\n}}\n\nextern \"C\" fn outputs_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(OUTPUTS_JSON.to_string())\n}}\n\nextern \"C\" fn behavior_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(BEHAVIOR_JSON.to_string())\n}}\n\nextern \"C\" fn display_schema_json(_handle: *mut c_void) -> PluginString {{\n    let outputs: Vec<String> = serde_json::from_str(OUTPUTS_JSON).unwrap_or_default();\n    let inputs: Vec<String> = serde_json::from_str(INPUTS_JSON).unwrap_or_default();\n    let variables: Vec<String> = serde_json::from_str(INTERNALS_JSON).unwrap_or_default();\n    PluginString::from_string(serde_json::json!({{\"outputs\": outputs, \"inputs\": inputs, \"variables\": variables}}).to_string())\n}}"
+            "extern \"C\" fn meta_json(_handle: *mut c_void) -> PluginString {{\n    let default_vars: Vec<(String, Value)> = serde_json::from_str(DEFAULT_VARS_JSON).unwrap_or_default();\n    PluginString::from_string(serde_json::json!({{\"name\": {title:?}, \"default_vars\": default_vars}}).to_string())\n}}\n\nextern \"C\" fn inputs_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(serde_json::to_string(INPUTS).unwrap_or_default())\n}}\n\nextern \"C\" fn outputs_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(serde_json::to_string(OUTPUTS).unwrap_or_default())\n}}\n\nextern \"C\" fn behavior_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(BEHAVIOR_JSON.to_string())\n}}\n\nextern \"C\" fn display_schema_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(serde_json::json!({{\"outputs\": OUTPUTS, \"inputs\": INPUTS, \"variables\": INTERNAL_VARIABLES}}).to_string())\n}}"
         );
-        let runtime = "extern \"C\" fn set_config_json(handle: *mut c_void, data: *const u8, len: usize) {\n    if handle.is_null() || data.is_null() { return; }\n    let plugin = unsafe { &mut *(handle as *mut GeneratedPlugin) };\n    let bytes = unsafe { std::slice::from_raw_parts(data, len) };\n    if let Ok(Value::Object(map)) = serde_json::from_slice::<Value>(bytes) {\n        for (k, v) in map {\n            plugin.vars.insert(k, v);\n        }\n    }\n}\n\nextern \"C\" fn set_input(handle: *mut c_void, name: *const u8, len: usize, value: f64) {\n    if handle.is_null() || name.is_null() { return; }\n    let plugin = unsafe { &mut *(handle as *mut GeneratedPlugin) };\n    let key = unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(name, len)) };\n    plugin.inputs.insert(key.to_string(), value);\n}\n\nextern \"C\" fn process(handle: *mut c_void, _tick: u64, _period_seconds: f64) {\n    if handle.is_null() { return; }\n    let plugin = unsafe { &mut *(handle as *mut GeneratedPlugin) };\n    let first = plugin.inputs.values().copied().next().unwrap_or(0.0);\n    let outputs: Vec<String> = serde_json::from_str(OUTPUTS_JSON).unwrap_or_default();\n    for name in outputs {\n        plugin.outputs.insert(name, first);\n    }\n}\n\nextern \"C\" fn get_output(handle: *mut c_void, name: *const u8, len: usize) -> f64 {\n    if handle.is_null() || name.is_null() { return 0.0; }\n    let plugin = unsafe { &mut *(handle as *mut GeneratedPlugin) };\n    let key = unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(name, len)) };\n    if let Some(value) = plugin.outputs.get(key) {\n        return *value;\n    }\n    plugin.vars.get(key).and_then(Value::as_f64).unwrap_or(0.0)\n}";
+        let runtime = format!(
+            "extern \"C\" fn set_config_json(handle: *mut c_void, data: *const u8, len: usize) {{\n    if handle.is_null() || data.is_null() {{ return; }}\n    let plugin = unsafe {{ &mut *(handle as *mut GeneratedPlugin) }};\n    let bytes = unsafe {{ std::slice::from_raw_parts(data, len) }};\n    if let Ok(Value::Object(map)) = serde_json::from_slice::<Value>(bytes) {{\n        for (k, value) in map {{\n            match k.as_str() {{\n{var_set_arms}            }}\n        }}\n    }}\n}}\n\nextern \"C\" fn set_input(handle: *mut c_void, name: *const u8, len: usize, value: f64) {{\n    if handle.is_null() || name.is_null() {{ return; }}\n    let plugin = unsafe {{ &mut *(handle as *mut GeneratedPlugin) }};\n    let key = unsafe {{ std::str::from_utf8_unchecked(std::slice::from_raw_parts(name, len)) }};\n    match key {{\n{input_set_arms}        _ => {{}}\n    }}\n}}\n\nextern \"C\" fn process(handle: *mut c_void, _tick: u64, _period_seconds: f64) {{\n    if handle.is_null() {{ return; }}\n    let plugin = unsafe {{ &mut *(handle as *mut GeneratedPlugin) }};\n    let first_input = plugin.{first_input_ident};\n{output_set_lines}}}\n\nextern \"C\" fn get_output(handle: *mut c_void, name: *const u8, len: usize) -> f64 {{\n    if handle.is_null() || name.is_null() {{ return 0.0; }}\n    let plugin = unsafe {{ &mut *(handle as *mut GeneratedPlugin) }};\n    let key = unsafe {{ std::str::from_utf8_unchecked(std::slice::from_raw_parts(name, len)) }};\n    match key {{\n{output_get_arms}{internal_get_arms}        _ => 0.0,\n    }}\n}}"
+        );
         let api = "#[no_mangle]\npub extern \"C\" fn rtsyn_plugin_api() -> *const PluginApi {\n    static API: PluginApi = PluginApi {\n        create,\n        destroy,\n        meta_json,\n        inputs_json,\n        outputs_json,\n        behavior_json: Some(behavior_json),\n        ui_schema_json: None,\n        display_schema_json: Some(display_schema_json),\n        set_config_json,\n        set_input,\n        process,\n        get_output,\n    };\n    &API\n}";
 
-        [imports, &constants, &plugin_struct, lifecycle, &metadata, runtime, api].join("\n\n")
+        [imports, &constants, &plugin_struct, lifecycle, &metadata, &runtime, api].join("\n\n")
     }
 
     pub(crate) fn create_plugin_from_draft(&self, parent: &Path) -> Result<PathBuf, String> {
@@ -320,27 +456,16 @@ impl GuiApp {
             outputs
         };
 
-        let input_json = Self::plugin_creator_const_json(&inputs);
-        let output_json = Self::plugin_creator_const_json(&outputs);
-        let internal_json = Self::plugin_creator_const_json(&internals);
+        let inputs_literal = Self::plugin_creator_rust_string_array_literal(&inputs);
+        let outputs_literal = Self::plugin_creator_rust_string_array_literal(&outputs);
+        let internals_literal = Self::plugin_creator_rust_string_array_literal(&internals);
 
-        let mut default_vars_code = String::new();
         let default_vars_pairs: Vec<(String, Value)> = vars
             .iter()
             .map(|(name, ty)| (name.clone(), Self::plugin_creator_default_value_json(ty)))
             .collect();
         let default_vars_json =
             serde_json::to_string(&default_vars_pairs).unwrap_or_else(|_| "[]".to_string());
-        for (name, ty) in &vars {
-            let default_expr = Self::plugin_creator_serde_default(ty);
-            let _ = writeln!(
-                &mut default_vars_code,
-                "            vars.insert({name:?}.to_string(), {default_expr});"
-            );
-        }
-        if default_vars_code.is_empty() {
-            default_vars_code.push_str("            // Add variable defaults here\n");
-        }
 
         let description = if main.trim().is_empty() {
             "Generated by plugin_creator".to_string()
@@ -350,7 +475,7 @@ impl GuiApp {
                 .unwrap_or("Generated by plugin_creator")
                 .to_string()
         };
-        let library_name = format!("lib{kind}.so");
+        let library_name = format!("lib{package_name}.so");
         let plugin_toml = format!(
             "name = {title:?}\nkind = {kind:?}\nversion = \"0.1.0\"\ndescription = {description:?}\nlibrary = {library_name:?}\n"
         );
@@ -406,9 +531,9 @@ impl GuiApp {
 
                 let lib_rs = Self::generated_c_wrapper_lib_rs(
                     &title,
-                    &input_json,
-                    &output_json,
-                    &internal_json,
+                    &inputs_literal,
+                    &outputs_literal,
+                    &internals_literal,
                     &default_vars_json,
                     &behavior_json,
                 );
@@ -422,17 +547,17 @@ impl GuiApp {
                 fs::write(plugin_dir.join("Cargo.toml"), cargo_toml)
                     .map_err(|e| format!("Failed to write Cargo.toml: {e}"))?;
 
-                let mut vars_init = String::new();
-                vars_init.push_str(&default_vars_code);
-
                 let lib_rs = Self::generated_rust_plugin_lib_rs(
                     &title,
-                    &input_json,
-                    &output_json,
-                    &internal_json,
+                    &inputs_literal,
+                    &outputs_literal,
+                    &internals_literal,
                     &default_vars_json,
                     &behavior_json,
-                    &vars_init,
+                    &vars,
+                    &inputs,
+                    &outputs,
+                    &internals,
                 );
                 fs::write(src_dir.join("lib.rs"), lib_rs)
                     .map_err(|e| format!("Failed to write src/lib.rs: {e}"))?;
