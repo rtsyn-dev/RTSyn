@@ -44,12 +44,30 @@ pub struct PluginDefinition {
     pub config: serde_json::Value,
     #[serde(default)]
     pub priority: i32,
-    #[serde(default = "default_running")]
+    #[serde(default = "default_running", skip_serializing)]
     pub running: bool,
 }
 
 fn default_running() -> bool {
-    true
+    false
+}
+
+fn sanitize_plugin_for_persistence(plugin: &mut PluginDefinition) {
+    if let Some(map) = plugin.config.as_object_mut() {
+        map.remove("running");
+    }
+}
+
+fn sanitize_workspace_for_persistence(workspace: &mut WorkspaceDefinition) {
+    for plugin in &mut workspace.plugins {
+        sanitize_plugin_for_persistence(plugin);
+    }
+}
+
+fn sanitize_workspace_after_load(workspace: &mut WorkspaceDefinition) {
+    for plugin in &mut workspace.plugins {
+        sanitize_plugin_for_persistence(plugin);
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -189,14 +207,17 @@ pub fn remove_extendable_input(
 
 impl WorkspaceDefinition {
     pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<(), WorkspaceError> {
-        let data = serde_json::to_vec_pretty(self)?;
+        let mut sanitized = self.clone();
+        sanitize_workspace_for_persistence(&mut sanitized);
+        let data = serde_json::to_vec_pretty(&sanitized)?;
         fs::write(path, data)?;
         Ok(())
     }
 
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, WorkspaceError> {
         let data = fs::read(path)?;
-        let definition = serde_json::from_slice(&data)?;
+        let mut definition: WorkspaceDefinition = serde_json::from_slice(&data)?;
+        sanitize_workspace_after_load(&mut definition);
         Ok(definition)
     }
 }

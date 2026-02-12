@@ -21,6 +21,15 @@ impl GuiApp {
                 self.refresh_installed_library_paths();
                 self.inject_library_paths_into_workspace();
                 self.apply_loads_started_on_load();
+                for plugin in &self.workspace_manager.workspace.plugins {
+                    let _ = self
+                        .state_sync
+                        .logic_tx
+                        .send(rtsyn_runtime::LogicMessage::SetPluginRunning(
+                            plugin.id,
+                            plugin.running,
+                        ));
+                }
                 self.open_running_plotters();
                 self.enforce_connection_dependent();
                 self.apply_workspace_settings();

@@ -153,6 +153,30 @@ impl DynamicPluginInstance {
     }
 }
 
+fn runtime_plugin_loads_started(instance: &RuntimePlugin) -> bool {
+    match instance {
+        RuntimePlugin::CsvRecorder(p) => p.behavior().loads_started,
+        RuntimePlugin::LivePlotter(p) => p.behavior().loads_started,
+        RuntimePlugin::PerformanceMonitor(p) => p.behavior().loads_started,
+        #[cfg(feature = "comedi")]
+        RuntimePlugin::ComediDaq(p) => p.behavior().loads_started,
+        RuntimePlugin::Dynamic(dynamic) => {
+            let api = unsafe { &*dynamic.api };
+            let Some(behavior_json_fn) = api.behavior_json else {
+                return false;
+            };
+            let json_str = behavior_json_fn(dynamic.handle);
+            if json_str.ptr.is_null() || json_str.len == 0 {
+                return false;
+            }
+            let json = unsafe { json_str.into_string() };
+            serde_json::from_str::<rtsyn_plugin::ui::PluginBehavior>(&json)
+                .map(|b| b.loads_started)
+                .unwrap_or(false)
+        }
+    }
+}
+
 pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), String> {
     let (logic_tx, logic_rx) = mpsc::channel::<LogicMessage>();
     let (logic_state_tx, logic_state_rx) = mpsc::channel::<LogicState>();
@@ -207,7 +231,6 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                             let mut new_ids: HashSet<u64> = HashSet::new();
                             for plugin in &new_workspace.plugins {
                                 new_ids.insert(plugin.id);
-                                plugin_running.insert(plugin.id, plugin.running);
                                 if !plugin_instances.contains_key(&plugin.id) {
                                     let instance = match plugin.kind.as_str() {
                                         "csv_recorder" => RuntimePlugin::CsvRecorder(
@@ -244,6 +267,12 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                                         }
                                     };
                                     plugin_instances.insert(plugin.id, instance);
+                                }
+                                if !plugin_running.contains_key(&plugin.id) {
+                                    if let Some(instance) = plugin_instances.get(&plugin.id) {
+                                        plugin_running
+                                            .insert(plugin.id, runtime_plugin_loads_started(instance));
+                                    }
                                 }
                             }
 
@@ -501,10 +530,8 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                 let plugins = order_plugins_for_execution(&ws.plugins, &ws.connections);
 
                 for plugin in plugins {
-                    let is_running = plugin_running
-                        .get(&plugin.id)
-                        .copied()
-                        .unwrap_or(plugin.running);
+                    let is_running =
+                        plugin_running.get(&plugin.id).copied().unwrap_or(false);
                     let instance = match plugin_instances.get_mut(&plugin.id) {
                         Some(instance) => instance,
                         None => continue,
@@ -923,7 +950,6 @@ pub fn run_runtime_current(
                         let mut new_ids: HashSet<u64> = HashSet::new();
                         for plugin in &new_workspace.plugins {
                             new_ids.insert(plugin.id);
-                            plugin_running.insert(plugin.id, plugin.running);
                             if !plugin_instances.contains_key(&plugin.id) {
                                 let instance = match plugin.kind.as_str() {
                                     "csv_recorder" => RuntimePlugin::CsvRecorder(
@@ -960,6 +986,12 @@ pub fn run_runtime_current(
                                     }
                                 };
                                 plugin_instances.insert(plugin.id, instance);
+                            }
+                            if !plugin_running.contains_key(&plugin.id) {
+                                if let Some(instance) = plugin_instances.get(&plugin.id) {
+                                    plugin_running
+                                        .insert(plugin.id, runtime_plugin_loads_started(instance));
+                                }
                             }
                         }
 
@@ -1209,10 +1241,8 @@ pub fn run_runtime_current(
             let plugins = order_plugins_for_execution(&ws.plugins, &ws.connections);
 
             for plugin in plugins {
-                let is_running = plugin_running
-                    .get(&plugin.id)
-                    .copied()
-                    .unwrap_or(plugin.running);
+                let is_running =
+                    plugin_running.get(&plugin.id).copied().unwrap_or(false);
                 let instance = match plugin_instances.get_mut(&plugin.id) {
                     Some(instance) => instance,
                     None => continue,

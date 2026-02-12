@@ -81,3 +81,4 @@
 - [ ] Plugin creator options (start active etc)
 - [ ] Add "sections start undropped" and make the dropdown sections start closed
 - [ ] One loading workspace, dont keep start and stop and obey plugin loading attribute
+- [ ] Allow multifolder selection on plugin install
