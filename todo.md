@@ -79,7 +79,8 @@
 - [ ] Restart should clear errors in plugins (like inf)
 - [ ] Add plugin order buttons
 - [ ] When reinstalled on loaded workspace, reset button dissapears
-- [ ] Plugin creator options (start active etc)
+- [x] Plugin creator options (start active etc)
 - [ ] Add "sections start undropped" and make the dropdown sections start closed
 - [ ] One loading workspace, dont keep start and stop and obey plugin loading attribute
 - [ ] Allow multifolder selection on plugin install
+- [ ] Alert user that a folder will be created with the logic of the plugin inside to prevent that the user creates a folder for the plugin. Also close create view on creation.

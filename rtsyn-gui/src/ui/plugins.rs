@@ -167,6 +167,76 @@ impl GuiApp {
         }
     }
 
+    fn plugin_creator_default_value_json(ty: &str) -> Value {
+        let normalized = ty.trim().to_ascii_lowercase();
+        match normalized.as_str() {
+            "bool" | "boolean" => Value::Bool(false),
+            "string" | "str" | "&str" => Value::String(String::new()),
+            _ => Value::from(0.0),
+        }
+    }
+
+    fn generated_plugin_h_header() -> &'static str {
+        "#ifndef RTSYN_GENERATED_PLUGIN_H\n#define RTSYN_GENERATED_PLUGIN_H\n\n#include <stddef.h>\n\n#ifdef __cplusplus\nextern \"C\" {\n#endif\n\ntypedef struct PluginState {\n    double first_input;\n    double first_output;\n} PluginState;\n\nvoid plugin_init(PluginState* s);\nvoid plugin_free(PluginState* s);\nvoid plugin_set_config(PluginState* s, const char* key, size_t len, double value);\nvoid plugin_set_input(PluginState* s, const char* name, size_t len, double value);\nvoid plugin_process(PluginState* s, double period_seconds);\ndouble plugin_get_output(const PluginState* s, const char* name, size_t len);\n\n#ifdef __cplusplus\n}\n#endif\n\n#endif\n"
+    }
+
+    fn generated_plugin_c_source(use_cpp: bool) -> &'static str {
+        if use_cpp {
+            "#include \"plugin.h\"\n#include <cstring>\n\nvoid plugin_init(PluginState* s) {\n    if (!s) return;\n    s->first_input = 0.0;\n    s->first_output = 0.0;\n}\n\nvoid plugin_free(PluginState* s) {\n    (void)s;\n}\n\nvoid plugin_set_config(PluginState* s, const char* key, size_t len, double value) {\n    (void)s;\n    (void)key;\n    (void)len;\n    (void)value;\n}\n\nvoid plugin_set_input(PluginState* s, const char* name, size_t len, double value) {\n    (void)name;\n    (void)len;\n    if (!s) return;\n    s->first_input = value;\n}\n\nvoid plugin_process(PluginState* s, double period_seconds) {\n    (void)period_seconds;\n    if (!s) return;\n    s->first_output = s->first_input;\n}\n\ndouble plugin_get_output(const PluginState* s, const char* name, size_t len) {\n    (void)name;\n    (void)len;\n    if (!s) return 0.0;\n    return s->first_output;\n}\n"
+        } else {
+            "#include \"plugin.h\"\n#include <string.h>\n\nvoid plugin_init(PluginState* s) {\n    if (!s) return;\n    s->first_input = 0.0;\n    s->first_output = 0.0;\n}\n\nvoid plugin_free(PluginState* s) {\n    (void)s;\n}\n\nvoid plugin_set_config(PluginState* s, const char* key, size_t len, double value) {\n    (void)s;\n    (void)key;\n    (void)len;\n    (void)value;\n}\n\nvoid plugin_set_input(PluginState* s, const char* name, size_t len, double value) {\n    (void)name;\n    (void)len;\n    if (!s) return;\n    s->first_input = value;\n}\n\nvoid plugin_process(PluginState* s, double period_seconds) {\n    (void)period_seconds;\n    if (!s) return;\n    s->first_output = s->first_input;\n}\n\ndouble plugin_get_output(const PluginState* s, const char* name, size_t len) {\n    (void)name;\n    (void)len;\n    if (!s) return 0.0;\n    return s->first_output;\n}\n"
+        }
+    }
+
+    fn generated_c_wrapper_lib_rs(
+        title: &str,
+        input_json: &str,
+        output_json: &str,
+        internal_json: &str,
+        default_vars_json: &str,
+        behavior_json: &str,
+    ) -> String {
+        let imports = "use rtsyn_plugin::{PluginApi, PluginString};\nuse serde_json::Value;\nuse std::collections::HashMap;\nuse std::ffi::c_void;";
+        let constants = format!(
+            "const INPUTS_JSON: &str = {input_json:?};\nconst OUTPUTS_JSON: &str = {output_json:?};\nconst INTERNALS_JSON: &str = {internal_json:?};\nconst DEFAULT_VARS_JSON: &str = {default_vars_json:?};\nconst BEHAVIOR_JSON: &str = {behavior_json:?};"
+        );
+        let ffi_types = "#[repr(C)]\nstruct PluginState {\n    first_input: f64,\n    first_output: f64,\n}\n\nextern \"C\" {\n    fn plugin_init(s: *mut PluginState);\n    fn plugin_free(s: *mut PluginState);\n    fn plugin_set_config(s: *mut PluginState, key: *const u8, len: usize, value: f64);\n    fn plugin_set_input(s: *mut PluginState, name: *const u8, len: usize, value: f64);\n    fn plugin_process(s: *mut PluginState, period_seconds: f64);\n    fn plugin_get_output(s: *const PluginState, name: *const u8, len: usize) -> f64;\n}\n\nstruct Wrapper {\n    state: PluginState,\n    vars: HashMap<String, Value>,\n}";
+        let lifecycle = "extern \"C\" fn create(_id: u64) -> *mut c_void {\n    let mut wrapper = Box::new(Wrapper {\n        state: PluginState { first_input: 0.0, first_output: 0.0 },\n        vars: HashMap::new(),\n    });\n    unsafe { plugin_init(&mut wrapper.state) };\n    Box::into_raw(wrapper) as *mut c_void\n}\n\nextern \"C\" fn destroy(handle: *mut c_void) {\n    if handle.is_null() { return; }\n    unsafe {\n        let mut wrapper = Box::from_raw(handle as *mut Wrapper);\n        plugin_free(&mut wrapper.state);\n    }\n}";
+        let metadata = format!(
+            "extern \"C\" fn meta_json(_handle: *mut c_void) -> PluginString {{\n    let default_vars: Vec<(String, Value)> = serde_json::from_str(DEFAULT_VARS_JSON).unwrap_or_default();\n    PluginString::from_string(serde_json::json!({{\"name\": {title:?}, \"default_vars\": default_vars}}).to_string())\n}}\n\nextern \"C\" fn inputs_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(INPUTS_JSON.to_string())\n}}\n\nextern \"C\" fn outputs_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(OUTPUTS_JSON.to_string())\n}}\n\nextern \"C\" fn behavior_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(BEHAVIOR_JSON.to_string())\n}}\n\nextern \"C\" fn display_schema_json(_handle: *mut c_void) -> PluginString {{\n    let outputs: Vec<String> = serde_json::from_str(OUTPUTS_JSON).unwrap_or_default();\n    let inputs: Vec<String> = serde_json::from_str(INPUTS_JSON).unwrap_or_default();\n    let variables: Vec<String> = serde_json::from_str(INTERNALS_JSON).unwrap_or_default();\n    PluginString::from_string(serde_json::json!({{\"outputs\": outputs, \"inputs\": inputs, \"variables\": variables}}).to_string())\n}}"
+        );
+        let runtime = "extern \"C\" fn set_config_json(handle: *mut c_void, data: *const u8, len: usize) {\n    if handle.is_null() || data.is_null() { return; }\n    let wrapper = unsafe { &mut *(handle as *mut Wrapper) };\n    let bytes = unsafe { std::slice::from_raw_parts(data, len) };\n    if let Ok(Value::Object(map)) = serde_json::from_slice::<Value>(bytes) {\n        for (k, v) in map {\n            if let Some(num) = v.as_f64() {\n                unsafe { plugin_set_config(&mut wrapper.state, k.as_bytes().as_ptr(), k.len(), num) };\n            }\n            wrapper.vars.insert(k, v);\n        }\n    }\n}\n\nextern \"C\" fn set_input(handle: *mut c_void, name: *const u8, len: usize, value: f64) {\n    if handle.is_null() || name.is_null() { return; }\n    let wrapper = unsafe { &mut *(handle as *mut Wrapper) };\n    unsafe { plugin_set_input(&mut wrapper.state, name, len, value) };\n}\n\nextern \"C\" fn process(handle: *mut c_void, _tick: u64, period_seconds: f64) {\n    if handle.is_null() { return; }\n    let wrapper = unsafe { &mut *(handle as *mut Wrapper) };\n    unsafe { plugin_process(&mut wrapper.state, period_seconds) };\n}\n\nextern \"C\" fn get_output(handle: *mut c_void, name: *const u8, len: usize) -> f64 {\n    if handle.is_null() || name.is_null() { return 0.0; }\n    let wrapper = unsafe { &*(handle as *mut Wrapper) };\n    unsafe { plugin_get_output(&wrapper.state, name, len) }\n}";
+        let api = "#[no_mangle]\npub extern \"C\" fn rtsyn_plugin_api() -> *const PluginApi {\n    static API: PluginApi = PluginApi {\n        create,\n        destroy,\n        meta_json,\n        inputs_json,\n        outputs_json,\n        behavior_json: Some(behavior_json),\n        ui_schema_json: None,\n        display_schema_json: Some(display_schema_json),\n        set_config_json,\n        set_input,\n        process,\n        get_output,\n    };\n    &API\n}";
+
+        [imports, &constants, ffi_types, lifecycle, &metadata, runtime, api].join("\n\n")
+    }
+
+    fn generated_rust_plugin_lib_rs(
+        title: &str,
+        input_json: &str,
+        output_json: &str,
+        internal_json: &str,
+        default_vars_json: &str,
+        behavior_json: &str,
+        vars_init: &str,
+    ) -> String {
+        let imports = "use rtsyn_plugin::{PluginApi, PluginString};\nuse serde_json::Value;\nuse std::collections::HashMap;\nuse std::ffi::c_void;";
+        let constants = format!(
+            "const INPUTS_JSON: &str = {input_json:?};\nconst OUTPUTS_JSON: &str = {output_json:?};\nconst INTERNALS_JSON: &str = {internal_json:?};\nconst DEFAULT_VARS_JSON: &str = {default_vars_json:?};\nconst BEHAVIOR_JSON: &str = {behavior_json:?};"
+        );
+        let plugin_struct = format!(
+            "struct GeneratedPlugin {{\n    inputs: HashMap<String, f64>,\n    outputs: HashMap<String, f64>,\n    vars: HashMap<String, Value>,\n}}\n\nimpl GeneratedPlugin {{\n    fn new() -> Self {{\n        let mut vars = HashMap::new();\n{vars_init}        Self {{\n            inputs: HashMap::new(),\n            outputs: HashMap::new(),\n            vars,\n        }}\n    }}\n}}"
+        );
+        let lifecycle = "extern \"C\" fn create(_id: u64) -> *mut c_void {\n    Box::into_raw(Box::new(GeneratedPlugin::new())) as *mut c_void\n}\n\nextern \"C\" fn destroy(handle: *mut c_void) {\n    if handle.is_null() { return; }\n    unsafe { drop(Box::from_raw(handle as *mut GeneratedPlugin)); }\n}";
+        let metadata = format!(
+            "extern \"C\" fn meta_json(_handle: *mut c_void) -> PluginString {{\n    let default_vars: Vec<(String, Value)> = serde_json::from_str(DEFAULT_VARS_JSON).unwrap_or_default();\n    PluginString::from_string(serde_json::json!({{\"name\": {title:?}, \"default_vars\": default_vars}}).to_string())\n}}\n\nextern \"C\" fn inputs_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(INPUTS_JSON.to_string())\n}}\n\nextern \"C\" fn outputs_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(OUTPUTS_JSON.to_string())\n}}\n\nextern \"C\" fn behavior_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(BEHAVIOR_JSON.to_string())\n}}\n\nextern \"C\" fn display_schema_json(_handle: *mut c_void) -> PluginString {{\n    let outputs: Vec<String> = serde_json::from_str(OUTPUTS_JSON).unwrap_or_default();\n    let inputs: Vec<String> = serde_json::from_str(INPUTS_JSON).unwrap_or_default();\n    let variables: Vec<String> = serde_json::from_str(INTERNALS_JSON).unwrap_or_default();\n    PluginString::from_string(serde_json::json!({{\"outputs\": outputs, \"inputs\": inputs, \"variables\": variables}}).to_string())\n}}"
+        );
+        let runtime = "extern \"C\" fn set_config_json(handle: *mut c_void, data: *const u8, len: usize) {\n    if handle.is_null() || data.is_null() { return; }\n    let plugin = unsafe { &mut *(handle as *mut GeneratedPlugin) };\n    let bytes = unsafe { std::slice::from_raw_parts(data, len) };\n    if let Ok(Value::Object(map)) = serde_json::from_slice::<Value>(bytes) {\n        for (k, v) in map {\n            plugin.vars.insert(k, v);\n        }\n    }\n}\n\nextern \"C\" fn set_input(handle: *mut c_void, name: *const u8, len: usize, value: f64) {\n    if handle.is_null() || name.is_null() { return; }\n    let plugin = unsafe { &mut *(handle as *mut GeneratedPlugin) };\n    let key = unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(name, len)) };\n    plugin.inputs.insert(key.to_string(), value);\n}\n\nextern \"C\" fn process(handle: *mut c_void, _tick: u64, _period_seconds: f64) {\n    if handle.is_null() { return; }\n    let plugin = unsafe { &mut *(handle as *mut GeneratedPlugin) };\n    let first = plugin.inputs.values().copied().next().unwrap_or(0.0);\n    let outputs: Vec<String> = serde_json::from_str(OUTPUTS_JSON).unwrap_or_default();\n    for name in outputs {\n        plugin.outputs.insert(name, first);\n    }\n}\n\nextern \"C\" fn get_output(handle: *mut c_void, name: *const u8, len: usize) -> f64 {\n    if handle.is_null() || name.is_null() { return 0.0; }\n    let plugin = unsafe { &mut *(handle as *mut GeneratedPlugin) };\n    let key = unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(name, len)) };\n    if let Some(value) = plugin.outputs.get(key) {\n        return *value;\n    }\n    plugin.vars.get(key).and_then(Value::as_f64).unwrap_or(0.0)\n}";
+        let api = "#[no_mangle]\npub extern \"C\" fn rtsyn_plugin_api() -> *const PluginApi {\n    static API: PluginApi = PluginApi {\n        create,\n        destroy,\n        meta_json,\n        inputs_json,\n        outputs_json,\n        behavior_json: Some(behavior_json),\n        ui_schema_json: None,\n        display_schema_json: Some(display_schema_json),\n        set_config_json,\n        set_input,\n        process,\n        get_output,\n    };\n    &API\n}";
+
+        [imports, &constants, &plugin_struct, lifecycle, &metadata, runtime, api].join("\n\n")
+    }
+
     pub(crate) fn create_plugin_from_draft(&self, parent: &Path) -> Result<PathBuf, String> {
         let name = self.new_plugin_draft.name.trim();
         if name.is_empty() {
@@ -181,6 +251,10 @@ impl GuiApp {
             name,
             &self.new_plugin_draft.language,
             &self.new_plugin_draft.main_characteristics,
+            self.new_plugin_draft.autostart,
+            self.new_plugin_draft.supports_start_stop,
+            self.new_plugin_draft.supports_restart,
+            self.new_plugin_draft.external_window,
             &vars_spec,
             &inputs_spec,
             &outputs_spec,
@@ -194,6 +268,10 @@ impl GuiApp {
         name: &str,
         language: &str,
         main: &str,
+        autostart: bool,
+        supports_start_stop: bool,
+        supports_restart: bool,
+        external_window: bool,
         vars_spec: &str,
         inputs_spec: &str,
         outputs_spec: &str,
@@ -205,12 +283,14 @@ impl GuiApp {
             return Err("Plugin name is required".to_string());
         }
         let kind_base = Self::plugin_creator_slug(&title);
-        let kind = match language {
-            "c" => format!("{kind_base}_c"),
-            "cpp" => format!("{kind_base}_cpp"),
-            _ => format!("{kind_base}_rust"),
+        let kind = kind_base;
+        let folder_base = match language {
+            "c" => format!("{}_c", Self::plugin_creator_slug(&title)),
+            "cpp" => format!("{}_cpp", Self::plugin_creator_slug(&title)),
+            _ => format!("{}_rust", Self::plugin_creator_slug(&title)),
         };
-        let plugin_dir = Self::plugin_creator_unique_dir(parent, &kind);
+        let package_name = folder_base.clone();
+        let plugin_dir = Self::plugin_creator_unique_dir(parent, &folder_base);
         let src_dir = plugin_dir.join("src");
         fs::create_dir_all(&src_dir)
             .map_err(|e| format!("Failed to create {}: {e}", src_dir.display()))?;
@@ -245,6 +325,12 @@ impl GuiApp {
         let internal_json = Self::plugin_creator_const_json(&internals);
 
         let mut default_vars_code = String::new();
+        let default_vars_pairs: Vec<(String, Value)> = vars
+            .iter()
+            .map(|(name, ty)| (name.clone(), Self::plugin_creator_default_value_json(ty)))
+            .collect();
+        let default_vars_json =
+            serde_json::to_string(&default_vars_pairs).unwrap_or_else(|_| "[]".to_string());
         for (name, ty) in &vars {
             let default_expr = Self::plugin_creator_serde_default(ty);
             let _ = writeln!(
@@ -264,11 +350,21 @@ impl GuiApp {
                 .unwrap_or("Generated by plugin_creator")
                 .to_string()
         };
+        let library_name = format!("lib{kind}.so");
         let plugin_toml = format!(
-            "name = {title:?}\nkind = {kind:?}\nversion = \"0.1.0\"\ndescription = {description:?}\n"
+            "name = {title:?}\nkind = {kind:?}\nversion = \"0.1.0\"\ndescription = {description:?}\nlibrary = {library_name:?}\n"
         );
         fs::write(plugin_dir.join("plugin.toml"), plugin_toml)
             .map_err(|e| format!("Failed to write plugin.toml: {e}"))?;
+
+        let behavior_json = serde_json::json!({
+            "supports_start_stop": supports_start_stop,
+            "supports_restart": supports_restart,
+            "extendable_inputs": { "type": "none" },
+            "loads_started": autostart,
+            "external_window": external_window
+        })
+        .to_string();
 
         let rtsyn_plugin_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../rtsyn-plugin")
@@ -283,7 +379,7 @@ impl GuiApp {
                 let use_cpp = language == "cpp";
                 let source_ext = if use_cpp { "cpp" } else { "c" };
                 let cargo_toml = format!(
-                    "[package]\nname = {kind:?}\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\ncrate-type = [\"cdylib\"]\n\n[dependencies]\nrtsyn_plugin = {{ path = {rtsyn_plugin_path:?} }}\nserde_json = \"1\"\n\n[build-dependencies]\ncc = \"1\"\n"
+                    "[package]\nname = {package_name:?}\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\ncrate-type = [\"cdylib\"]\n\n[dependencies]\nrtsyn_plugin = {{ path = {rtsyn_plugin_path:?} }}\nserde_json = \"1\"\n\n[build-dependencies]\ncc = \"1\"\n"
                 );
                 fs::write(plugin_dir.join("Cargo.toml"), cargo_toml)
                     .map_err(|e| format!("Failed to write Cargo.toml: {e}"))?;
@@ -300,27 +396,28 @@ impl GuiApp {
                 fs::write(plugin_dir.join("build.rs"), build_rs)
                     .map_err(|e| format!("Failed to write build.rs: {e}"))?;
 
-                let header = "#ifndef RTSYN_GENERATED_PLUGIN_H\n#define RTSYN_GENERATED_PLUGIN_H\n\n#include <stddef.h>\n\n#ifdef __cplusplus\nextern \"C\" {\n#endif\n\ntypedef struct PluginState {\n    double first_input;\n    double first_output;\n} PluginState;\n\nvoid plugin_init(PluginState* s);\nvoid plugin_free(PluginState* s);\nvoid plugin_set_config(PluginState* s, const char* key, size_t len, double value);\nvoid plugin_set_input(PluginState* s, const char* name, size_t len, double value);\nvoid plugin_process(PluginState* s, double period_seconds);\ndouble plugin_get_output(const PluginState* s, const char* name, size_t len);\n\n#ifdef __cplusplus\n}\n#endif\n\n#endif\n";
+                let header = Self::generated_plugin_h_header();
                 fs::write(src_dir.join("plugin.h"), header)
                     .map_err(|e| format!("Failed to write src/plugin.h: {e}"))?;
 
-                let source = if use_cpp {
-                    "#include \"plugin.h\"\n#include <cstring>\n\nvoid plugin_init(PluginState* s) {\n    if (!s) return;\n    s->first_input = 0.0;\n    s->first_output = 0.0;\n}\n\nvoid plugin_free(PluginState* s) {\n    (void)s;\n}\n\nvoid plugin_set_config(PluginState* s, const char* key, size_t len, double value) {\n    (void)s;\n    (void)key;\n    (void)len;\n    (void)value;\n}\n\nvoid plugin_set_input(PluginState* s, const char* name, size_t len, double value) {\n    if (!s || !name) return;\n    if (len == 2 && std::strncmp(name, \"in\", 2) == 0) {\n        s->first_input = value;\n    }\n}\n\nvoid plugin_process(PluginState* s, double period_seconds) {\n    (void)period_seconds;\n    if (!s) return;\n    s->first_output = s->first_input;\n}\n\ndouble plugin_get_output(const PluginState* s, const char* name, size_t len) {\n    if (!s || !name) return 0.0;\n    if (len == 3 && std::strncmp(name, \"out\", 3) == 0) {\n        return s->first_output;\n    }\n    return 0.0;\n}\n"
-                } else {
-                    "#include \"plugin.h\"\n#include <string.h>\n\nvoid plugin_init(PluginState* s) {\n    if (!s) return;\n    s->first_input = 0.0;\n    s->first_output = 0.0;\n}\n\nvoid plugin_free(PluginState* s) {\n    (void)s;\n}\n\nvoid plugin_set_config(PluginState* s, const char* key, size_t len, double value) {\n    (void)s;\n    (void)key;\n    (void)len;\n    (void)value;\n}\n\nvoid plugin_set_input(PluginState* s, const char* name, size_t len, double value) {\n    if (!s || !name) return;\n    if (len == 2 && strncmp(name, \"in\", 2) == 0) {\n        s->first_input = value;\n    }\n}\n\nvoid plugin_process(PluginState* s, double period_seconds) {\n    (void)period_seconds;\n    if (!s) return;\n    s->first_output = s->first_input;\n}\n\ndouble plugin_get_output(const PluginState* s, const char* name, size_t len) {\n    if (!s || !name) return 0.0;\n    if (len == 3 && strncmp(name, \"out\", 3) == 0) {\n        return s->first_output;\n    }\n    return 0.0;\n}\n"
-                };
+                let source = Self::generated_plugin_c_source(use_cpp);
                 fs::write(src_dir.join(format!("plugin.{source_ext}")), source)
                     .map_err(|e| format!("Failed to write src/plugin.{source_ext}: {e}"))?;
 
-                let lib_rs = format!(
-                    "use rtsyn_plugin::{{PluginApi, PluginString}};\nuse serde_json::Value;\nuse std::collections::HashMap;\nuse std::ffi::c_void;\n\nconst INPUTS_JSON: &str = {input_json:?};\nconst OUTPUTS_JSON: &str = {output_json:?};\nconst INTERNALS_JSON: &str = {internal_json:?};\n\n#[repr(C)]\nstruct PluginState {{\n    first_input: f64,\n    first_output: f64,\n}}\n\nextern \"C\" {{\n    fn plugin_init(s: *mut PluginState);\n    fn plugin_free(s: *mut PluginState);\n    fn plugin_set_config(s: *mut PluginState, key: *const u8, len: usize, value: f64);\n    fn plugin_set_input(s: *mut PluginState, name: *const u8, len: usize, value: f64);\n    fn plugin_process(s: *mut PluginState, period_seconds: f64);\n    fn plugin_get_output(s: *const PluginState, name: *const u8, len: usize) -> f64;\n}}\n\nstruct Wrapper {{\n    state: PluginState,\n    vars: HashMap<String, Value>,\n}}\n\nextern \"C\" fn create(_id: u64) -> *mut c_void {{\n    let mut wrapper = Box::new(Wrapper {{\n        state: PluginState {{ first_input: 0.0, first_output: 0.0 }},\n        vars: HashMap::new(),\n    }});\n    unsafe {{ plugin_init(&mut wrapper.state) }};\n    Box::into_raw(wrapper) as *mut c_void\n}}\n\nextern \"C\" fn destroy(handle: *mut c_void) {{\n    if handle.is_null() {{ return; }}\n    unsafe {{\n        let mut wrapper = Box::from_raw(handle as *mut Wrapper);\n        plugin_free(&mut wrapper.state);\n    }}\n}}\n\nextern \"C\" fn meta_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(serde_json::json!({{\"name\": {title:?}, \"default_vars\": []}}).to_string())\n}}\n\nextern \"C\" fn inputs_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(INPUTS_JSON.to_string())\n}}\n\nextern \"C\" fn outputs_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(OUTPUTS_JSON.to_string())\n}}\n\nextern \"C\" fn behavior_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(serde_json::json!({{\"supports_start_stop\": true, \"supports_restart\": true, \"extendable_inputs\": {{\"type\": \"none\"}}, \"loads_started\": false}}).to_string())\n}}\n\nextern \"C\" fn display_schema_json(_handle: *mut c_void) -> PluginString {{\n    let outputs: Vec<String> = serde_json::from_str(OUTPUTS_JSON).unwrap_or_default();\n    let inputs: Vec<String> = serde_json::from_str(INPUTS_JSON).unwrap_or_default();\n    let variables: Vec<String> = serde_json::from_str(INTERNALS_JSON).unwrap_or_default();\n    PluginString::from_string(serde_json::json!({{\"outputs\": outputs, \"inputs\": inputs, \"variables\": variables}}).to_string())\n}}\n\nextern \"C\" fn set_config_json(handle: *mut c_void, data: *const u8, len: usize) {{\n    if handle.is_null() || data.is_null() {{ return; }}\n    let wrapper = unsafe {{ &mut *(handle as *mut Wrapper) }};\n    let bytes = unsafe {{ std::slice::from_raw_parts(data, len) }};\n    if let Ok(Value::Object(map)) = serde_json::from_slice::<Value>(bytes) {{\n        for (k, v) in map {{\n            if let Some(num) = v.as_f64() {{\n                unsafe {{ plugin_set_config(&mut wrapper.state, k.as_bytes().as_ptr(), k.len(), num) }};\n            }}\n            wrapper.vars.insert(k, v);\n        }}\n    }}\n}}\n\nextern \"C\" fn set_input(handle: *mut c_void, name: *const u8, len: usize, value: f64) {{\n    if handle.is_null() || name.is_null() {{ return; }}\n    let wrapper = unsafe {{ &mut *(handle as *mut Wrapper) }};\n    unsafe {{ plugin_set_input(&mut wrapper.state, name, len, value) }};\n}}\n\nextern \"C\" fn process(handle: *mut c_void, _tick: u64, period_seconds: f64) {{\n    if handle.is_null() {{ return; }}\n    let wrapper = unsafe {{ &mut *(handle as *mut Wrapper) }};\n    unsafe {{ plugin_process(&mut wrapper.state, period_seconds) }};\n}}\n\nextern \"C\" fn get_output(handle: *mut c_void, name: *const u8, len: usize) -> f64 {{\n    if handle.is_null() || name.is_null() {{ return 0.0; }}\n    let wrapper = unsafe {{ &*(handle as *mut Wrapper) }};\n    unsafe {{ plugin_get_output(&wrapper.state, name, len) }}\n}}\n\n#[no_mangle]\npub extern \"C\" fn rtsyn_plugin_api() -> *const PluginApi {{\n    static API: PluginApi = PluginApi {{\n        create,\n        destroy,\n        meta_json,\n        inputs_json,\n        outputs_json,\n        behavior_json: Some(behavior_json),\n        ui_schema_json: None,\n        display_schema_json: Some(display_schema_json),\n        set_config_json,\n        set_input,\n        process,\n        get_output,\n    }};\n    &API\n}}\n"
+                let lib_rs = Self::generated_c_wrapper_lib_rs(
+                    &title,
+                    &input_json,
+                    &output_json,
+                    &internal_json,
+                    &default_vars_json,
+                    &behavior_json,
                 );
                 fs::write(src_dir.join("lib.rs"), lib_rs)
                     .map_err(|e| format!("Failed to write src/lib.rs: {e}"))?;
             }
             _ => {
                 let cargo_toml = format!(
-                    "[package]\nname = {kind:?}\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\ncrate-type = [\"cdylib\"]\n\n[dependencies]\nrtsyn_plugin = {{ path = {rtsyn_plugin_path:?} }}\nserde_json = \"1\"\n"
+                    "[package]\nname = {package_name:?}\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\ncrate-type = [\"cdylib\"]\n\n[dependencies]\nrtsyn_plugin = {{ path = {rtsyn_plugin_path:?} }}\nserde_json = \"1\"\n"
                 );
                 fs::write(plugin_dir.join("Cargo.toml"), cargo_toml)
                     .map_err(|e| format!("Failed to write Cargo.toml: {e}"))?;
@@ -328,8 +425,14 @@ impl GuiApp {
                 let mut vars_init = String::new();
                 vars_init.push_str(&default_vars_code);
 
-                let lib_rs = format!(
-                    "use rtsyn_plugin::{{PluginApi, PluginString}};\nuse serde_json::Value;\nuse std::collections::HashMap;\nuse std::ffi::c_void;\n\nconst INPUTS_JSON: &str = {input_json:?};\nconst OUTPUTS_JSON: &str = {output_json:?};\nconst INTERNALS_JSON: &str = {internal_json:?};\n\nstruct GeneratedPlugin {{\n    inputs: HashMap<String, f64>,\n    outputs: HashMap<String, f64>,\n    vars: HashMap<String, Value>,\n}}\n\nimpl GeneratedPlugin {{\n    fn new() -> Self {{\n        let mut vars = HashMap::new();\n{vars_init}        Self {{\n            inputs: HashMap::new(),\n            outputs: HashMap::new(),\n            vars,\n        }}\n    }}\n}}\n\nextern \"C\" fn create(_id: u64) -> *mut c_void {{\n    Box::into_raw(Box::new(GeneratedPlugin::new())) as *mut c_void\n}}\n\nextern \"C\" fn destroy(handle: *mut c_void) {{\n    if handle.is_null() {{ return; }}\n    unsafe {{ drop(Box::from_raw(handle as *mut GeneratedPlugin)); }}\n}}\n\nextern \"C\" fn meta_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(serde_json::json!({{\"name\": {title:?}, \"default_vars\": []}}).to_string())\n}}\n\nextern \"C\" fn inputs_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(INPUTS_JSON.to_string())\n}}\n\nextern \"C\" fn outputs_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(OUTPUTS_JSON.to_string())\n}}\n\nextern \"C\" fn behavior_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(serde_json::json!({{\"supports_start_stop\": true, \"supports_restart\": true, \"extendable_inputs\": {{\"type\": \"none\"}}, \"loads_started\": false}}).to_string())\n}}\n\nextern \"C\" fn display_schema_json(_handle: *mut c_void) -> PluginString {{\n    let outputs: Vec<String> = serde_json::from_str(OUTPUTS_JSON).unwrap_or_default();\n    let inputs: Vec<String> = serde_json::from_str(INPUTS_JSON).unwrap_or_default();\n    let variables: Vec<String> = serde_json::from_str(INTERNALS_JSON).unwrap_or_default();\n    PluginString::from_string(serde_json::json!({{\"outputs\": outputs, \"inputs\": inputs, \"variables\": variables}}).to_string())\n}}\n\nextern \"C\" fn set_config_json(handle: *mut c_void, data: *const u8, len: usize) {{\n    if handle.is_null() || data.is_null() {{ return; }}\n    let plugin = unsafe {{ &mut *(handle as *mut GeneratedPlugin) }};\n    let bytes = unsafe {{ std::slice::from_raw_parts(data, len) }};\n    if let Ok(Value::Object(map)) = serde_json::from_slice::<Value>(bytes) {{\n        for (k, v) in map {{\n            plugin.vars.insert(k, v);\n        }}\n    }}\n}}\n\nextern \"C\" fn set_input(handle: *mut c_void, name: *const u8, len: usize, value: f64) {{\n    if handle.is_null() || name.is_null() {{ return; }}\n    let plugin = unsafe {{ &mut *(handle as *mut GeneratedPlugin) }};\n    let key = unsafe {{ std::str::from_utf8_unchecked(std::slice::from_raw_parts(name, len)) }};\n    plugin.inputs.insert(key.to_string(), value);\n}}\n\nextern \"C\" fn process(handle: *mut c_void, _tick: u64, _period_seconds: f64) {{\n    if handle.is_null() {{ return; }}\n    let plugin = unsafe {{ &mut *(handle as *mut GeneratedPlugin) }};\n    let first = plugin.inputs.values().copied().next().unwrap_or(0.0);\n    let outputs: Vec<String> = serde_json::from_str(OUTPUTS_JSON).unwrap_or_default();\n    for name in outputs {{\n        plugin.outputs.insert(name, first);\n    }}\n}}\n\nextern \"C\" fn get_output(handle: *mut c_void, name: *const u8, len: usize) -> f64 {{\n    if handle.is_null() || name.is_null() {{ return 0.0; }}\n    let plugin = unsafe {{ &mut *(handle as *mut GeneratedPlugin) }};\n    let key = unsafe {{ std::str::from_utf8_unchecked(std::slice::from_raw_parts(name, len)) }};\n    if let Some(value) = plugin.outputs.get(key) {{\n        return *value;\n    }}\n    plugin.vars.get(key).and_then(Value::as_f64).unwrap_or(0.0)\n}}\n\n#[no_mangle]\npub extern \"C\" fn rtsyn_plugin_api() -> *const PluginApi {{\n    static API: PluginApi = PluginApi {{\n        create,\n        destroy,\n        meta_json,\n        inputs_json,\n        outputs_json,\n        behavior_json: Some(behavior_json),\n        ui_schema_json: None,\n        display_schema_json: Some(display_schema_json),\n        set_config_json,\n        set_input,\n        process,\n        get_output,\n    }};\n    &API\n}}\n"
+                let lib_rs = Self::generated_rust_plugin_lib_rs(
+                    &title,
+                    &input_json,
+                    &output_json,
+                    &internal_json,
+                    &default_vars_json,
+                    &behavior_json,
+                    &vars_init,
                 );
                 fs::write(src_dir.join("lib.rs"), lib_rs)
                     .map_err(|e| format!("Failed to write src/lib.rs: {e}"))?;
@@ -1877,8 +1980,52 @@ impl GuiApp {
                     );
 
                     ui.add_space(10.0);
+                    egui::Frame::group(ui.style())
+                        .inner_margin(egui::Margin::same(12.0))
+                        .show(ui, |ui| {
+                            ui.label(RichText::new("4. Options").strong());
+                            ui.add_space(6.0);
+                            if ui
+                                .checkbox(
+                                    &mut self.new_plugin_draft.autostart,
+                                    "Autostart (loads_started)",
+                                )
+                                .changed()
+                            {
+                                changed = true;
+                            }
+                            if ui
+                                .checkbox(
+                                    &mut self.new_plugin_draft.supports_start_stop,
+                                    "Start/Stop controls",
+                                )
+                                .changed()
+                            {
+                                changed = true;
+                            }
+                            if ui
+                                .checkbox(
+                                    &mut self.new_plugin_draft.supports_restart,
+                                    "Reset button (supports_restart)",
+                                )
+                                .changed()
+                            {
+                                changed = true;
+                            }
+                            if ui
+                                .checkbox(
+                                    &mut self.new_plugin_draft.external_window,
+                                    "Open as external window",
+                                )
+                                .changed()
+                            {
+                                changed = true;
+                            }
+                        });
+
+                    ui.add_space(10.0);
                     let can_create = !self.new_plugin_draft.name.trim().is_empty();
-                    ui.label(RichText::new("4. Create").strong());
+                    ui.label(RichText::new("5. Create").strong());
                     let create_response = ui.add_enabled_ui(can_create, |ui| {
                         styled_button(ui, "Create")
                     });
