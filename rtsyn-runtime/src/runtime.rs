@@ -574,6 +574,10 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                                     let value = sanitize_signal(value);
                                     outputs.insert((plugin.id, output_name.clone()), value);
                                 }
+                            } else {
+                                for output_name in &plugin_instance.outputs {
+                                    outputs.insert((plugin.id, output_name.clone()), 0.0);
+                                }
                             }
                             for (idx, var_name) in
                                 plugin_instance.internal_variables.iter().enumerate()
@@ -1276,6 +1280,10 @@ pub fn run_runtime_current(
                                 );
                                 let value = sanitize_signal(value);
                                 outputs.insert((plugin.id, output_name.clone()), value);
+                            }
+                        } else {
+                            for output_name in &plugin_instance.outputs {
+                                outputs.insert((plugin.id, output_name.clone()), 0.0);
                             }
                         }
                         for (idx, var_name) in plugin_instance.internal_variables.iter().enumerate()
