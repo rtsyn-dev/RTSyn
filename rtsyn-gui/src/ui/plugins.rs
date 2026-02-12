@@ -506,7 +506,12 @@ impl GuiApp {
                                     .get(&plugin.kind)
                                     .cloned()
                                     .unwrap_or_else(|| Self::display_kind(&plugin.kind));
-                                ui.label(RichText::new(display_name).size(15.0).strong());
+                                let title_w = (ui.available_width() - 28.0).max(80.0);
+                                ui.add_sized(
+                                    [title_w, 0.0],
+                                    egui::Label::new(RichText::new(display_name).size(15.0).strong())
+                                        .truncate(true),
+                                );
 
                                 // Close button
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1350,14 +1355,19 @@ impl GuiApp {
             .inner_margin(egui::Margin::symmetric(8.0, 6.0))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new(&manifest.name).strong().size(18.0));
+                    let name_w = (ui.available_width() - 64.0).max(120.0);
+                    ui.add_sized(
+                        [name_w, 0.0],
+                        egui::Label::new(RichText::new(&manifest.name).strong().size(18.0))
+                            .truncate(true),
+                    );
                     if let Some(version) = &manifest.version {
                         ui.label(RichText::new(format!("v{version}")).color(egui::Color32::GRAY));
                     }
                 });
                 if let Some(description) = &manifest.description {
                     let description = Self::normalize_preview_description(description);
-                    ui.label(RichText::new(description));
+                    ui.add(egui::Label::new(RichText::new(description)).wrap(true));
                 }
 
                 ui.add_space(6.0);
@@ -1398,14 +1408,20 @@ impl GuiApp {
                     .spacing([8.0, 4.0])
                     .show(ui, |ui| {
                         ui.label("Inputs:");
-                        ui.label(if inputs_label.is_empty() {
-                            "none"
-                        } else {
-                            &inputs_label
-                        });
+                        ui.add(
+                            egui::Label::new(if inputs_label.is_empty() {
+                                "none"
+                            } else {
+                                &inputs_label
+                            })
+                            .wrap(true),
+                        );
                         ui.end_row();
                         ui.label("Outputs:");
-                        ui.label(if outputs.is_empty() { "none" } else { &outputs });
+                        ui.add(
+                            egui::Label::new(if outputs.is_empty() { "none" } else { &outputs })
+                                .wrap(true),
+                        );
                         ui.end_row();
                     });
 

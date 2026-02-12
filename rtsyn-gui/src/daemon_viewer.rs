@@ -318,7 +318,12 @@ impl DaemonPluginViewer {
                     ui.add_space(8.0);
 
                     let display_name = PluginManager::display_kind(&view.kind);
-                    ui.label(egui::RichText::new(display_name).size(15.0).strong());
+                    let title_w = (ui.available_width() - 70.0).max(80.0);
+                    ui.add_sized(
+                        [title_w, 0.0],
+                        egui::Label::new(egui::RichText::new(display_name).size(15.0).strong())
+                            .truncate(true),
+                    );
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if let Some(running) = self.running {

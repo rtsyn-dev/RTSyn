@@ -384,7 +384,11 @@ impl GuiApp {
                         egui::FontId::proportional(13.0),
                         ui.visuals().text_color(),
                     );
-                    ui.label(RichText::new(current_name).strong().size(16.0));
+                    ui.add_sized(
+                        [ui.available_width(), 0.0],
+                        egui::Label::new(RichText::new(current_name).strong().size(16.0))
+                            .wrap(true),
+                    );
                 });
                 ui.horizontal(|ui| {
                     ui.selectable_value(
@@ -496,10 +500,16 @@ impl GuiApp {
                                     egui::FontId::proportional(13.0),
                                     ui.visuals().text_color(),
                                 );
-                                ui.label(RichText::new(selected_name).strong().size(16.0));
+                                ui.add_sized(
+                                    [ui.available_width(), 0.0],
+                                    egui::Label::new(
+                                        RichText::new(selected_name).strong().size(16.0),
+                                    )
+                                    .wrap(true),
+                                );
                             });
                             if !selected_desc.is_empty() {
-                                ui.label(selected_desc);
+                                ui.add(egui::Label::new(selected_desc).wrap(true));
                             }
                             ui.add_space(6.0);
 

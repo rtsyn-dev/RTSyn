@@ -427,16 +427,25 @@ impl GuiApp {
                                         {
                                             ui.add_space(4.0);
                                             ui.horizontal(|ui| {
-                                                ui.label(
-                                                    RichText::new(&entry.name).strong().size(18.0),
+                                                ui.add_sized(
+                                                    [ui.available_width(), 0.0],
+                                                    egui::Label::new(
+                                                        RichText::new(&entry.name)
+                                                            .strong()
+                                                            .size(18.0),
+                                                    )
+                                                    .wrap(true),
                                                 );
                                             });
                                             ui.add_space(4.0);
                                             if !entry.description.is_empty() {
-                                                ui.label(
-                                                    egui::RichText::new(&entry.description)
-                                                        .size(13.0)
-                                                        .color(egui::Color32::from_gray(200)),
+                                                ui.add(
+                                                    egui::Label::new(
+                                                        egui::RichText::new(&entry.description)
+                                                            .size(13.0)
+                                                            .color(egui::Color32::from_gray(200)),
+                                                    )
+                                                    .wrap(true),
                                                 );
                                                 ui.add_space(8.0);
                                             }
@@ -449,18 +458,26 @@ impl GuiApp {
                                                     ui.label(entry.plugins.to_string());
                                                     ui.end_row();
                                                     ui.label("Path:");
-                                                    ui.label(entry.path.to_string_lossy());
+                                                    ui.add(
+                                                        egui::Label::new(
+                                                            entry.path.to_string_lossy(),
+                                                        )
+                                                        .wrap(true),
+                                                    );
                                                     ui.end_row();
                                                 });
                                             if !entry.plugin_kinds.is_empty() {
                                                 ui.add_space(4.0);
                                                 ui.label(egui::RichText::new("Types:").strong());
-                                                ui.label(
-                                                    egui::RichText::new(
-                                                        entry.plugin_kinds.join(", "),
+                                                ui.add(
+                                                    egui::Label::new(
+                                                        egui::RichText::new(
+                                                            entry.plugin_kinds.join(", "),
+                                                        )
+                                                        .size(12.0)
+                                                        .color(egui::Color32::from_gray(180)),
                                                     )
-                                                    .size(12.0)
-                                                    .color(egui::Color32::from_gray(180)),
+                                                    .wrap(true),
                                                 );
                                             }
                                             ui.add_space(6.0);
@@ -700,16 +717,25 @@ impl GuiApp {
                                         {
                                             ui.add_space(4.0);
                                             ui.horizontal(|ui| {
-                                                ui.label(
-                                                    RichText::new(&entry.name).strong().size(18.0),
+                                                ui.add_sized(
+                                                    [ui.available_width(), 0.0],
+                                                    egui::Label::new(
+                                                        RichText::new(&entry.name)
+                                                            .strong()
+                                                            .size(18.0),
+                                                    )
+                                                    .wrap(true),
                                                 );
                                             });
                                             ui.add_space(4.0);
                                             if !entry.description.is_empty() {
-                                                ui.label(
-                                                    egui::RichText::new(&entry.description)
-                                                        .size(13.0)
-                                                        .color(egui::Color32::from_gray(200)),
+                                                ui.add(
+                                                    egui::Label::new(
+                                                        egui::RichText::new(&entry.description)
+                                                            .size(13.0)
+                                                            .color(egui::Color32::from_gray(200)),
+                                                    )
+                                                    .wrap(true),
                                                 );
                                                 ui.add_space(8.0);
                                             }
@@ -722,18 +748,26 @@ impl GuiApp {
                                                     ui.label(entry.plugins.to_string());
                                                     ui.end_row();
                                                     ui.label("Path:");
-                                                    ui.label(entry.path.to_string_lossy());
+                                                    ui.add(
+                                                        egui::Label::new(
+                                                            entry.path.to_string_lossy(),
+                                                        )
+                                                        .wrap(true),
+                                                    );
                                                     ui.end_row();
                                                 });
                                             if !entry.plugin_kinds.is_empty() {
                                                 ui.add_space(4.0);
                                                 ui.label(egui::RichText::new("Types:").strong());
-                                                ui.label(
-                                                    egui::RichText::new(
-                                                        entry.plugin_kinds.join(", "),
+                                                ui.add(
+                                                    egui::Label::new(
+                                                        egui::RichText::new(
+                                                            entry.plugin_kinds.join(", "),
+                                                        )
+                                                        .size(12.0)
+                                                        .color(egui::Color32::from_gray(180)),
                                                     )
-                                                    .size(12.0)
-                                                    .color(egui::Color32::from_gray(180)),
+                                                    .wrap(true),
                                                 );
                                             }
                                             ui.add_space(12.0);
