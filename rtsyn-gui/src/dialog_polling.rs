@@ -205,15 +205,25 @@ impl GuiApp {
                             show_legend,
                             show_grid,
                             series_names,
+                            series_scales,
+                            series_offsets,
                             colors,
                             title,
                             dark_theme,
                             x_axis,
                             y_axis,
+                            window_ms,
                             high_quality,
                             export_svg,
                         )) = settings
                         {
+                            let series_transforms: Vec<crate::plotter::SeriesTransform> = (0
+                                ..series_names.len())
+                                .map(|i| crate::plotter::SeriesTransform {
+                                    scale: *series_scales.get(i).unwrap_or(&1.0),
+                                    offset: *series_offsets.get(i).unwrap_or(&0.0),
+                                })
+                                .collect();
                             if export_svg {
                                 plotter
                                     .export_svg_with_settings(
@@ -224,10 +234,12 @@ impl GuiApp {
                                         show_grid,
                                         &title,
                                         &series_names,
+                                        &series_transforms,
                                         &colors,
                                         dark_theme,
                                         &x_axis,
                                         &y_axis,
+                                        window_ms,
                                         self.plotter_preview.width,
                                         self.plotter_preview.height,
                                     )
@@ -242,10 +254,12 @@ impl GuiApp {
                                         show_grid,
                                         &title,
                                         &series_names,
+                                        &series_transforms,
                                         &colors,
                                         dark_theme,
                                         &x_axis,
                                         &y_axis,
+                                        window_ms,
                                     )
                                     .err()
                             } else {
@@ -258,10 +272,12 @@ impl GuiApp {
                                         show_grid,
                                         &title,
                                         &series_names,
+                                        &series_transforms,
                                         &colors,
                                         dark_theme,
                                         &x_axis,
                                         &y_axis,
+                                        window_ms,
                                         self.plotter_preview.width,
                                         self.plotter_preview.height,
                                     )
@@ -337,7 +353,7 @@ impl GuiApp {
             .plotter_manager
             .plotter_preview_settings
             .get(&plugin_id)
-            .and_then(|(_, _, _, _, _, title, _, _, _, _, _)| {
+            .and_then(|(_, _, _, _, _, _, _, title, _, _, _, _, _, _)| {
                 if title.trim().is_empty() {
                     None
                 } else {
@@ -370,7 +386,7 @@ impl GuiApp {
             .plotter_manager
             .plotter_preview_settings
             .get(&plugin_id)
-            .map(|(_, _, _, _, _, _, _, _, _, _, svg)| *svg)
+            .map(|(_, _, _, _, _, _, _, _, _, _, _, _, _, svg)| *svg)
             .unwrap_or(false);
         let extension = if is_svg { "svg" } else { "png" };
         let filter_name = if is_svg { "SVG" } else { "PNG" };

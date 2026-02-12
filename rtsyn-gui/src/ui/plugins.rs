@@ -1025,10 +1025,14 @@ impl GuiApp {
                                                                 .get(&(plugin.id, output_name.clone()))
                                                                 .copied()
                                                                 .unwrap_or(0.0);
-                                                            let mut value_text = if (value.fract() - 0.0).abs() < f64::EPSILON {
+                                                            let mut value_text = if value == 0.0 {
+                                                                "0".to_string()
+                                                            } else if (value.fract() - 0.0).abs() < f64::EPSILON {
                                                                 format!("{value:.0}")
+                                                            } else if value.abs() < 1e-3 {
+                                                                format!("{value:.3e}")
                                                             } else {
-                                                                format!("{value:.4}")
+                                                                format!("{value:.6}")
                                                             };
                                                             kv_row_wrapped(ui, output_name, 140.0, |ui| {
                                                                 ui.add_enabled_ui(false, |ui| {

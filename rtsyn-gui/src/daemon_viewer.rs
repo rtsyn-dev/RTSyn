@@ -169,7 +169,7 @@ impl DaemonPluginViewer {
     fn plotter_config(
         state: &RuntimePluginState,
         samples: &[(u64, Vec<f64>)],
-    ) -> (usize, f64, f64, f64) {
+    ) -> (usize, f64, f64) {
         let vars = Self::variable_map(state);
         let mut input_count = vars.get("input_count").copied().unwrap_or(0.0) as usize;
         if input_count == 0 {
@@ -185,8 +185,7 @@ impl DaemonPluginViewer {
             let value = vars.get("window_value").copied().unwrap_or(10.0);
             multiplier * value
         };
-        let amplitude = vars.get("amplitude").copied().unwrap_or(0.0);
-        (input_count, refresh_hz, window_ms, amplitude)
+        (input_count, refresh_hz, window_ms)
     }
 
     fn render_section_values(
@@ -442,17 +441,13 @@ impl eframe::App for DaemonPluginViewer {
             }
 
             egui::CentralPanel::default().show(ctx, |ui| {
-                let (input_count, refresh_hz, window_ms, amplitude) =
+                let (input_count, refresh_hz, window_ms) =
                     Self::plotter_config(&view.state, &view.samples);
                 self.last_refresh_hz = refresh_hz;
                 let period_seconds = view.period_seconds;
-                self.plotter.update_config(
-                    input_count,
-                    refresh_hz,
-                    window_ms,
-                    amplitude,
-                    period_seconds,
-                );
+                self.plotter
+                    .update_config(input_count, refresh_hz, period_seconds);
+                self.plotter.set_window_ms(window_ms);
                 if !view.series_names.is_empty() {
                     self.plotter.set_series_names(view.series_names.clone());
                 } else {

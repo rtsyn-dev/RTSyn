@@ -7,13 +7,27 @@ use std::path::Path;
 
 const MAX_SERIES: usize = 32;
 
+#[derive(Clone, Copy)]
+pub(crate) struct SeriesTransform {
+    pub scale: f64,
+    pub offset: f64,
+}
+
+impl Default for SeriesTransform {
+    fn default() -> Self {
+        Self {
+            scale: 1.0,
+            offset: 0.0,
+        }
+    }
+}
+
 pub(crate) struct LivePlotter {
     pub(crate) plugin_id: u64,
     pub(crate) open: bool,
     pub(crate) input_count: usize,
     pub(crate) refresh_hz: f64,
     pub(crate) window_ms: f64,
-    amplitude: f64,
     max_points: usize,
     max_points_effective: usize,
     bucket_size: u64,
@@ -45,8 +59,7 @@ impl LivePlotter {
             open: false,
             input_count: 0,
             refresh_hz: 60.0,
-            window_ms: 1000.0,
-            amplitude: 0.0,
+            window_ms: 10_000.0,
             max_points: 200,
             max_points_effective: 200,
             bucket_size: 1,
@@ -64,14 +77,10 @@ impl LivePlotter {
         &mut self,
         input_count: usize,
         refresh_hz: f64,
-        window_ms: f64,
-        amplitude: f64,
         period_s: f64,
     ) {
         self.input_count = input_count.min(MAX_SERIES);
         self.refresh_hz = if refresh_hz <= 0.0 { 60.0 } else { refresh_hz };
-        self.window_ms = if window_ms <= 0.0 { 1.0 } else { window_ms };
-        self.amplitude = if amplitude < 0.0 { 0.0 } else { amplitude };
         let period_s = if period_s <= 0.0 { 0.0 } else { period_s };
         let expected_points = if period_s > 0.0 {
             (self.window_ms / (period_s * 1000.0)).ceil() as usize
@@ -112,6 +121,10 @@ impl LivePlotter {
         if self.bucket_minmax.len() != self.input_count {
             self.bucket_minmax = vec![SeriesMinMax::default(); self.input_count];
         }
+    }
+
+    pub(crate) fn set_window_ms(&mut self, window_ms: f64) {
+        self.window_ms = if window_ms <= 0.0 { 1.0 } else { window_ms };
     }
 
     pub(crate) fn set_series_names(&mut self, names: Vec<String>) {
@@ -215,7 +228,20 @@ impl LivePlotter {
 
     pub(crate) fn render(&mut self, ui: &mut egui::Ui, title: &str, time_label: &str) {
         self.render_with_settings(
-            ui, title, time_label, true, true, true, None, None, None, true, None, None,
+            ui,
+            title,
+            time_label,
+            true,
+            true,
+            true,
+            None,
+            None,
+            None,
+            None,
+            true,
+            None,
+            None,
+            None,
         );
     }
 
@@ -229,13 +255,16 @@ impl LivePlotter {
         show_grid: bool,
         custom_title: Option<&str>,
         custom_series_names: Option<&[String]>,
+        custom_series_transforms: Option<&[SeriesTransform]>,
         custom_colors: Option<&[egui::Color32]>,
         dark_theme: bool,
         x_axis_name: Option<&str>,
         y_axis_name: Option<&str>,
+        custom_window_ms: Option<f64>,
     ) {
         self.flush_pending_bucket();
-        let (min_time, max_time, min_y, max_y) = self.compute_bounds();
+        let (min_time, max_time, min_y, max_y) =
+            self.compute_bounds(custom_series_transforms, custom_window_ms);
 
         let display_title = custom_title.unwrap_or(title);
 
@@ -278,7 +307,16 @@ impl LivePlotter {
                 if series.points.is_empty() {
                     continue;
                 }
-                let points: PlotPoints = series.points.iter().map(|(x, y)| [*x, *y]).collect();
+                let points: PlotPoints = series
+                    .points
+                    .iter()
+                    .map(|(x, y)| {
+                        [
+                            *x,
+                            transform_value(*y, i, custom_series_transforms).unwrap_or(*y),
+                        ]
+                    })
+                    .collect();
 
                 let series_name = custom_series_names
                     .and_then(|names| names.get(i))
@@ -315,10 +353,12 @@ impl LivePlotter {
         show_grid: bool,
         title: &str,
         series_names: &[String],
+        series_transforms: &[SeriesTransform],
         series_colors: &[egui::Color32],
         dark_theme: bool,
         x_axis_name: &str,
         y_axis_name: &str,
+        window_ms: f64,
         width: u32,
         height: u32,
     ) -> Result<(), String> {
@@ -329,7 +369,8 @@ impl LivePlotter {
         let original_bucket_size = self.bucket_size;
         self.bucket_size = 1;
 
-        let (min_time, max_time, min_y, max_y) = self.compute_bounds();
+        let (min_time, max_time, min_y, max_y) =
+            self.compute_bounds(Some(series_transforms), Some(window_ms));
         if !min_time.is_finite() || !max_time.is_finite() {
             self.bucket_size = original_bucket_size; // Restore
             return Err("No samples to export.".to_string());
@@ -413,7 +454,12 @@ impl LivePlotter {
                         .points
                         .iter()
                         .filter(|(x, _)| *x >= min_time && *x <= max_time)
-                        .map(|(x, y)| (*x, *y));
+                        .map(|(x, y)| {
+                            (
+                                *x,
+                                transform_value(*y, i, Some(series_transforms)).unwrap_or(*y),
+                            )
+                        });
 
                     let series_plot = chart
                         .draw_series(LineSeries::new(data, color.stroke_width(1)))
@@ -447,7 +493,12 @@ impl LivePlotter {
             let data: Vec<(f64, f64)> = raw_series
                 .iter()
                 .filter(|(x, _)| *x >= min_time && *x <= max_time)
-                .copied()
+                .map(|(x, y)| {
+                    (
+                        *x,
+                        transform_value(*y, i, Some(series_transforms)).unwrap_or(*y),
+                    )
+                })
                 .collect();
 
             let series_plot = chart
@@ -496,15 +547,18 @@ impl LivePlotter {
         show_grid: bool,
         title: &str,
         series_names: &[String],
+        series_transforms: &[SeriesTransform],
         series_colors: &[egui::Color32],
         dark_theme: bool,
         x_axis_name: &str,
         y_axis_name: &str,
+        window_ms: f64,
         width: u32,
         height: u32,
     ) -> Result<(), String> {
         self.flush_pending_bucket();
-        let (min_time, max_time, min_y, max_y) = self.compute_bounds();
+        let (min_time, max_time, min_y, max_y) =
+            self.compute_bounds(Some(series_transforms), Some(window_ms));
         if !min_time.is_finite() || !max_time.is_finite() {
             return Err("No samples to export.".to_string());
         }
@@ -591,7 +645,12 @@ impl LivePlotter {
             let data: Vec<(f64, f64)> = raw_series
                 .iter()
                 .filter(|(x, _)| *x >= min_time && *x <= max_time)
-                .copied()
+                .map(|(x, y)| {
+                    (
+                        *x,
+                        transform_value(*y, i, Some(series_transforms)).unwrap_or(*y),
+                    )
+                })
                 .collect();
 
             let series_plot = chart
@@ -638,9 +697,11 @@ impl LivePlotter {
             "",
             &[],
             &[],
+            &[],
             true,
             time_label,
             "value",
+            self.window_ms,
             1200,
             700,
         )
@@ -655,13 +716,16 @@ impl LivePlotter {
         show_grid: bool,
         title: &str,
         series_names: &[String],
+        series_transforms: &[SeriesTransform],
         series_colors: &[egui::Color32],
         dark_theme: bool,
         x_axis_name: &str,
         y_axis_name: &str,
+        window_ms: f64,
     ) -> Result<(), String> {
         self.flush_pending_bucket();
-        let (min_time, max_time, min_y, max_y) = self.compute_bounds();
+        let (min_time, max_time, min_y, max_y) =
+            self.compute_bounds(Some(series_transforms), Some(window_ms));
         if !min_time.is_finite() || !max_time.is_finite() {
             return Err("No samples to export.".to_string());
         }
@@ -742,7 +806,12 @@ impl LivePlotter {
                     .points
                     .iter()
                     .filter(|(x, _)| *x >= min_time && *x <= max_time)
-                    .copied()
+                    .map(|(x, y)| {
+                        (
+                            *x,
+                            transform_value(*y, i, Some(series_transforms)).unwrap_or(*y),
+                        )
+                    })
                     .collect();
 
                 if points.len() > 3 {
@@ -865,20 +934,22 @@ impl LivePlotter {
         }
     }
 
-    fn compute_bounds(&self) -> (f64, f64, f64, f64) {
+    fn compute_bounds(
+        &self,
+        custom_series_transforms: Option<&[SeriesTransform]>,
+        custom_window_ms: Option<f64>,
+    ) -> (f64, f64, f64, f64) {
         let last_time = match self.last_time_x {
             Some(value) => value,
             None => return (f64::NAN, f64::NAN, f64::NAN, f64::NAN),
         };
-        let window_units = (self.window_ms * self.last_time_scale / 1000.0).max(0.000_001);
+        let window_ms = custom_window_ms.unwrap_or(self.window_ms).max(0.000_001);
+        let window_units = (window_ms * self.last_time_scale / 1000.0).max(0.000_001);
         let min_time = last_time - window_units;
         let max_time = last_time;
-        if self.amplitude > 0.0 {
-            return (min_time, max_time, -self.amplitude, self.amplitude);
-        }
         let mut min_y = f64::INFINITY;
         let mut max_y = f64::NEG_INFINITY;
-        for series in &self.series {
+        for (series_idx, series) in self.series.iter().enumerate() {
             for (t, y) in &series.points {
                 if *t < min_time {
                     continue;
@@ -886,11 +957,13 @@ impl LivePlotter {
                 if *t > max_time {
                     continue;
                 }
-                if *y < min_y {
-                    min_y = *y;
+                let transformed =
+                    transform_value(*y, series_idx, custom_series_transforms).unwrap_or(*y);
+                if transformed < min_y {
+                    min_y = transformed;
                 }
-                if *y > max_y {
-                    max_y = *y;
+                if transformed > max_y {
+                    max_y = transformed;
                 }
             }
         }
@@ -923,4 +996,10 @@ fn palette_color(idx: usize) -> Color32 {
         Color32::from_rgb(214, 157, 133),
     ];
     COLORS[idx % COLORS.len()]
+}
+
+fn transform_value(value: f64, idx: usize, transforms: Option<&[SeriesTransform]>) -> Option<f64> {
+    transforms
+        .and_then(|ts| ts.get(idx))
+        .map(|t| value * t.scale + t.offset)
 }

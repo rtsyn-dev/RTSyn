@@ -71,5 +71,5 @@
 - [ ] Delete three dots and make title white on loading/building plugin
 - [ ] Checkbox on plugin config "Show on UML diagram"
 - [ ] Plotter on remove connection of i_n-1, glitches the plot (appears i_0 with no input)
-- [ ] Move plotter scale configuration to settings
+- [-] Move plotter scale configuration to settings
 - [ ] Instead of connection add plugin name and id on hover

@@ -732,7 +732,7 @@ impl GuiApp {
             .to_string()
     }
 
-    fn plotter_config_from_value(&self, config: &Value) -> (usize, f64, f64, f64) {
+    fn plotter_config_from_value(&self, config: &Value) -> (usize, f64) {
         let input_count = config
             .get("input_count")
             .and_then(|v| v.as_u64())
@@ -741,23 +741,7 @@ impl GuiApp {
             .get("refresh_hz")
             .and_then(|v| v.as_f64())
             .unwrap_or(60.0);
-        let window_multiplier = config
-            .get("window_multiplier")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(10000.0);
-        let window_value = config
-            .get("window_value")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(10.0);
-        let window_ms = config
-            .get("window_ms")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(window_multiplier * window_value);
-        let amplitude = config
-            .get("amplitude")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.0);
-        (input_count, refresh_hz, window_ms, amplitude)
+        (input_count, refresh_hz)
     }
 
     fn plotter_series_names(&self, plotter_id: u64, input_count: usize) -> Vec<String> {
@@ -825,8 +809,13 @@ impl GuiApp {
                 continue;
             }
             live_plotter_ids.insert(plugin.id);
-            let (input_count, refresh_hz, window_ms, amplitude) =
-                self.plotter_config_from_value(&plugin.config);
+            let (input_count, refresh_hz) = self.plotter_config_from_value(&plugin.config);
+            let window_ms = self
+                .plotter_manager
+                .plotter_preview_settings
+                .get(&plugin.id)
+                .map(|(_, _, _, _, _, _, _, _, _, _, _, window_ms, _, _)| *window_ms)
+                .unwrap_or(10_000.0);
             let series_names = self.plotter_series_names(plugin.id, input_count);
             let is_open = self
                 .plotter_manager
@@ -848,10 +837,9 @@ impl GuiApp {
                 plotter.update_config(
                     input_count,
                     refresh_hz,
-                    window_ms,
-                    amplitude,
                     self.state_sync.logic_period_seconds,
                 );
+                plotter.set_window_ms(window_ms);
                 plotter.set_series_names(series_names);
                 if plotter.open && plugin.running {
                     if let Some(samples) = samples.get(&plugin.id) {

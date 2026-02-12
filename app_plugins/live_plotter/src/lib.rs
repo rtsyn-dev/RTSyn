@@ -19,9 +19,6 @@ impl LivePlotterPlugin {
                 default_vars: vec![
                     ("input_count".to_string(), Value::from(0)),
                     ("refresh_hz".to_string(), Value::from(60.0)),
-                    ("window_multiplier".to_string(), Value::from(1000)),
-                    ("window_value".to_string(), Value::from(10)),
-                    ("amplitude".to_string(), Value::from(0.0)),
                 ],
             },
             inputs: Vec::new(),
@@ -87,24 +84,6 @@ impl Plugin for LivePlotterPlugin {
                         .max_f(120.0)
                         .default_value(Value::from(60.0))
                         .hint("Plot refresh rate"),
-                )
-                .field(
-                    ConfigField::integer("window_multiplier", "Window multiplier")
-                        .min(1)
-                        .step(100)
-                        .default_value(Value::from(1000)),
-                )
-                .field(
-                    ConfigField::integer("window_value", "Window value")
-                        .min(1)
-                        .default_value(Value::from(10)),
-                )
-                .field(
-                    ConfigField::float("amplitude", "Amplitude")
-                        .min_f(0.0)
-                        .step_f(0.1)
-                        .default_value(Value::from(0.0))
-                        .hint("Y-axis amplitude (0 = auto)"),
                 ),
         )
     }

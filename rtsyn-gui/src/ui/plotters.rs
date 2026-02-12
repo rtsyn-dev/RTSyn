@@ -77,15 +77,23 @@ impl GuiApp {
                                 show_legend,
                                 show_grid,
                                 series_names,
+                                series_scales,
+                                series_offsets,
                                 colors,
                                 title,
                                 dark_theme,
                                 x_axis,
                                 y_axis,
+                                window_ms,
                                 _high_quality,
                                 _export_svg,
                             )) = preview_settings.clone()
                             {
+                                let series_transforms = Self::build_series_transforms(
+                                    &series_scales,
+                                    &series_offsets,
+                                    series_names.len(),
+                                );
                                 plotter.render_with_settings(
                                     ui,
                                     "",
@@ -95,10 +103,12 @@ impl GuiApp {
                                     show_grid,
                                     Some(&title),
                                     Some(&series_names),
+                                    Some(&series_transforms),
                                     Some(&colors),
                                     dark_theme,
                                     Some(&x_axis),
                                     Some(&y_axis),
+                                    Some(window_ms),
                                 );
                             } else {
                                 plotter.render(ui, "", &time_label);
@@ -230,6 +240,12 @@ impl GuiApp {
                             let mut state = ctx
                                 .data(|d| d.get_temp::<PlotterPreviewState>(state_id))
                                 .unwrap_or_else(|| settings_seed.clone());
+                            while state.series_scales.len() < state.series_names.len() {
+                                state.series_scales.push(1.0);
+                            }
+                            while state.series_offsets.len() < state.series_names.len() {
+                                state.series_offsets.push(0.0);
+                            }
                             egui::Window::new("Plot Settings")
                                 .resizable(false)
                                 .default_size(egui::vec2(600.0, 500.0))
@@ -251,27 +267,57 @@ impl GuiApp {
                                         ui.label("Y-axis:");
                                         ui.text_edit_singleline(&mut state.y_axis_name);
                                     });
+                                    ui.horizontal(|ui| {
+                                        ui.label("Window (ms):");
+                                        ui.add(
+                                            egui::DragValue::new(&mut state.window_ms)
+                                                .clamp_range(100.0..=600_000.0)
+                                                .speed(100.0),
+                                        );
+                                    });
                                     ui.separator();
                                     ui.label("Series customization:");
                                     egui::ScrollArea::vertical()
                                         .max_height(150.0)
                                         .show(ui, |ui| {
-                                            for (i, (name, color)) in state
-                                                .series_names
-                                                .iter_mut()
-                                                .zip(state.colors.iter_mut())
-                                                .enumerate()
-                                            {
+                                            for i in 0..state.series_names.len() {
                                                 ui.horizontal(|ui| {
                                                     ui.label(format!("Series {}:", i + 1));
-                                                    ui.text_edit_singleline(name);
-                                                    ui.color_edit_button_srgba(color);
+                                                    ui.text_edit_singleline(
+                                                        &mut state.series_names[i],
+                                                    );
+                                                    ui.menu_button("Scale", |ui| {
+                                                        ui.horizontal(|ui| {
+                                                            ui.label("Amplitude");
+                                                            ui.add(
+                                                                egui::DragValue::new(
+                                                                    &mut state.series_scales[i],
+                                                                )
+                                                                .speed(0.1),
+                                                            );
+                                                        });
+                                                        ui.horizontal(|ui| {
+                                                            ui.label("Offset");
+                                                            ui.add(
+                                                                egui::DragValue::new(
+                                                                    &mut state.series_offsets[i],
+                                                                )
+                                                                .speed(0.1),
+                                                            );
+                                                        });
+                                                    });
+                                                    ui.color_edit_button_srgba(&mut state.colors[i]);
                                                 });
                                             }
                                         });
                                     ui.separator();
                                     let preview_rect = ui.available_rect_before_wrap();
                                     let preview_size = egui::vec2(preview_rect.width(), 200.0);
+                                    let series_transforms = Self::build_series_transforms(
+                                        &state.series_scales,
+                                        &state.series_offsets,
+                                        state.series_names.len(),
+                                    );
                                     ui.allocate_ui(preview_size, |ui| {
                                         plotter.render_with_settings(
                                             ui,
@@ -282,10 +328,12 @@ impl GuiApp {
                                             state.show_grid,
                                             Some(&state.title),
                                             Some(&state.series_names),
+                                            Some(&series_transforms),
                                             Some(&state.colors),
                                             state.dark_theme,
                                             Some(&state.x_axis_name),
                                             Some(&state.y_axis_name),
+                                            Some(state.window_ms),
                                         );
                                     });
                                     ui.separator();
@@ -348,11 +396,14 @@ impl GuiApp {
                                 show_legend,
                                 show_grid,
                                 series_names,
+                                series_scales,
+                                series_offsets,
                                 colors,
                                 title,
                                 dark_theme,
                                 x_axis,
                                 y_axis,
+                                window_ms,
                                 _high_quality,
                                 _export_svg,
                             )) = self
@@ -361,6 +412,11 @@ impl GuiApp {
                                 .get(&plugin_id)
                                 .cloned()
                             {
+                                let series_transforms = Self::build_series_transforms(
+                                    &series_scales,
+                                    &series_offsets,
+                                    series_names.len(),
+                                );
                                 plotter.render_with_settings(
                                     ui,
                                     "",
@@ -370,10 +426,12 @@ impl GuiApp {
                                     show_grid,
                                     Some(&title),
                                     Some(&series_names),
+                                    Some(&series_transforms),
                                     Some(&colors),
                                     dark_theme,
                                     Some(&x_axis),
                                     Some(&y_axis),
+                                    Some(window_ms),
                                 );
                             } else {
                                 plotter.render(ui, "", &self.state_sync.logic_time_label);
@@ -451,11 +509,14 @@ impl GuiApp {
             show_legend,
             show_grid,
             series_names,
+            series_scales,
+            series_offsets,
             colors,
             title,
             dark_theme,
             x_axis,
             y_axis,
+            window_ms,
             high_quality,
             export_svg,
         )) = self
@@ -468,11 +529,14 @@ impl GuiApp {
             state.show_legend = show_legend;
             state.show_grid = show_grid;
             state.series_names = series_names;
+            state.series_scales = series_scales;
+            state.series_offsets = series_offsets;
             state.colors = colors;
             state.title = title;
             state.dark_theme = dark_theme;
             state.x_axis_name = x_axis;
             state.y_axis_name = y_axis;
+            state.window_ms = window_ms;
             state.high_quality = high_quality;
             state.export_svg = export_svg;
             return state;
@@ -510,6 +574,9 @@ impl GuiApp {
                             .unwrap_or_else(|| format!("Series {}", i + 1))
                     })
                     .collect();
+                state.series_scales = vec![1.0; plotter.input_count];
+                state.series_offsets = vec![0.0; plotter.input_count];
+                state.window_ms = plotter.window_ms;
                 state.colors = (0..plotter.input_count)
                     .map(|i| match i % 8 {
                         0 => egui::Color32::from_rgb(86, 156, 214),
@@ -535,15 +602,31 @@ impl GuiApp {
                 state.show_legend,
                 state.show_grid,
                 state.series_names.clone(),
+                state.series_scales.clone(),
+                state.series_offsets.clone(),
                 state.colors.clone(),
                 state.title.clone(),
                 state.dark_theme,
                 state.x_axis_name.clone(),
                 state.y_axis_name.clone(),
+                state.window_ms,
                 state.high_quality,
                 state.export_svg,
             ),
         );
+    }
+
+    fn build_series_transforms(
+        scales: &[f64],
+        offsets: &[f64],
+        count: usize,
+    ) -> Vec<crate::plotter::SeriesTransform> {
+        (0..count)
+            .map(|i| crate::plotter::SeriesTransform {
+                scale: *scales.get(i).unwrap_or(&1.0),
+                offset: *offsets.get(i).unwrap_or(&0.0),
+            })
+            .collect()
     }
 
     pub(crate) fn render_plotter_preview_dialog(&mut self, ctx: &egui::Context) {
@@ -579,6 +662,14 @@ impl GuiApp {
                     ui.label("Y-axis:");
                     ui.text_edit_singleline(&mut self.plotter_preview.y_axis_name);
                 });
+                ui.horizontal(|ui| {
+                    ui.label("Window (ms):");
+                    ui.add(
+                        egui::DragValue::new(&mut self.plotter_preview.window_ms)
+                            .clamp_range(100.0..=600_000.0)
+                            .speed(100.0),
+                    );
+                });
 
                 ui.separator();
                 ui.label("Series customization:");
@@ -586,17 +677,41 @@ impl GuiApp {
                 egui::ScrollArea::vertical()
                     .max_height(150.0)
                     .show(ui, |ui| {
-                        for (i, (name, color)) in self
-                            .plotter_preview
-                            .series_names
-                            .iter_mut()
-                            .zip(self.plotter_preview.colors.iter_mut())
-                            .enumerate()
+                        while self.plotter_preview.series_scales.len()
+                            < self.plotter_preview.series_names.len()
                         {
+                            self.plotter_preview.series_scales.push(1.0);
+                        }
+                        while self.plotter_preview.series_offsets.len()
+                            < self.plotter_preview.series_names.len()
+                        {
+                            self.plotter_preview.series_offsets.push(0.0);
+                        }
+                        for i in 0..self.plotter_preview.series_names.len() {
                             ui.horizontal(|ui| {
                                 ui.label(format!("Series {}:", i + 1));
-                                ui.text_edit_singleline(name);
-                                ui.color_edit_button_srgba(color);
+                                ui.text_edit_singleline(&mut self.plotter_preview.series_names[i]);
+                                ui.menu_button("Scale", |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label("Amplitude");
+                                        ui.add(
+                                            egui::DragValue::new(
+                                                &mut self.plotter_preview.series_scales[i],
+                                            )
+                                            .speed(0.1),
+                                        );
+                                    });
+                                    ui.horizontal(|ui| {
+                                        ui.label("Offset");
+                                        ui.add(
+                                            egui::DragValue::new(
+                                                &mut self.plotter_preview.series_offsets[i],
+                                            )
+                                            .speed(0.1),
+                                        );
+                                    });
+                                });
+                                ui.color_edit_button_srgba(&mut self.plotter_preview.colors[i]);
                             });
                         }
                     });
@@ -610,6 +725,11 @@ impl GuiApp {
 
                 if let Some(plotter) = self.plotter_manager.plotters.get(&plugin_id) {
                     if let Ok(mut plotter) = plotter.lock() {
+                        let series_transforms = Self::build_series_transforms(
+                            &self.plotter_preview.series_scales,
+                            &self.plotter_preview.series_offsets,
+                            self.plotter_preview.series_names.len(),
+                        );
                         ui.allocate_ui(preview_size, |ui| {
                             plotter.render_with_settings(
                                 ui,
@@ -620,10 +740,12 @@ impl GuiApp {
                                 self.plotter_preview.show_grid,
                                 Some(&self.plotter_preview.title),
                                 Some(&self.plotter_preview.series_names),
+                                Some(&series_transforms),
                                 Some(&self.plotter_preview.colors),
                                 self.plotter_preview.dark_theme,
                                 Some(&self.plotter_preview.x_axis_name),
                                 Some(&self.plotter_preview.y_axis_name),
+                                Some(self.plotter_preview.window_ms),
                             );
                         });
                     }
@@ -696,11 +818,14 @@ impl GuiApp {
                         self.plotter_preview.show_legend,
                         self.plotter_preview.show_grid,
                         self.plotter_preview.series_names.clone(),
+                        self.plotter_preview.series_scales.clone(),
+                        self.plotter_preview.series_offsets.clone(),
                         self.plotter_preview.colors.clone(),
                         self.plotter_preview.title.clone(),
                         self.plotter_preview.dark_theme,
                         self.plotter_preview.x_axis_name.clone(),
                         self.plotter_preview.y_axis_name.clone(),
+                        self.plotter_preview.window_ms,
                         self.plotter_preview.high_quality,
                         self.plotter_preview.export_svg,
                     ),
