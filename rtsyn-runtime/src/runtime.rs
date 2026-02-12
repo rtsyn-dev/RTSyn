@@ -14,6 +14,11 @@ use workspace::{input_sum, input_sum_any, order_plugins_for_execution, Workspace
 
 use crate::rt_thread::{ActiveRtBackend, RuntimeThread};
 
+#[inline]
+fn sanitize_signal(value: f64) -> f64 {
+    if value.is_finite() { value } else { 0.0 }
+}
+
 #[derive(Debug, Clone)]
 pub struct LogicSettings {
     pub cores: Vec<usize>,
@@ -533,8 +538,12 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                                 }
                             }
                             for (idx, input_name) in plugin_instance.inputs.iter().enumerate() {
-                                let value =
-                                    input_sum(&ws.connections, &outputs, plugin.id, input_name);
+                                let value = sanitize_signal(input_sum(
+                                    &ws.connections,
+                                    &outputs,
+                                    plugin.id,
+                                    input_name,
+                                ));
                                 input_values.insert((plugin.id, input_name.clone()), value);
                                 let bits = value.to_bits();
                                 if plugin_instance.last_inputs[idx] != bits {
@@ -562,6 +571,7 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                                         bytes.as_ptr(),
                                         bytes.len(),
                                     );
+                                    let value = sanitize_signal(value);
                                     outputs.insert((plugin.id, output_name.clone()), value);
                                 }
                             }
@@ -574,6 +584,7 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                                     bytes.as_ptr(),
                                     bytes.len(),
                                 );
+                                let value = sanitize_signal(value);
                                 internal_variable_values.insert(
                                     (plugin.id, var_name.clone()),
                                     serde_json::Value::from(value),
@@ -1231,7 +1242,12 @@ pub fn run_runtime_current(
                             }
                         }
                         for (idx, input_name) in plugin_instance.inputs.iter().enumerate() {
-                            let value = input_sum(&ws.connections, &outputs, plugin.id, input_name);
+                            let value = sanitize_signal(input_sum(
+                                &ws.connections,
+                                &outputs,
+                                plugin.id,
+                                input_name,
+                            ));
                             input_values.insert((plugin.id, input_name.clone()), value);
                             let bits = value.to_bits();
                             if plugin_instance.last_inputs[idx] != bits {
@@ -1258,6 +1274,7 @@ pub fn run_runtime_current(
                                     bytes.as_ptr(),
                                     bytes.len(),
                                 );
+                                let value = sanitize_signal(value);
                                 outputs.insert((plugin.id, output_name.clone()), value);
                             }
                         }
@@ -1269,6 +1286,7 @@ pub fn run_runtime_current(
                                 bytes.as_ptr(),
                                 bytes.len(),
                             );
+                            let value = sanitize_signal(value);
                             internal_variable_values.insert(
                                 (plugin.id, var_name.clone()),
                                 serde_json::Value::from(value),

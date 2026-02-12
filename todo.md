@@ -73,3 +73,10 @@
 - [ ] Plotter on remove connection of i_n-1, glitches the plot (appears i_0 with no input)
 - [-] Move plotter scale configuration to settings
 - [ ] Instead of connection add plugin name and id on hover
+- [ ] Add clear workspace to return to default
+- [ ] On workspace load, start plugins with a iteration of difference maybe
+- [ ] Restart should clear errors in plugins (like inf)
+- [ ] Add plugin order buttons
+- [ ] When reinstalled on loaded workspace, reset button dissapears
+- [ ] Plugin creator options (start active etc)
+- [ ] Add "sections start undropped" and make the dropdown sections start closed

@@ -1049,18 +1049,14 @@ impl GuiApp {
                 .get(kind)
                 .map(|b| b.loads_started)
                 .unwrap_or(false);
-            if loads_started {
-                if let Some(plugin) = self
-                    .workspace_manager
-                    .workspace
-                    .plugins
-                    .iter_mut()
-                    .find(|p| p.id == *plugin_id)
-                {
-                    if !plugin.running {
-                        plugin.running = true;
-                    }
-                }
+            if let Some(plugin) = self
+                .workspace_manager
+                .workspace
+                .plugins
+                .iter_mut()
+                .find(|p| p.id == *plugin_id)
+            {
+                plugin.running = loads_started;
             }
         }
     }
