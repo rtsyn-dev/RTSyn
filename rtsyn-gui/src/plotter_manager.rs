@@ -19,6 +19,7 @@ pub struct PlotterManager {
             String,
             String,
             f64,
+            u32,
             bool,
             bool,
         ),

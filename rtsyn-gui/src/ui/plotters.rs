@@ -3,11 +3,339 @@ use crate::ui_state::PlotterPreviewState;
 use std::time::Duration;
 
 impl GuiApp {
+    fn truncate_tab_label(name: &str, max_chars: usize) -> String {
+        let mut out = String::new();
+        for ch in name.chars().take(max_chars) {
+            out.push(ch);
+        }
+        if name.chars().count() > max_chars {
+            out.push_str("...");
+        }
+        out
+    }
+
+    fn knob_control(
+        ui: &mut egui::Ui,
+        label: &str,
+        value: &mut f64,
+        min: f64,
+        max: f64,
+        sensitivity: f64,
+        _decimals: usize,
+    ) {
+        ui.vertical_centered(|ui| {
+            ui.add_space(2.0);
+            ui.label(egui::RichText::new(label).strong());
+            let size = egui::vec2(96.0, 96.0);
+            let (rect, response) = ui.allocate_exact_size(size, egui::Sense::drag());
+            let center = rect.center();
+            let radius = rect.width().min(rect.height()) * 0.46;
+            let start = -std::f32::consts::PI * 0.75;
+            let end = std::f32::consts::PI * 0.75;
+
+            let origin_key = response.id.with("drag_origin");
+            let dx_key = response.id.with("drag_dx");
+            if response.drag_started() {
+                if let Some(pos) = response.interact_pointer_pos() {
+                    ui.ctx().data_mut(|d| {
+                        d.insert_temp(origin_key, pos);
+                        d.insert_temp(dx_key, 0.0_f32);
+                    });
+                }
+            }
+            if response.dragged() {
+                let pointer_pos = response
+                    .interact_pointer_pos()
+                    .or_else(|| ui.ctx().input(|i| i.pointer.latest_pos()));
+                if let Some(pos) = pointer_pos {
+                    let origin = ui
+                        .ctx()
+                        .data(|d| d.get_temp::<egui::Pos2>(origin_key))
+                        .unwrap_or(pos);
+                    let dx = pos.x - origin.x;
+                    ui.ctx().data_mut(|d| d.insert_temp(dx_key, dx));
+                    let deadzone = 2.0_f32;
+                    if dx.abs() > deadzone {
+                        let dir = dx.signum() as f64;
+                        let strength = (dx.abs() - deadzone) as f64;
+                        // Very fine control near the knob, progressively faster farther away.
+                        let t = (strength / 120.0).clamp(0.0, 1.0);
+                        let ramp = (0.03 + t.powf(2.2) * 18.0).clamp(0.03, 18.0);
+                        let dt = ui.ctx().input(|i| i.stable_dt).max(1.0 / 240.0) as f64;
+                        let fine = if ui.ctx().input(|i| i.modifiers.shift) {
+                            0.2
+                        } else {
+                            1.0
+                        };
+                        *value = (*value + dir * sensitivity * ramp * dt * 60.0 * fine)
+                            .clamp(min, max);
+                        ui.ctx().request_repaint();
+                    }
+                } else {
+                    let dx = ui.ctx().data(|d| d.get_temp::<f32>(dx_key)).unwrap_or(0.0);
+                    let deadzone = 2.0_f32;
+                    if dx.abs() > deadzone {
+                        let dir = dx.signum() as f64;
+                        let strength = (dx.abs() - deadzone) as f64;
+                        let t = (strength / 120.0).clamp(0.0, 1.0);
+                        let ramp = (0.03 + t.powf(2.2) * 18.0).clamp(0.03, 18.0);
+                        let dt = ui.ctx().input(|i| i.stable_dt).max(1.0 / 240.0) as f64;
+                        let fine = if ui.ctx().input(|i| i.modifiers.shift) {
+                            0.2
+                        } else {
+                            1.0
+                        };
+                        *value = (*value + dir * sensitivity * ramp * dt * 60.0 * fine)
+                            .clamp(min, max);
+                        ui.ctx().request_repaint();
+                    }
+                }
+            }
+            if response.drag_stopped() {
+                ui.ctx().data_mut(|d| {
+                    d.remove::<egui::Pos2>(origin_key);
+                    d.remove::<f32>(dx_key);
+                });
+            }
+
+            if response.hovered() {
+                let wheel = ui.ctx().input(|i| i.smooth_scroll_delta.y);
+                if wheel.abs() > f32::EPSILON {
+                    let strength = wheel.abs() as f64;
+                    let ramp = (1.0 + (strength / 4.0).powf(1.1)).clamp(1.0, 10.0);
+                    let dir = wheel.signum() as f64;
+                    let fine = if ui.ctx().input(|i| i.modifiers.shift) {
+                        0.2
+                    } else {
+                        1.0
+                    };
+                    *value = (*value + dir * sensitivity * 0.6 * ramp * fine).clamp(min, max);
+                    ui.ctx().request_repaint();
+                }
+            }
+
+            let t = if max > min {
+                ((*value - min) / (max - min)).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            let angle = start + (end - start) * t as f32;
+            let tip = center + egui::vec2(angle.cos(), angle.sin()) * (radius * 0.75);
+
+            let stroke = egui::Stroke::new(1.25, ui.visuals().widgets.active.bg_fill);
+            ui.painter().circle_filled(center, radius, ui.visuals().widgets.inactive.bg_fill);
+            ui.painter().circle_stroke(center, radius, stroke);
+            ui.painter().line_segment(
+                [center, tip],
+                egui::Stroke::new(2.0, ui.visuals().widgets.active.fg_stroke.color),
+            );
+            ui.add_space(2.0);
+        });
+    }
+
+    fn wheel_value_box(
+        ui: &mut egui::Ui,
+        title: &str,
+        value: &mut f64,
+        decimals: usize,
+        min: f64,
+        max: f64,
+    ) {
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            ui.set_min_width(220.0);
+            ui.vertical_centered(|ui| {
+                ui.label(egui::RichText::new(title).strong());
+                ui.add_space(4.0);
+                let mut text = format!("{:.*}", decimals, *value);
+                ui.scope(|ui| {
+                    ui.style_mut().visuals.widgets.inactive.bg_fill = egui::Color32::from_gray(45);
+                    ui.style_mut().visuals.widgets.hovered.bg_fill = egui::Color32::from_gray(55);
+                    ui.style_mut().visuals.widgets.active.bg_fill = egui::Color32::from_gray(60);
+                    if ui
+                        .add_sized(
+                            [180.0, 0.0],
+                            egui::TextEdit::singleline(&mut text)
+                                .horizontal_align(egui::Align::Center),
+                        )
+                        .changed()
+                    {
+                        if let Ok(parsed) = text.trim().parse::<f64>() {
+                            *value = parsed.clamp(min, max);
+                        }
+                    }
+                });
+            });
+        });
+    }
+
+    fn step_125(value: f64, direction: i32) -> f64 {
+        let seq = [1.0_f64, 2.0, 5.0];
+        let mut v = value.max(0.1);
+        let mut exp = v.log10().floor() as i32;
+        let decade = 10_f64.powi(exp);
+        v /= decade;
+
+        let mut idx = 0usize;
+        let mut best = f64::INFINITY;
+        for (i, candidate) in seq.iter().enumerate() {
+            let d = (v - *candidate).abs();
+            if d < best {
+                best = d;
+                idx = i;
+            }
+        }
+
+        if direction > 0 {
+            if idx + 1 < seq.len() {
+                idx += 1;
+            } else {
+                idx = 0;
+                exp += 1;
+            }
+        } else if direction < 0 {
+            if idx > 0 {
+                idx -= 1;
+            } else {
+                idx = seq.len() - 1;
+                exp -= 1;
+            }
+        }
+
+        (seq[idx] * 10_f64.powi(exp)).clamp(0.1, 60_000.0)
+    }
+
+    fn render_timebase_controls(
+        ui: &mut egui::Ui,
+        window_ms: &mut f64,
+        timebase_divisions: &mut u32,
+    ) {
+        let mut divisions = (*timebase_divisions).clamp(1, 200);
+        let mut ms_div = (*window_ms / divisions as f64).clamp(0.1, 60_000.0);
+        let mut changed = false;
+
+        ui.horizontal(|ui| {
+            ui.label("Timebase:");
+
+            if ui.small_button("◀").clicked() {
+                ms_div = Self::step_125(ms_div, -1);
+                changed = true;
+            }
+            if ui.small_button("▶").clicked() {
+                ms_div = Self::step_125(ms_div, 1);
+                changed = true;
+            }
+
+            let mut drag = ms_div;
+            if ui
+                .add(
+                    egui::DragValue::new(&mut drag)
+                        .clamp_range(0.1..=60_000.0)
+                        .speed((ms_div * 0.05).max(0.1)),
+                )
+                .changed()
+            {
+                ms_div = drag.clamp(0.1, 60_000.0);
+                changed = true;
+            }
+
+            ui.label("ms/div");
+            ui.label("x");
+            let mut div_drag = i64::from(divisions);
+            if ui
+                .add(
+                    egui::DragValue::new(&mut div_drag)
+                        .clamp_range(1..=200)
+                        .speed(1.0),
+                )
+                .changed()
+            {
+                divisions = div_drag.clamp(1, 200) as u32;
+                changed = true;
+            }
+            ui.label("div");
+            ui.separator();
+            ui.monospace(format!("{:.1} ms", ms_div * divisions as f64));
+        });
+
+        if changed {
+            *timebase_divisions = divisions;
+            *window_ms = (ms_div * divisions as f64).clamp(100.0, 600_000.0);
+        }
+    }
+
+    fn render_series_wheels(ui: &mut egui::Ui, scale: &mut f64, offset: &mut f64) {
+        Self::knob_control(ui, "Scale", scale, 0.001, 1_000_000.0, 0.08, 3);
+        Self::knob_control(
+            ui,
+            "Offset",
+            offset,
+            -1_000_000_000.0,
+            1_000_000_000.0,
+            1.0,
+            1,
+        );
+        if *scale <= 0.0 {
+            *scale = 0.001;
+        }
+    }
+
+    fn sync_series_controls_from_seed(
+        state: &mut PlotterPreviewState,
+        seed: &PlotterPreviewState,
+    ) {
+        let target = seed.series_names.len();
+        if target == state.series_names.len() {
+            return;
+        }
+        if state.series_names.len() < target {
+            for idx in state.series_names.len()..target {
+                state
+                    .series_names
+                    .push(seed.series_names.get(idx).cloned().unwrap_or_else(|| {
+                        format!("Series {}", idx + 1)
+                    }));
+                state.series_scales.push(1.0);
+                state.series_offsets.push(0.0);
+                state.colors.push(
+                    seed.colors
+                        .get(idx)
+                        .copied()
+                        .unwrap_or(egui::Color32::from_rgb(86, 156, 214)),
+                );
+            }
+        } else {
+            state.series_names.truncate(target);
+            state.series_scales.truncate(target);
+            state.series_offsets.truncate(target);
+            state.colors.truncate(target);
+        }
+    }
+
+    fn aligned_series_names(&self, plugin_id: u64, count: usize) -> Vec<String> {
+        (0..count)
+            .map(|i| {
+                let port = format!("in_{i}");
+                self.workspace_manager
+                    .workspace
+                    .connections
+                    .iter()
+                    .find(|c| c.to_plugin == plugin_id && c.to_port == port)
+                    .map(|c| {
+                        format!(
+                            "{}:{}",
+                            self.plugin_display_name(c.from_plugin),
+                            c.from_port
+                        )
+                    })
+                    .unwrap_or_else(|| format!("Series {}", i + 1))
+            })
+            .collect()
+    }
+
     pub(crate) fn render_plotter_windows(&mut self, ctx: &egui::Context) {
         let mut closed = Vec::new();
         let mut export_saved: Vec<u64> = Vec::new();
         let mut settings_saved: Vec<u64> = Vec::new();
-        let mut settings_closed: Vec<u64> = Vec::new();
         let name_by_id: HashMap<u64, String> = self
             .workspace_manager
             .workspace
@@ -85,6 +413,7 @@ impl GuiApp {
                                 x_axis,
                                 y_axis,
                                 window_ms,
+                                _timebase_divisions,
                                 _high_quality,
                                 _export_svg,
                             )) = preview_settings.clone()
@@ -234,21 +563,33 @@ impl GuiApp {
                         let open_id = egui::Id::new(("plotter_settings_open", plugin_id));
                         let state_id = egui::Id::new(("plotter_settings_state", plugin_id));
                         let save_id = egui::Id::new(("plotter_settings_save", plugin_id));
-                        let close_id = egui::Id::new(("plotter_settings_close", plugin_id));
                         let mut open = ctx.data(|d| d.get_temp::<bool>(open_id).unwrap_or(false));
                         if open {
                             let mut state = ctx
                                 .data(|d| d.get_temp::<PlotterPreviewState>(state_id))
                                 .unwrap_or_else(|| settings_seed.clone());
+                            Self::sync_series_controls_from_seed(&mut state, &settings_seed);
                             while state.series_scales.len() < state.series_names.len() {
                                 state.series_scales.push(1.0);
                             }
                             while state.series_offsets.len() < state.series_names.len() {
                                 state.series_offsets.push(0.0);
                             }
+                            if state.series_names.is_empty() {
+                                state.selected_series_tab = 0;
+                                state.series_tab_start = 0;
+                            } else {
+                                state.selected_series_tab =
+                                    state.selected_series_tab.min(state.series_names.len() - 1);
+                                state.series_tab_start =
+                                    state.series_tab_start.min(state.series_names.len() - 1);
+                            }
                             egui::Window::new("Plot Settings")
                                 .resizable(false)
-                                .default_size(egui::vec2(600.0, 500.0))
+                                .fixed_size(egui::vec2(
+                                    (ctx.screen_rect().width() * 0.92).clamp(900.0, 1400.0),
+                                    (ctx.screen_rect().height() * 0.92).clamp(760.0, 980.0),
+                                ))
                                 .open(&mut open)
                                 .show(ctx, |ui| {
                                     ui.horizontal(|ui| {
@@ -267,52 +608,67 @@ impl GuiApp {
                                         ui.label("Y-axis:");
                                         ui.text_edit_singleline(&mut state.y_axis_name);
                                     });
-                                    ui.horizontal(|ui| {
-                                        ui.label("Window (ms):");
-                                        ui.add(
-                                            egui::DragValue::new(&mut state.window_ms)
-                                                .clamp_range(100.0..=600_000.0)
-                                                .speed(100.0),
-                                        );
-                                    });
+                                    Self::render_timebase_controls(
+                                        ui,
+                                        &mut state.window_ms,
+                                        &mut state.timebase_divisions,
+                                    );
                                     ui.separator();
-                                    ui.label("Series customization:");
-                                    egui::ScrollArea::vertical()
-                                        .max_height(150.0)
-                                        .show(ui, |ui| {
-                                            for i in 0..state.series_names.len() {
-                                                ui.horizontal(|ui| {
-                                                    ui.label(format!("Series {}:", i + 1));
-                                                    ui.text_edit_singleline(
-                                                        &mut state.series_names[i],
-                                                    );
-                                                    ui.menu_button("Scale", |ui| {
-                                                        ui.horizontal(|ui| {
-                                                            ui.label("Amplitude");
-                                                            ui.add(
-                                                                egui::DragValue::new(
-                                                                    &mut state.series_scales[i],
-                                                                )
-                                                                .speed(0.1),
-                                                            );
-                                                        });
-                                                        ui.horizontal(|ui| {
-                                                            ui.label("Offset");
-                                                            ui.add(
-                                                                egui::DragValue::new(
-                                                                    &mut state.series_offsets[i],
-                                                                )
-                                                                .speed(0.1),
-                                                            );
-                                                        });
-                                                    });
-                                                    ui.color_edit_button_srgba(&mut state.colors[i]);
-                                                });
+
+                                    ui.horizontal(|ui| {
+                                        let total = state.series_names.len();
+                                        let tab_w = 180.0_f32;
+                                        let arrow_w = 28.0_f32;
+                                        let available = ui.available_width().max(tab_w);
+                                        let can_page = (total as f32 * tab_w) > available;
+                                        let tabs_width = if can_page {
+                                            (available - arrow_w).max(tab_w)
+                                        } else {
+                                            available
+                                        };
+                                        let visible = ((tabs_width / tab_w).floor() as usize).max(1);
+                                        let end = (state.series_tab_start + visible).min(total);
+                                        for i in state.series_tab_start..end {
+                                            let full = state.series_names[i].clone();
+                                            let text = Self::truncate_tab_label(&full, 20);
+                                            let selected = state.selected_series_tab == i;
+                                            let resp = ui.add_sized(
+                                                [180.0, 24.0],
+                                                egui::SelectableLabel::new(selected, text),
+                                            );
+                                            if resp.clicked() {
+                                                state.selected_series_tab = i;
                                             }
+                                            if !selected {
+                                                let _ = resp.on_hover_text(full);
+                                            }
+                                        }
+                                        if can_page
+                                            && ui
+                                                .add_enabled(
+                                                    state.series_tab_start + visible < total,
+                                                    egui::Button::new(">"),
+                                                )
+                                                .clicked()
+                                        {
+                                            state.series_tab_start = (state.series_tab_start + 1)
+                                                .min(total.saturating_sub(1));
+                                        }
+                                    });
+
+                                    if !state.series_names.is_empty() {
+                                        let i = state.selected_series_tab;
+                                        ui.horizontal(|ui| {
+                                            ui.add_sized(
+                                                [900.0, 22.0],
+                                                egui::TextEdit::singleline(&mut state.series_names[i]),
+                                            );
+                                            ui.color_edit_button_srgba(&mut state.colors[i]);
                                         });
+                                    }
                                     ui.separator();
                                     let preview_rect = ui.available_rect_before_wrap();
-                                    let preview_size = egui::vec2(preview_rect.width(), 200.0);
+                                    let preview_size = egui::vec2(preview_rect.width(), 340.0);
                                     let series_transforms = Self::build_series_transforms(
                                         &state.series_scales,
                                         &state.series_offsets,
@@ -337,6 +693,78 @@ impl GuiApp {
                                         );
                                     });
                                     ui.separator();
+                                    if !state.series_names.is_empty() {
+                                        let i = state.selected_series_tab;
+                                        let row_w = ui.available_width();
+                                        ui.allocate_ui_with_layout(
+                                            egui::vec2(row_w, 150.0),
+                                            egui::Layout::left_to_right(egui::Align::Center),
+                                            |ui| {
+                                                let left_w = 180.0;
+                                                let right_w = 180.0;
+                                                let center_w = (row_w - left_w - right_w).max(260.0);
+
+                                                ui.allocate_ui_with_layout(
+                                                    egui::vec2(left_w, 150.0),
+                                                    egui::Layout::top_down(egui::Align::Center),
+                                                    |ui| {
+                                                        Self::knob_control(
+                                                            ui,
+                                                            "DC Offset",
+                                                            &mut state.series_offsets[i],
+                                                            -1_000_000_000.0,
+                                                            1_000_000_000.0,
+                                                            1.0,
+                                                            1,
+                                                        );
+                                                    },
+                                                );
+
+                                                ui.allocate_ui_with_layout(
+                                                    egui::vec2(center_w, 150.0),
+                                                    egui::Layout::top_down(egui::Align::Center),
+                                                    |ui| {
+                                                        ui.vertical_centered(|ui| {
+                                                            Self::wheel_value_box(
+                                                                ui,
+                                                                "Offset Value",
+                                                                &mut state.series_offsets[i],
+                                                                1,
+                                                                -1_000_000_000.0,
+                                                                1_000_000_000.0,
+                                                            );
+                                                            ui.add_space(8.0);
+                                                            Self::wheel_value_box(
+                                                                ui,
+                                                                "Scale Value",
+                                                                &mut state.series_scales[i],
+                                                                3,
+                                                                0.001,
+                                                                1_000_000.0,
+                                                            );
+                                                        });
+                                                    },
+                                                );
+
+                                                ui.allocate_ui_with_layout(
+                                                    egui::vec2(right_w, 150.0),
+                                                    egui::Layout::top_down(egui::Align::Center),
+                                                    |ui| {
+                                                        Self::knob_control(
+                                                            ui,
+                                                            "Gain",
+                                                            &mut state.series_scales[i],
+                                                            0.001,
+                                                            1_000_000.0,
+                                                            0.08,
+                                                            3,
+                                                        );
+                                                    },
+                                                );
+                                            },
+                                        );
+                                    }
+                                    ui.separator();
                                     if styled_button(ui, "Apply").clicked() {
                                         ctx.data_mut(|d| d.insert_temp(save_id, true));
                                         ctx.request_repaint();
@@ -345,9 +773,6 @@ impl GuiApp {
                             ctx.data_mut(|d| {
                                 d.insert_temp(state_id, state);
                                 d.insert_temp(open_id, open);
-                                if !open {
-                                    d.insert_temp(close_id, true);
-                                }
                             });
                         }
                         let refresh_hz = plotter.refresh_hz.max(1.0);
@@ -375,16 +800,6 @@ impl GuiApp {
                     d.remove::<bool>(egui::Id::new(("plotter_settings_save", plugin_id)))
                 });
             }
-            if ctx.data(|d| {
-                d.get_temp::<bool>(egui::Id::new(("plotter_settings_close", plugin_id)))
-                    .unwrap_or(false)
-            }) {
-                settings_closed.push(plugin_id);
-                ctx.data_mut(|d| {
-                    d.remove::<bool>(egui::Id::new(("plotter_settings_close", plugin_id)))
-                });
-            }
-
             if ctx.embed_viewports() {
                 let response = egui::Window::new(title)
                     .resizable(true)
@@ -404,6 +819,7 @@ impl GuiApp {
                                 x_axis,
                                 y_axis,
                                 window_ms,
+                                _timebase_divisions,
                                 _high_quality,
                                 _export_svg,
                             )) = self
@@ -493,17 +909,18 @@ impl GuiApp {
                 self.apply_plotter_preview_state(plugin_id, &state);
             }
         }
-        for plugin_id in settings_closed.iter().copied() {
-            let state_id = egui::Id::new(("plotter_settings_state", plugin_id));
-            if let Some(state) = ctx.data(|d| d.get_temp::<PlotterPreviewState>(state_id)) {
-                self.apply_plotter_preview_state(plugin_id, &state);
-            }
-        }
     }
 
     fn build_plotter_preview_state(&self, plugin_id: u64) -> PlotterPreviewState {
         let mut state = PlotterPreviewState::default();
         state.target = Some(plugin_id);
+        let live_count = self
+            .plotter_manager
+            .plotters
+            .get(&plugin_id)
+            .and_then(|p| p.lock().ok().map(|p| p.input_count))
+            .unwrap_or(0);
+        let live_names = self.aligned_series_names(plugin_id, live_count);
         if let Some((
             show_axes,
             show_legend,
@@ -517,6 +934,7 @@ impl GuiApp {
             x_axis,
             y_axis,
             window_ms,
+            timebase_divisions,
             high_quality,
             export_svg,
         )) = self
@@ -537,25 +955,44 @@ impl GuiApp {
             state.x_axis_name = x_axis;
             state.y_axis_name = y_axis;
             state.window_ms = window_ms;
+            state.timebase_divisions = timebase_divisions.clamp(1, 200);
             state.high_quality = high_quality;
             state.export_svg = export_svg;
+            if live_count > 0 {
+                if state.series_names.len() < live_count {
+                    for i in state.series_names.len()..live_count {
+                        state
+                            .series_names
+                            .push(live_names.get(i).cloned().unwrap_or_else(|| {
+                                format!("Series {}", i + 1)
+                            }));
+                        state.series_scales.push(1.0);
+                        state.series_offsets.push(0.0);
+                        state.colors.push(match i % 8 {
+                            0 => egui::Color32::from_rgb(86, 156, 214),
+                            1 => egui::Color32::from_rgb(220, 122, 95),
+                            2 => egui::Color32::from_rgb(181, 206, 168),
+                            3 => egui::Color32::from_rgb(220, 220, 170),
+                            4 => egui::Color32::from_rgb(197, 134, 192),
+                            5 => egui::Color32::from_rgb(78, 201, 176),
+                            6 => egui::Color32::from_rgb(156, 220, 254),
+                            _ => egui::Color32::from_rgb(255, 206, 84),
+                        });
+                    }
+                } else if state.series_names.len() > live_count {
+                    state.series_names.truncate(live_count);
+                    state.series_scales.truncate(live_count);
+                    state.series_offsets.truncate(live_count);
+                    state.colors.truncate(live_count);
+                }
+                for (i, n) in live_names.into_iter().enumerate() {
+                    if i < state.series_names.len() {
+                        state.series_names[i] = n;
+                    }
+                }
+            }
             return state;
         }
-        let connected_plugin_names: Vec<String> = self
-            .workspace_manager
-            .workspace
-            .connections
-            .iter()
-            .filter(|conn| conn.to_plugin == plugin_id)
-            .filter_map(|conn| {
-                self.workspace_manager
-                    .workspace
-                    .plugins
-                    .iter()
-                    .find(|p| p.id == conn.from_plugin)
-                    .map(|p| self.plugin_display_name(p.id))
-            })
-            .collect();
         if let Some(plotter) = self.plotter_manager.plotters.get(&plugin_id) {
             if let Ok(plotter) = plotter.lock() {
                 state.show_axes = true;
@@ -568,7 +1005,7 @@ impl GuiApp {
                 state.high_quality = false;
                 state.series_names = (0..plotter.input_count)
                     .map(|i| {
-                        connected_plugin_names
+                        live_names
                             .get(i)
                             .cloned()
                             .unwrap_or_else(|| format!("Series {}", i + 1))
@@ -577,6 +1014,7 @@ impl GuiApp {
                 state.series_scales = vec![1.0; plotter.input_count];
                 state.series_offsets = vec![0.0; plotter.input_count];
                 state.window_ms = plotter.window_ms;
+                state.timebase_divisions = 10;
                 state.colors = (0..plotter.input_count)
                     .map(|i| match i % 8 {
                         0 => egui::Color32::from_rgb(86, 156, 214),
@@ -610,6 +1048,7 @@ impl GuiApp {
                 state.x_axis_name.clone(),
                 state.y_axis_name.clone(),
                 state.window_ms,
+                state.timebase_divisions.clamp(1, 200),
                 state.high_quality,
                 state.export_svg,
             ),
@@ -637,6 +1076,8 @@ impl GuiApp {
         let Some(plugin_id) = self.plotter_preview.target else {
             return;
         };
+        let seed = self.build_plotter_preview_state(plugin_id);
+        Self::sync_series_controls_from_seed(&mut self.plotter_preview, &seed);
 
         let mut save_requested = false;
 
@@ -662,14 +1103,11 @@ impl GuiApp {
                     ui.label("Y-axis:");
                     ui.text_edit_singleline(&mut self.plotter_preview.y_axis_name);
                 });
-                ui.horizontal(|ui| {
-                    ui.label("Window (ms):");
-                    ui.add(
-                        egui::DragValue::new(&mut self.plotter_preview.window_ms)
-                            .clamp_range(100.0..=600_000.0)
-                            .speed(100.0),
-                    );
-                });
+                Self::render_timebase_controls(
+                    ui,
+                    &mut self.plotter_preview.window_ms,
+                    &mut self.plotter_preview.timebase_divisions,
+                );
 
                 ui.separator();
                 ui.label("Series customization:");
@@ -691,25 +1129,13 @@ impl GuiApp {
                             ui.horizontal(|ui| {
                                 ui.label(format!("Series {}:", i + 1));
                                 ui.text_edit_singleline(&mut self.plotter_preview.series_names[i]);
-                                ui.menu_button("Scale", |ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.label("Amplitude");
-                                        ui.add(
-                                            egui::DragValue::new(
-                                                &mut self.plotter_preview.series_scales[i],
-                                            )
-                                            .speed(0.1),
-                                        );
-                                    });
-                                    ui.horizontal(|ui| {
-                                        ui.label("Offset");
-                                        ui.add(
-                                            egui::DragValue::new(
-                                                &mut self.plotter_preview.series_offsets[i],
-                                            )
-                                            .speed(0.1),
-                                        );
-                                    });
+                                ui.menu_button("Tune", |ui| {
+                                    ui.set_min_width(220.0);
+                                    Self::render_series_wheels(
+                                        ui,
+                                        &mut self.plotter_preview.series_scales[i],
+                                        &mut self.plotter_preview.series_offsets[i],
+                                    );
                                 });
                                 ui.color_edit_button_srgba(&mut self.plotter_preview.colors[i]);
                             });
@@ -808,8 +1234,8 @@ impl GuiApp {
                 });
             });
 
-        // Save settings when dialog closes
-        if save_requested || !self.plotter_preview.open {
+        // Save settings only on explicit action
+        if save_requested {
             if let Some(plugin_id) = self.plotter_preview.target {
                 self.plotter_manager.plotter_preview_settings.insert(
                     plugin_id,
@@ -826,6 +1252,7 @@ impl GuiApp {
                         self.plotter_preview.x_axis_name.clone(),
                         self.plotter_preview.y_axis_name.clone(),
                         self.plotter_preview.window_ms,
+                        self.plotter_preview.timebase_divisions.clamp(1, 200),
                         self.plotter_preview.high_quality,
                         self.plotter_preview.export_svg,
                     ),

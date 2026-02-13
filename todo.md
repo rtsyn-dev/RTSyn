@@ -72,6 +72,7 @@
 - [ ] Delete three dots and make title white on loading/building plugin
 - [ ] Checkbox on plugin config "Show on UML diagram"
 - [ ] Plotter on remove connection of i_n-1, glitches the plot (appears i_0 with no input)
+- [ ] When duplicating a plugin, it should load with the state of the plugin when added (it loads starting when it should load paused due duplicated plugin have loads started as false)
 - [-] Move plotter scale configuration to settings and better temporal scaling.
 - [ ] On click on connection, highlight it, put it over any window/plugin BUT the plugins that is connected (from them it shall remain background). When click is done elsewhere, put it on background of the rest of windows/cards (as normal). On hover when is over plugins and windows it MUST show the hover details.
 - [ ] "State view" mode on new "View" tab, where the cards are changed by circles (that doesnt show buttons, variables or anithing besides the id and name as in the cards) BUT preserve the cross to close, and the right click card menu (with add connection, plugin config, etc.)
@@ -87,3 +88,5 @@
 - [ ] Alert user that a folder will be created with the logic of the plugin inside to prevent that the user creates a folder for the plugin. Also close create view on creation.
 - [ ] Runtime new buttons: start all and stop all.
 - [ ] When clicking reinstall/uninstall to fast the plugin install/uninstall window gets leaked into notification view
+- [ ] Change dt in hindmarsh rose plugin
+- [ ] Do a poc to see if its better to extract all the plotter outside the plugin view and manage the connections in window

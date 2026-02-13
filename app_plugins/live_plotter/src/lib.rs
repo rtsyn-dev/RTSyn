@@ -19,8 +19,6 @@ impl LivePlotterPlugin {
                 default_vars: vec![
                     ("input_count".to_string(), Value::from(0)),
                     ("refresh_hz".to_string(), Value::from(60.0)),
-                    ("timebase_ms_div".to_string(), Value::from(100.0)),
-                    ("timebase_divisions".to_string(), Value::from(10)),
                 ],
             },
             inputs: Vec::new(),
@@ -86,21 +84,6 @@ impl Plugin for LivePlotterPlugin {
                         .max_f(120.0)
                         .default_value(Value::from(60.0))
                         .hint("Plot refresh rate"),
-                )
-                .field(
-                    ConfigField::float("timebase_ms_div", "Timebase (ms/div)")
-                        .min_f(0.1)
-                        .max_f(10000.0)
-                        .step_f(1.0)
-                        .default_value(Value::from(100.0))
-                        .hint("Oscilloscope horizontal scale"),
-                )
-                .field(
-                    ConfigField::integer("timebase_divisions", "Horizontal divisions")
-                        .min(1)
-                        .max(40)
-                        .default_value(Value::from(10))
-                        .hint("Visible horizontal divisions"),
                 ),
         )
     }

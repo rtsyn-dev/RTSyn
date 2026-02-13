@@ -213,6 +213,7 @@ impl GuiApp {
                             x_axis,
                             y_axis,
                             window_ms,
+                            _timebase_divisions,
                             high_quality,
                             export_svg,
                         )) = settings
@@ -353,7 +354,7 @@ impl GuiApp {
             .plotter_manager
             .plotter_preview_settings
             .get(&plugin_id)
-            .and_then(|(_, _, _, _, _, _, _, title, _, _, _, _, _, _)| {
+            .and_then(|(_, _, _, _, _, _, _, title, _, _, _, _, _, _, _)| {
                 if title.trim().is_empty() {
                     None
                 } else {
@@ -386,7 +387,7 @@ impl GuiApp {
             .plotter_manager
             .plotter_preview_settings
             .get(&plugin_id)
-            .map(|(_, _, _, _, _, _, _, _, _, _, _, _, _, svg)| *svg)
+            .map(|(_, _, _, _, _, _, _, _, _, _, _, _, _, _, svg)| *svg)
             .unwrap_or(false);
         let extension = if is_svg { "svg" } else { "png" };
         let filter_name = if is_svg { "SVG" } else { "PNG" };
