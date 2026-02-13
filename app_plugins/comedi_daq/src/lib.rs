@@ -504,9 +504,13 @@ impl Plugin for ComediDaqPlugin {
         PluginBehavior {
             supports_start_stop: true,
             supports_restart: true,
+            supports_apply: false,
             extendable_inputs: ExtendableInputs::None,
             loads_started: false,
             external_window: false,
+            starts_expanded: true,
+            start_requires_connected_inputs: Vec::new(),
+            start_requires_connected_outputs: Vec::new(),
         }
     }
 

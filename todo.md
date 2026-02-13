@@ -2,6 +2,7 @@
 
 - [replicate] When period is 100 us and window 10\*3500 plot isn't complete and the more I increment the window the less is shown (max points draw related, I think)
 
+- [ ] Replace the rtsyn-plugin in Cargo.toml template when release
 - [ ] Python library cpython
 - [ ] Python plugin development
 - [ ] Create a plugin that can help creating plugins
@@ -71,7 +72,7 @@
 - [ ] Delete three dots and make title white on loading/building plugin
 - [ ] Checkbox on plugin config "Show on UML diagram"
 - [ ] Plotter on remove connection of i_n-1, glitches the plot (appears i_0 with no input)
-- [-] Move plotter scale configuration to settings
+- [-] Move plotter scale configuration to settings and better temporal scaling.
 - [ ] On click on connection, highlight it, put it over any window/plugin BUT the plugins that is connected (from them it shall remain background). When click is done elsewhere, put it on background of the rest of windows/cards (as normal). On hover when is over plugins and windows it MUST show the hover details.
 - [ ] "State view" mode on new "View" tab, where the cards are changed by circles (that doesnt show buttons, variables or anithing besides the id and name as in the cards) BUT preserve the cross to close, and the right click card menu (with add connection, plugin config, etc.)
 - [ ] Add clear workspace to return to default
@@ -84,3 +85,4 @@
 - [ ] One loading workspace, dont keep start and stop and obey plugin loading attribute
 - [ ] Allow multifolder selection on plugin install
 - [ ] Alert user that a folder will be created with the logic of the plugin inside to prevent that the user creates a folder for the plugin. Also close create view on creation.
+- [ ] Runtime new buttons: start all and stop all.

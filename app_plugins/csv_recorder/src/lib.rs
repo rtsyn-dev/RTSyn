@@ -218,11 +218,15 @@ impl Plugin for CsvRecorderedPlugin {
         PluginBehavior {
             supports_start_stop: true,
             supports_restart: false,
+            supports_apply: false,
             extendable_inputs: ExtendableInputs::Auto {
                 pattern: "in_{}".to_string(),
             },
             loads_started: false,
             external_window: false,
+            starts_expanded: true,
+            start_requires_connected_inputs: vec!["in_0".to_string()],
+            start_requires_connected_outputs: Vec::new(),
         }
     }
 

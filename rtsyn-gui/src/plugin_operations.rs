@@ -252,7 +252,15 @@ impl GuiApp {
             .plugin_manager
             .installed_plugins
             .iter()
-            .filter(|plugin| plugin.removable && !plugin.path.as_os_str().is_empty())
+            .filter(|plugin| {
+                if plugin.path.as_os_str().is_empty() {
+                    return false;
+                }
+                plugin.metadata_inputs.is_empty()
+                    || plugin.metadata_outputs.is_empty()
+                    || plugin.metadata_variables.is_empty()
+                    || plugin.display_schema.is_none()
+            })
             .map(|plugin| (plugin.manifest.kind.clone(), plugin.path.clone()))
             .collect();
         if targets.is_empty() {

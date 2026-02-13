@@ -165,6 +165,7 @@ enum WindowFocus {
 struct PluginFieldDraft {
     name: String,
     type_name: String,
+    default_value: String,
 }
 
 impl Default for PluginFieldDraft {
@@ -172,6 +173,7 @@ impl Default for PluginFieldDraft {
         Self {
             name: String::new(),
             type_name: "f64".to_string(),
+            default_value: "0.0".to_string(),
         }
     }
 }
@@ -184,7 +186,11 @@ struct NewPluginDraft {
     autostart: bool,
     supports_start_stop: bool,
     supports_restart: bool,
+    supports_apply: bool,
     external_window: bool,
+    starts_expanded: bool,
+    required_input_ports_csv: String,
+    required_output_ports_csv: String,
     variables: Vec<PluginFieldDraft>,
     inputs: Vec<PluginFieldDraft>,
     outputs: Vec<PluginFieldDraft>,
@@ -200,7 +206,11 @@ impl Default for NewPluginDraft {
             autostart: false,
             supports_start_stop: true,
             supports_restart: true,
+            supports_apply: false,
             external_window: false,
+            starts_expanded: true,
+            required_input_ports_csv: String::new(),
+            required_output_ports_csv: String::new(),
             variables: Vec::new(),
             inputs: Vec::new(),
             outputs: Vec::new(),

@@ -5,7 +5,9 @@ use crate::{
     has_rt_capabilities, spawn_file_dialog_thread, zenity_file_dialog, BuildAction, LivePlotter,
     PluginFieldDraft,
 };
-use std::fmt::Write as _;
+use rtsyn_cli::plugin_creator::{
+    create_plugin, CreatorBehavior, PluginCreateRequest, PluginKindType, PluginLanguage,
+};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
@@ -38,6 +40,15 @@ fn kv_row_wrapped(
 
 impl GuiApp {
     const NEW_PLUGIN_TYPES: [&'static str; 6] = ["f64", "f32", "i64", "i32", "bool", "string"];
+
+    fn plugin_creator_default_by_type(ty: &str) -> &'static str {
+        match ty.trim().to_ascii_lowercase().as_str() {
+            "bool" => "false",
+            "i64" | "i32" => "0",
+            "string" | "file" | "path" => "",
+            _ => "0.0",
+        }
+    }
 
     fn open_install_dialog(&mut self) {
         if self.file_dialogs.install_dialog_rx.is_some() {
@@ -118,261 +129,6 @@ impl GuiApp {
             .collect()
     }
 
-    fn plugin_creator_slug(input: &str) -> String {
-        let mut out = String::new();
-        let mut prev_dash = false;
-        for ch in input.chars().flat_map(|c| c.to_lowercase()) {
-            let keep = ch.is_ascii_alphanumeric() || ch == '_';
-            if keep {
-                out.push(ch);
-                prev_dash = false;
-            } else if !prev_dash {
-                out.push('_');
-                prev_dash = true;
-            }
-        }
-        let out = out.trim_matches('_').to_string();
-        if out.is_empty() {
-            "generated_plugin".to_string()
-        } else {
-            out
-        }
-    }
-
-    fn plugin_creator_unique_dir(parent: &Path, base: &str) -> PathBuf {
-        let mut candidate = parent.join(base);
-        if !candidate.exists() {
-            return candidate;
-        }
-        let mut idx = 1usize;
-        loop {
-            candidate = parent.join(format!("{base}_{idx}"));
-            if !candidate.exists() {
-                return candidate;
-            }
-            idx += 1;
-        }
-    }
-
-    fn plugin_creator_rust_string_array_literal(items: &[String]) -> String {
-        let mut out = String::from("&[");
-        for (idx, item) in items.iter().enumerate() {
-            if idx > 0 {
-                out.push_str(", ");
-            }
-            out.push_str(&format!("{item:?}"));
-        }
-        out.push(']');
-        out
-    }
-
-    fn plugin_creator_default_value_json(ty: &str) -> Value {
-        let normalized = ty.trim().to_ascii_lowercase();
-        match normalized.as_str() {
-            "bool" | "boolean" => Value::Bool(false),
-            "string" | "str" | "&str" => Value::String(String::new()),
-            _ => Value::from(0.0),
-        }
-    }
-
-    fn plugin_creator_rust_ident(input: &str) -> String {
-        let mut ident = Self::plugin_creator_slug(input);
-        if ident.is_empty() {
-            ident = "field".to_string();
-        }
-        if ident.chars().next().is_some_and(|c| c.is_ascii_digit()) {
-            ident = format!("f_{ident}");
-        }
-        match ident.as_str() {
-            "type" | "match" | "fn" | "struct" | "impl" | "let" | "self" | "crate" | "mod"
-            | "use" | "pub" | "const" | "static" | "enum" | "trait" | "where" | "as" | "in"
-            | "for" | "loop" | "while" | "if" | "else" | "move" | "return" => {
-                format!("{ident}_field")
-            }
-            _ => ident,
-        }
-    }
-
-    fn plugin_creator_rust_type_name(ty: &str) -> &'static str {
-        match ty.trim().to_ascii_lowercase().as_str() {
-            "f32" => "f32",
-            "i64" => "i64",
-            "i32" => "i32",
-            "bool" | "boolean" => "bool",
-            "string" | "str" | "&str" => "String",
-            _ => "f64",
-        }
-    }
-
-    fn plugin_creator_rust_default_expr(ty: &str) -> &'static str {
-        match Self::plugin_creator_rust_type_name(ty) {
-            "f32" => "0.0_f32",
-            "i64" => "0_i64",
-            "i32" => "0_i32",
-            "bool" => "false",
-            "String" => "String::new()",
-            _ => "0.0_f64",
-        }
-    }
-
-    fn plugin_creator_rust_var_assign_expr(value_ident: &str, ty: &str) -> String {
-        match Self::plugin_creator_rust_type_name(ty) {
-            "f32" => format!("{value_ident}.as_f64().map(|v| v as f32)"),
-            "i64" => format!("{value_ident}.as_i64()"),
-            "i32" => format!("{value_ident}.as_i64().map(|v| v as i32)"),
-            "bool" => format!("{value_ident}.as_bool()"),
-            "String" => format!("{value_ident}.as_str().map(|v| v.to_string())"),
-            _ => format!("{value_ident}.as_f64()"),
-        }
-    }
-
-    fn plugin_creator_rust_to_f64_expr(field_expr: &str, ty: &str) -> String {
-        match Self::plugin_creator_rust_type_name(ty) {
-            "f32" => format!("({field_expr}) as f64"),
-            "i64" => format!("({field_expr}) as f64"),
-            "i32" => format!("({field_expr}) as f64"),
-            "bool" => format!("if {field_expr} {{ 1.0 }} else {{ 0.0 }}"),
-            "String" => "0.0".to_string(),
-            _ => field_expr.to_string(),
-        }
-    }
-
-    fn generated_plugin_h_header() -> &'static str {
-        "#ifndef RTSYN_GENERATED_PLUGIN_H\n#define RTSYN_GENERATED_PLUGIN_H\n\n#include <stddef.h>\n\n#ifdef __cplusplus\nextern \"C\" {\n#endif\n\ntypedef struct PluginState {\n    double first_input;\n    double first_output;\n} PluginState;\n\nvoid plugin_init(PluginState* s);\nvoid plugin_free(PluginState* s);\nvoid plugin_set_config(PluginState* s, const char* key, size_t len, double value);\nvoid plugin_set_input(PluginState* s, const char* name, size_t len, double value);\nvoid plugin_process(PluginState* s, double period_seconds);\ndouble plugin_get_output(const PluginState* s, const char* name, size_t len);\n\n#ifdef __cplusplus\n}\n#endif\n\n#endif\n"
-    }
-
-    fn generated_plugin_c_source(use_cpp: bool) -> &'static str {
-        if use_cpp {
-            "#include \"plugin.h\"\n#include <cstring>\n\nvoid plugin_init(PluginState* s) {\n    if (!s) return;\n    s->first_input = 0.0;\n    s->first_output = 0.0;\n}\n\nvoid plugin_free(PluginState* s) {\n    (void)s;\n}\n\nvoid plugin_set_config(PluginState* s, const char* key, size_t len, double value) {\n    (void)s;\n    (void)key;\n    (void)len;\n    (void)value;\n}\n\nvoid plugin_set_input(PluginState* s, const char* name, size_t len, double value) {\n    (void)name;\n    (void)len;\n    if (!s) return;\n    s->first_input = value;\n}\n\nvoid plugin_process(PluginState* s, double period_seconds) {\n    (void)period_seconds;\n    if (!s) return;\n    s->first_output = s->first_input;\n}\n\ndouble plugin_get_output(const PluginState* s, const char* name, size_t len) {\n    (void)name;\n    (void)len;\n    if (!s) return 0.0;\n    return s->first_output;\n}\n"
-        } else {
-            "#include \"plugin.h\"\n#include <string.h>\n\nvoid plugin_init(PluginState* s) {\n    if (!s) return;\n    s->first_input = 0.0;\n    s->first_output = 0.0;\n}\n\nvoid plugin_free(PluginState* s) {\n    (void)s;\n}\n\nvoid plugin_set_config(PluginState* s, const char* key, size_t len, double value) {\n    (void)s;\n    (void)key;\n    (void)len;\n    (void)value;\n}\n\nvoid plugin_set_input(PluginState* s, const char* name, size_t len, double value) {\n    (void)name;\n    (void)len;\n    if (!s) return;\n    s->first_input = value;\n}\n\nvoid plugin_process(PluginState* s, double period_seconds) {\n    (void)period_seconds;\n    if (!s) return;\n    s->first_output = s->first_input;\n}\n\ndouble plugin_get_output(const PluginState* s, const char* name, size_t len) {\n    (void)name;\n    (void)len;\n    if (!s) return 0.0;\n    return s->first_output;\n}\n"
-        }
-    }
-
-    fn generated_c_wrapper_lib_rs(
-        title: &str,
-        inputs_literal: &str,
-        outputs_literal: &str,
-        internals_literal: &str,
-        default_vars_json: &str,
-        behavior_json: &str,
-    ) -> String {
-        let imports = "use rtsyn_plugin::{PluginApi, PluginString};\nuse serde_json::Value;\nuse std::collections::HashMap;\nuse std::ffi::c_void;";
-        let constants = format!(
-            "const INPUTS: &[&str] = {inputs_literal};\nconst OUTPUTS: &[&str] = {outputs_literal};\nconst INTERNAL_VARIABLES: &[&str] = {internals_literal};\nconst DEFAULT_VARS_JSON: &str = {default_vars_json:?};\nconst BEHAVIOR_JSON: &str = {behavior_json:?};"
-        );
-        let ffi_types = "#[repr(C)]\nstruct PluginState {\n    first_input: f64,\n    first_output: f64,\n}\n\nextern \"C\" {\n    fn plugin_init(s: *mut PluginState);\n    fn plugin_free(s: *mut PluginState);\n    fn plugin_set_config(s: *mut PluginState, key: *const u8, len: usize, value: f64);\n    fn plugin_set_input(s: *mut PluginState, name: *const u8, len: usize, value: f64);\n    fn plugin_process(s: *mut PluginState, period_seconds: f64);\n    fn plugin_get_output(s: *const PluginState, name: *const u8, len: usize) -> f64;\n}\n\nstruct Wrapper {\n    state: PluginState,\n    vars: HashMap<String, Value>,\n}";
-        let lifecycle = "extern \"C\" fn create(_id: u64) -> *mut c_void {\n    let mut wrapper = Box::new(Wrapper {\n        state: PluginState { first_input: 0.0, first_output: 0.0 },\n        vars: HashMap::new(),\n    });\n    unsafe { plugin_init(&mut wrapper.state) };\n    Box::into_raw(wrapper) as *mut c_void\n}\n\nextern \"C\" fn destroy(handle: *mut c_void) {\n    if handle.is_null() { return; }\n    unsafe {\n        let mut wrapper = Box::from_raw(handle as *mut Wrapper);\n        plugin_free(&mut wrapper.state);\n    }\n}";
-        let metadata = format!(
-            "extern \"C\" fn meta_json(_handle: *mut c_void) -> PluginString {{\n    let default_vars: Vec<(String, Value)> = serde_json::from_str(DEFAULT_VARS_JSON).unwrap_or_default();\n    PluginString::from_string(serde_json::json!({{\"name\": {title:?}, \"default_vars\": default_vars}}).to_string())\n}}\n\nextern \"C\" fn inputs_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(serde_json::to_string(INPUTS).unwrap_or_default())\n}}\n\nextern \"C\" fn outputs_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(serde_json::to_string(OUTPUTS).unwrap_or_default())\n}}\n\nextern \"C\" fn behavior_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(BEHAVIOR_JSON.to_string())\n}}\n\nextern \"C\" fn display_schema_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(serde_json::json!({{\"outputs\": OUTPUTS, \"inputs\": INPUTS, \"variables\": INTERNAL_VARIABLES}}).to_string())\n}}"
-        );
-        let runtime = "extern \"C\" fn set_config_json(handle: *mut c_void, data: *const u8, len: usize) {\n    if handle.is_null() || data.is_null() { return; }\n    let wrapper = unsafe { &mut *(handle as *mut Wrapper) };\n    let bytes = unsafe { std::slice::from_raw_parts(data, len) };\n    if let Ok(Value::Object(map)) = serde_json::from_slice::<Value>(bytes) {\n        for (k, v) in map {\n            if let Some(num) = v.as_f64() {\n                unsafe { plugin_set_config(&mut wrapper.state, k.as_bytes().as_ptr(), k.len(), num) };\n            }\n            wrapper.vars.insert(k, v);\n        }\n    }\n}\n\nextern \"C\" fn set_input(handle: *mut c_void, name: *const u8, len: usize, value: f64) {\n    if handle.is_null() || name.is_null() { return; }\n    let wrapper = unsafe { &mut *(handle as *mut Wrapper) };\n    unsafe { plugin_set_input(&mut wrapper.state, name, len, value) };\n}\n\nextern \"C\" fn process(handle: *mut c_void, _tick: u64, period_seconds: f64) {\n    if handle.is_null() { return; }\n    let wrapper = unsafe { &mut *(handle as *mut Wrapper) };\n    unsafe { plugin_process(&mut wrapper.state, period_seconds) };\n}\n\nextern \"C\" fn get_output(handle: *mut c_void, name: *const u8, len: usize) -> f64 {\n    if handle.is_null() || name.is_null() { return 0.0; }\n    let wrapper = unsafe { &*(handle as *mut Wrapper) };\n    unsafe { plugin_get_output(&wrapper.state, name, len) }\n}";
-        let api = "#[no_mangle]\npub extern \"C\" fn rtsyn_plugin_api() -> *const PluginApi {\n    static API: PluginApi = PluginApi {\n        create,\n        destroy,\n        meta_json,\n        inputs_json,\n        outputs_json,\n        behavior_json: Some(behavior_json),\n        ui_schema_json: None,\n        display_schema_json: Some(display_schema_json),\n        set_config_json,\n        set_input,\n        process,\n        get_output,\n    };\n    &API\n}";
-
-        [imports, &constants, ffi_types, lifecycle, &metadata, runtime, api].join("\n\n")
-    }
-
-    fn generated_rust_plugin_lib_rs(
-        title: &str,
-        inputs_literal: &str,
-        outputs_literal: &str,
-        internals_literal: &str,
-        default_vars_json: &str,
-        behavior_json: &str,
-        vars: &[(String, String)],
-        inputs: &[String],
-        outputs: &[String],
-        internals: &[String],
-    ) -> String {
-        let imports = "use rtsyn_plugin::{PluginApi, PluginString};\nuse serde_json::Value;\nuse std::ffi::c_void;";
-        let constants = format!(
-            "const INPUTS: &[&str] = {inputs_literal};\nconst OUTPUTS: &[&str] = {outputs_literal};\nconst INTERNAL_VARIABLES: &[&str] = {internals_literal};\nconst DEFAULT_VARS_JSON: &str = {default_vars_json:?};\nconst BEHAVIOR_JSON: &str = {behavior_json:?};"
-        );
-
-        let mut struct_fields = String::new();
-        let mut ctor_fields = String::new();
-        let mut var_set_arms = String::new();
-        let mut input_set_arms = String::new();
-        let mut output_set_lines = String::new();
-        let mut output_get_arms = String::new();
-        let mut internal_get_arms = String::new();
-
-        let first_input_ident = inputs
-            .first()
-            .map(|name| format!("input_{}", Self::plugin_creator_rust_ident(name)))
-            .unwrap_or_else(|| "input_in".to_string());
-
-        for (var_name, var_ty) in vars {
-            let field = format!("var_{}", Self::plugin_creator_rust_ident(var_name));
-            let type_name = Self::plugin_creator_rust_type_name(var_ty);
-            let default_expr = Self::plugin_creator_rust_default_expr(var_ty);
-            let assign_expr = Self::plugin_creator_rust_var_assign_expr("value", var_ty);
-            let value_expr = Self::plugin_creator_rust_to_f64_expr(&format!("plugin.{field}"), var_ty);
-
-            let _ = writeln!(&mut struct_fields, "    {}: {},", field, type_name);
-            let _ = writeln!(&mut ctor_fields, "            {}: {},", field, default_expr);
-            let _ = writeln!(
-                &mut var_set_arms,
-                "            {var_name:?} => {{ if let Some(v) = {assign_expr} {{ plugin.{field} = v; }} }},"
-            );
-
-            if internals.iter().any(|iv| iv == var_name) {
-                let _ = writeln!(
-                    &mut internal_get_arms,
-                    "            {var_name:?} => return {value_expr},"
-                );
-            }
-        }
-
-        for input_name in inputs {
-            let field = format!("input_{}", Self::plugin_creator_rust_ident(input_name));
-            let _ = writeln!(&mut struct_fields, "    {}: f64,", field);
-            let _ = writeln!(&mut ctor_fields, "            {}: 0.0,", field);
-            let _ = writeln!(
-                &mut input_set_arms,
-                "        {input_name:?} => plugin.{field} = value,"
-            );
-        }
-
-        for output_name in outputs {
-            let field = format!("output_{}", Self::plugin_creator_rust_ident(output_name));
-            let _ = writeln!(&mut struct_fields, "    {}: f64,", field);
-            let _ = writeln!(&mut ctor_fields, "            {}: 0.0,", field);
-            let _ = writeln!(
-                &mut output_set_lines,
-                "    plugin.{field} = first_input;"
-            );
-            let _ = writeln!(
-                &mut output_get_arms,
-                "        {output_name:?} => plugin.{field},"
-            );
-        }
-
-        if output_set_lines.trim().is_empty() {
-            output_set_lines.push_str("    let _ = first_input;\n");
-        }
-
-        if var_set_arms.trim().is_empty() {
-            var_set_arms.push_str("            _ => {}\n");
-        } else {
-            var_set_arms.push_str("            _ => {}\n");
-        }
-
-        let plugin_struct = format!(
-            "struct GeneratedPlugin {{\n{struct_fields}}}\n\nimpl GeneratedPlugin {{\n    fn new() -> Self {{\n        Self {{\n{ctor_fields}        }}\n    }}\n}}"
-        );
-        let lifecycle = "extern \"C\" fn create(_id: u64) -> *mut c_void {\n    Box::into_raw(Box::new(GeneratedPlugin::new())) as *mut c_void\n}\n\nextern \"C\" fn destroy(handle: *mut c_void) {\n    if handle.is_null() { return; }\n    unsafe { drop(Box::from_raw(handle as *mut GeneratedPlugin)); }\n}";
-        let metadata = format!(
-            "extern \"C\" fn meta_json(_handle: *mut c_void) -> PluginString {{\n    let default_vars: Vec<(String, Value)> = serde_json::from_str(DEFAULT_VARS_JSON).unwrap_or_default();\n    PluginString::from_string(serde_json::json!({{\"name\": {title:?}, \"default_vars\": default_vars}}).to_string())\n}}\n\nextern \"C\" fn inputs_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(serde_json::to_string(INPUTS).unwrap_or_default())\n}}\n\nextern \"C\" fn outputs_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(serde_json::to_string(OUTPUTS).unwrap_or_default())\n}}\n\nextern \"C\" fn behavior_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(BEHAVIOR_JSON.to_string())\n}}\n\nextern \"C\" fn display_schema_json(_handle: *mut c_void) -> PluginString {{\n    PluginString::from_string(serde_json::json!({{\"outputs\": OUTPUTS, \"inputs\": INPUTS, \"variables\": INTERNAL_VARIABLES}}).to_string())\n}}"
-        );
-        let runtime = format!(
-            "extern \"C\" fn set_config_json(handle: *mut c_void, data: *const u8, len: usize) {{\n    if handle.is_null() || data.is_null() {{ return; }}\n    let plugin = unsafe {{ &mut *(handle as *mut GeneratedPlugin) }};\n    let bytes = unsafe {{ std::slice::from_raw_parts(data, len) }};\n    if let Ok(Value::Object(map)) = serde_json::from_slice::<Value>(bytes) {{\n        for (k, value) in map {{\n            match k.as_str() {{\n{var_set_arms}            }}\n        }}\n    }}\n}}\n\nextern \"C\" fn set_input(handle: *mut c_void, name: *const u8, len: usize, value: f64) {{\n    if handle.is_null() || name.is_null() {{ return; }}\n    let plugin = unsafe {{ &mut *(handle as *mut GeneratedPlugin) }};\n    let key = unsafe {{ std::str::from_utf8_unchecked(std::slice::from_raw_parts(name, len)) }};\n    match key {{\n{input_set_arms}        _ => {{}}\n    }}\n}}\n\nextern \"C\" fn process(handle: *mut c_void, _tick: u64, _period_seconds: f64) {{\n    if handle.is_null() {{ return; }}\n    let plugin = unsafe {{ &mut *(handle as *mut GeneratedPlugin) }};\n    let first_input = plugin.{first_input_ident};\n{output_set_lines}}}\n\nextern \"C\" fn get_output(handle: *mut c_void, name: *const u8, len: usize) -> f64 {{\n    if handle.is_null() || name.is_null() {{ return 0.0; }}\n    let plugin = unsafe {{ &mut *(handle as *mut GeneratedPlugin) }};\n    let key = unsafe {{ std::str::from_utf8_unchecked(std::slice::from_raw_parts(name, len)) }};\n    match key {{\n{output_get_arms}{internal_get_arms}        _ => 0.0,\n    }}\n}}"
-        );
-        let api = "#[no_mangle]\npub extern \"C\" fn rtsyn_plugin_api() -> *const PluginApi {\n    static API: PluginApi = PluginApi {\n        create,\n        destroy,\n        meta_json,\n        inputs_json,\n        outputs_json,\n        behavior_json: Some(behavior_json),\n        ui_schema_json: None,\n        display_schema_json: Some(display_schema_json),\n        set_config_json,\n        set_input,\n        process,\n        get_output,\n    };\n    &API\n}";
-
-        [imports, &constants, &plugin_struct, lifecycle, &metadata, &runtime, api].join("\n\n")
-    }
-
     pub(crate) fn create_plugin_from_draft(&self, parent: &Path) -> Result<PathBuf, String> {
         let name = self.new_plugin_draft.name.trim();
         if name.is_empty() {
@@ -390,7 +146,11 @@ impl GuiApp {
             self.new_plugin_draft.autostart,
             self.new_plugin_draft.supports_start_stop,
             self.new_plugin_draft.supports_restart,
+            self.new_plugin_draft.supports_apply,
             self.new_plugin_draft.external_window,
+            self.new_plugin_draft.starts_expanded,
+            &self.new_plugin_draft.required_input_ports_csv,
+            &self.new_plugin_draft.required_output_ports_csv,
             &vars_spec,
             &inputs_spec,
             &outputs_spec,
@@ -407,31 +167,40 @@ impl GuiApp {
         autostart: bool,
         supports_start_stop: bool,
         supports_restart: bool,
+        supports_apply: bool,
         external_window: bool,
+        starts_expanded: bool,
+        required_input_ports_csv: &str,
+        required_output_ports_csv: &str,
         vars_spec: &str,
         inputs_spec: &str,
         outputs_spec: &str,
         internals_spec: &str,
         parent: &Path,
     ) -> Result<PathBuf, String> {
-        let title = name.trim().to_string();
+        let title = name.trim();
         if title.is_empty() {
             return Err("Plugin name is required".to_string());
         }
-        let kind_base = Self::plugin_creator_slug(&title);
-        let kind = kind_base;
-        let folder_base = match language {
-            "c" => format!("{}_c", Self::plugin_creator_slug(&title)),
-            "cpp" => format!("{}_cpp", Self::plugin_creator_slug(&title)),
-            _ => format!("{}_rust", Self::plugin_creator_slug(&title)),
-        };
-        let package_name = folder_base.clone();
-        let plugin_dir = Self::plugin_creator_unique_dir(parent, &folder_base);
-        let src_dir = plugin_dir.join("src");
-        fs::create_dir_all(&src_dir)
-            .map_err(|e| format!("Failed to create {}: {e}", src_dir.display()))?;
+        let parsed_language = PluginLanguage::parse(language)?;
 
         let vars = Self::plugin_creator_parse_spec(vars_spec);
+        let variables = vars
+            .iter()
+            .map(|(name, ty)| {
+                let default = self
+                    .new_plugin_draft
+                    .variables
+                    .iter()
+                    .find(|v| v.name.trim() == name)
+                    .map(|v| v.default_value.as_str())
+                    .unwrap_or_else(|| Self::plugin_creator_default_by_type(ty));
+                rtsyn_cli::plugin_creator::parse_variable_line(&format!(
+                    "{name}:{ty}={default}"
+                ))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
         let inputs: Vec<String> = Self::plugin_creator_parse_spec(inputs_spec)
             .into_iter()
             .map(|(name, _)| name)
@@ -445,126 +214,46 @@ impl GuiApp {
             .map(|(name, _)| name)
             .collect();
 
-        let inputs = if inputs.is_empty() {
-            vec!["in".to_string()]
-        } else {
-            inputs
+        let req = PluginCreateRequest {
+            base_dir: parent.to_path_buf(),
+            name: title.to_string(),
+            description: if main.trim().is_empty() {
+                "Generated by plugin_creator".to_string()
+            } else {
+                main.lines()
+                    .next()
+                    .unwrap_or("Generated by plugin_creator")
+                    .to_string()
+            },
+            language: parsed_language,
+            plugin_type: PluginKindType::Standard,
+            behavior: CreatorBehavior {
+                autostart,
+                supports_start_stop,
+                supports_restart,
+                supports_apply,
+                external_window,
+                starts_expanded,
+                required_input_ports: required_input_ports_csv
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .collect(),
+                required_output_ports: required_output_ports_csv
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .collect(),
+            },
+            inputs,
+            outputs,
+            internal_variables: internals,
+            variables,
         };
-        let outputs = if outputs.is_empty() {
-            vec!["out".to_string()]
-        } else {
-            outputs
-        };
 
-        let inputs_literal = Self::plugin_creator_rust_string_array_literal(&inputs);
-        let outputs_literal = Self::plugin_creator_rust_string_array_literal(&outputs);
-        let internals_literal = Self::plugin_creator_rust_string_array_literal(&internals);
-
-        let default_vars_pairs: Vec<(String, Value)> = vars
-            .iter()
-            .map(|(name, ty)| (name.clone(), Self::plugin_creator_default_value_json(ty)))
-            .collect();
-        let default_vars_json =
-            serde_json::to_string(&default_vars_pairs).unwrap_or_else(|_| "[]".to_string());
-
-        let description = if main.trim().is_empty() {
-            "Generated by plugin_creator".to_string()
-        } else {
-            main.lines()
-                .next()
-                .unwrap_or("Generated by plugin_creator")
-                .to_string()
-        };
-        let library_name = format!("lib{package_name}.so");
-        let plugin_toml = format!(
-            "name = {title:?}\nkind = {kind:?}\nversion = \"0.1.0\"\ndescription = {description:?}\nlibrary = {library_name:?}\n"
-        );
-        fs::write(plugin_dir.join("plugin.toml"), plugin_toml)
-            .map_err(|e| format!("Failed to write plugin.toml: {e}"))?;
-
-        let behavior_json = serde_json::json!({
-            "supports_start_stop": supports_start_stop,
-            "supports_restart": supports_restart,
-            "extendable_inputs": { "type": "none" },
-            "loads_started": autostart,
-            "external_window": external_window
-        })
-        .to_string();
-
-        let rtsyn_plugin_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../rtsyn-plugin")
-            .canonicalize()
-            .unwrap_or_else(|_| {
-                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../rtsyn-plugin")
-            })
-            .to_string_lossy()
-            .to_string();
-        match language {
-            "c" | "cpp" => {
-                let use_cpp = language == "cpp";
-                let source_ext = if use_cpp { "cpp" } else { "c" };
-                let cargo_toml = format!(
-                    "[package]\nname = {package_name:?}\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\ncrate-type = [\"cdylib\"]\n\n[dependencies]\nrtsyn_plugin = {{ path = {rtsyn_plugin_path:?} }}\nserde_json = \"1\"\n\n[build-dependencies]\ncc = \"1\"\n"
-                );
-                fs::write(plugin_dir.join("Cargo.toml"), cargo_toml)
-                    .map_err(|e| format!("Failed to write Cargo.toml: {e}"))?;
-
-                let build_rs = if use_cpp {
-                    format!(
-                        "fn main() {{\n    cc::Build::new().cpp(true).flag_if_supported(\"-std=c++17\").file(\"src/plugin.{source_ext}\").compile({kind:?});\n}}\n"
-                    )
-                } else {
-                    format!(
-                        "fn main() {{\n    cc::Build::new().file(\"src/plugin.{source_ext}\").compile({kind:?});\n}}\n"
-                    )
-                };
-                fs::write(plugin_dir.join("build.rs"), build_rs)
-                    .map_err(|e| format!("Failed to write build.rs: {e}"))?;
-
-                let header = Self::generated_plugin_h_header();
-                fs::write(src_dir.join("plugin.h"), header)
-                    .map_err(|e| format!("Failed to write src/plugin.h: {e}"))?;
-
-                let source = Self::generated_plugin_c_source(use_cpp);
-                fs::write(src_dir.join(format!("plugin.{source_ext}")), source)
-                    .map_err(|e| format!("Failed to write src/plugin.{source_ext}: {e}"))?;
-
-                let lib_rs = Self::generated_c_wrapper_lib_rs(
-                    &title,
-                    &inputs_literal,
-                    &outputs_literal,
-                    &internals_literal,
-                    &default_vars_json,
-                    &behavior_json,
-                );
-                fs::write(src_dir.join("lib.rs"), lib_rs)
-                    .map_err(|e| format!("Failed to write src/lib.rs: {e}"))?;
-            }
-            _ => {
-                let cargo_toml = format!(
-                    "[package]\nname = {package_name:?}\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\ncrate-type = [\"cdylib\"]\n\n[dependencies]\nrtsyn_plugin = {{ path = {rtsyn_plugin_path:?} }}\nserde_json = \"1\"\n"
-                );
-                fs::write(plugin_dir.join("Cargo.toml"), cargo_toml)
-                    .map_err(|e| format!("Failed to write Cargo.toml: {e}"))?;
-
-                let lib_rs = Self::generated_rust_plugin_lib_rs(
-                    &title,
-                    &inputs_literal,
-                    &outputs_literal,
-                    &internals_literal,
-                    &default_vars_json,
-                    &behavior_json,
-                    &vars,
-                    &inputs,
-                    &outputs,
-                    &internals,
-                );
-                fs::write(src_dir.join("lib.rs"), lib_rs)
-                    .map_err(|e| format!("Failed to write src/lib.rs: {e}"))?;
-            }
-        }
-
-        Ok(plugin_dir)
+        create_plugin(&req)
     }
 
     pub(crate) fn open_manage_plugins(&mut self) {
@@ -598,13 +287,28 @@ impl GuiApp {
         const CARD_FIXED_HEIGHT: f32 = 132.0;
         const PANEL_PAD: f32 = 8.0;
         let mut pending_info: Option<String> = None;
-        let incoming_connections: HashSet<u64> = self
+        let connected_input_ports: HashMap<u64, HashSet<String>> = self
             .workspace_manager
             .workspace
             .connections
             .iter()
-            .map(|conn| conn.to_plugin)
-            .collect();
+            .fold(HashMap::new(), |mut acc, conn| {
+                acc.entry(conn.to_plugin)
+                    .or_insert_with(HashSet::new)
+                    .insert(conn.to_port.clone());
+                acc
+            });
+        let connected_output_ports: HashMap<u64, HashSet<String>> = self
+            .workspace_manager
+            .workspace
+            .connections
+            .iter()
+            .fold(HashMap::new(), |mut acc, conn| {
+                acc.entry(conn.from_plugin)
+                    .or_insert_with(HashSet::new)
+                    .insert(conn.from_port.clone());
+                acc
+            });
         let name_by_kind: HashMap<String, String> = self
             .plugin_manager
             .installed_plugins
@@ -641,12 +345,30 @@ impl GuiApp {
         let card_height_cap = (panel_rect.height() - PANEL_PAD * 2.0).max(220.0);
         let scroll_max_height = (card_height_cap - CARD_FIXED_HEIGHT).max(72.0);
         for plugin in &mut self.workspace_manager.workspace.plugins {
-            let opens_external_window = self
+            let behavior = self
                 .plugin_manager
                 .plugin_behaviors
                 .get(&plugin.kind)
-                .map(|b| b.external_window)
-                .unwrap_or(false);
+                .cloned()
+                .unwrap_or_default();
+            let opens_external_window = behavior.external_window;
+            let starts_expanded = behavior.starts_expanded;
+
+            if let Some(default_vars) = metadata_by_kind.get(&plugin.kind) {
+                if let Value::Object(ref mut map) = plugin.config {
+                    let mut injected_any = false;
+                    for (name, value) in default_vars {
+                        if !map.contains_key(name) {
+                            map.insert(name.clone(), Value::from(*value));
+                            injected_any = true;
+                        }
+                    }
+                    if injected_any {
+                        workspace_changed = true;
+                    }
+                }
+            }
+
             if opens_external_window {
                 self.plugin_rects.remove(&plugin.id);
                 continue;
@@ -804,7 +526,7 @@ impl GuiApp {
                                                     egui::CollapsingHeader::new(
                                                         RichText::new("\u{f013}  Variables").size(13.0).strong()  // gear icon
                                                     )
-                                                    .default_open(true)
+                                                    .default_open(starts_expanded)
                                                     .show(ui, |ui| {
                                                         ui.add_space(4.0);
                                                         for (name, _default_value) in vars {
@@ -942,7 +664,7 @@ impl GuiApp {
                                                     egui::CollapsingHeader::new(
                                                         RichText::new("\u{f0ae}  Variables").size(13.0).strong()
                                                     )
-                                                    .default_open(true)
+                                                    .default_open(starts_expanded)
                                                     .show(ui, |ui| {
                                                         ui.add_space(4.0);
                                                         let label_w = 140.0;
@@ -1223,7 +945,7 @@ impl GuiApp {
                                                     egui::CollapsingHeader::new(
                                                         RichText::new("\u{f090}  Inputs").size(13.0).strong()  // sign-in icon with space
                                                     )
-                                                    .default_open(true)
+                                                    .default_open(starts_expanded)
                                                     .show(ui, |ui| {
                                                         ui.add_space(4.0);
                                                         for input_name in &schema.inputs {
@@ -1250,7 +972,7 @@ impl GuiApp {
                                                     egui::CollapsingHeader::new(
                                                         RichText::new("\u{f08b}  Outputs").size(13.0).strong()  // sign-out icon with space
                                                     )
-                                                    .default_open(true)
+                                                    .default_open(starts_expanded)
                                                     .show(ui, |ui| {
                                                         ui.add_space(4.0);
                                                         for output_name in &schema.outputs {
@@ -1284,7 +1006,7 @@ impl GuiApp {
                                                     egui::CollapsingHeader::new(
                                                         RichText::new("\u{f085}  Internal variables").size(13.0).strong()
                                                     )
-                                                    .default_open(true)
+                                                    .default_open(starts_expanded)
                                                     .show(ui, |ui| {
                                                         ui.add_space(4.0);
                                                         for var_name in &schema.variables {
@@ -1357,22 +1079,49 @@ impl GuiApp {
                             let mut controls_changed = false;
                             ui.horizontal(|ui| {
                                 let mut blocked_start = false;
-                                        let supports_start_stop = self.plugin_manager.plugin_behaviors.get(&plugin.kind)
-                                            .map(|b| b.supports_start_stop)
-                                            .unwrap_or(true);  // Default to true
+                                        let supports_start_stop = behavior.supports_start_stop;
                                         if supports_start_stop {
                                             let label = if plugin.running { "Stop" } else { "Start" };
                                             if styled_button(ui, label).clicked() {
-                                                let is_connection_dependent = matches!(plugin.kind.as_str(), "csv_recorder" | "live_plotter" | "comedi_daq");
-                                                if is_connection_dependent
-                                                    && !plugin.running
-                                                    && !incoming_connections.contains(&plugin.id)
-                                                {
-                                                    pending_info = Some(
-                                                        "Add connections before starting this plugin."
-                                                            .to_string(),
-                                                    );
-                                                    blocked_start = true;
+                                                if !plugin.running {
+                                                    let plugin_input_ports = connected_input_ports
+                                                        .get(&plugin.id)
+                                                        .cloned()
+                                                        .unwrap_or_default();
+                                                    let plugin_output_ports = connected_output_ports
+                                                        .get(&plugin.id)
+                                                        .cloned()
+                                                        .unwrap_or_default();
+
+                                                    let missing_inputs: Vec<String> = behavior
+                                                        .start_requires_connected_inputs
+                                                        .iter()
+                                                        .filter(|port| !plugin_input_ports.contains(*port))
+                                                        .cloned()
+                                                        .collect();
+                                                    if !missing_inputs.is_empty() {
+                                                        pending_info = Some(format!(
+                                                            "Cannot start: missing input connections on ports: {}",
+                                                            missing_inputs.join(", ")
+                                                        ));
+                                                        blocked_start = true;
+                                                    }
+
+                                                    if !blocked_start {
+                                                        let missing_outputs: Vec<String> = behavior
+                                                            .start_requires_connected_outputs
+                                                            .iter()
+                                                            .filter(|port| !plugin_output_ports.contains(*port))
+                                                            .cloned()
+                                                            .collect();
+                                                        if !missing_outputs.is_empty() {
+                                                            pending_info = Some(format!(
+                                                                "Cannot start: missing output connections on ports: {}",
+                                                                missing_outputs.join(", ")
+                                                            ));
+                                                            blocked_start = true;
+                                                        }
+                                                    }
                                                 }
                                                 if !blocked_start
                                                     && plugin.kind == "csv_recorder"
@@ -1419,9 +1168,7 @@ impl GuiApp {
                                                 }
                                             }
                                         }
-                                        let supports_restart = self.plugin_manager.plugin_behaviors.get(&plugin.kind)
-                                            .map(|b| b.supports_restart)
-                                            .unwrap_or(false);  // Default to false
+                                        let supports_restart = behavior.supports_restart;
                                         if supports_restart {
                                             if styled_button(ui, "Restart").clicked() {
                                                 if plugin.kind == "comedi_daq" {
@@ -1443,6 +1190,14 @@ impl GuiApp {
                                                     }
                                                 }
                                                 pending_restart.push(plugin.id);
+                                            }
+                                        }
+                                        if behavior.supports_apply {
+                                            if styled_button(ui, "Modify").clicked() {
+                                                pending_info = Some(
+                                                    "Modify/apply behavior is declared but not implemented yet."
+                                                        .to_string(),
+                                                );
                                             }
                                         }
                                     });
@@ -1923,15 +1678,16 @@ impl GuiApp {
 
                 if ui
                     .add_sized(
-                        [240.0, 26.0],
+                        [200.0, 26.0],
                         egui::TextEdit::singleline(&mut fields[idx].name).hint_text("Name"),
                     )
                     .changed()
                 {
                     changed = true;
                 }
+                let previous_type = fields[idx].type_name.clone();
                 egui::ComboBox::from_id_source((id_key, idx, "type"))
-                    .width(120.0)
+                    .width(96.0)
                     .selected_text(fields[idx].type_name.clone())
                     .show_ui(ui, |ui| {
                         for ty in Self::NEW_PLUGIN_TYPES {
@@ -1944,6 +1700,28 @@ impl GuiApp {
                             }
                         }
                     });
+                if previous_type != fields[idx].type_name {
+                    let prev_default = Self::plugin_creator_default_by_type(&previous_type);
+                    if fields[idx].default_value.trim().is_empty()
+                        || fields[idx].default_value == prev_default
+                    {
+                        fields[idx].default_value =
+                            Self::plugin_creator_default_by_type(&fields[idx].type_name)
+                                .to_string();
+                    }
+                }
+                let default_hint =
+                    Self::plugin_creator_default_by_type(&fields[idx].type_name).to_string();
+                if ui
+                    .add_sized(
+                        [120.0, 26.0],
+                        egui::TextEdit::singleline(&mut fields[idx].default_value)
+                            .hint_text(default_hint),
+                    )
+                    .changed()
+                {
+                    changed = true;
+                }
                 if ui.small_button("Remove").clicked() {
                     remove = true;
                 }
@@ -2139,8 +1917,51 @@ impl GuiApp {
                             }
                             if ui
                                 .checkbox(
+                                    &mut self.new_plugin_draft.supports_apply,
+                                    "Modify button (supports_apply)",
+                                )
+                                .changed()
+                            {
+                                changed = true;
+                            }
+                            if ui
+                                .checkbox(
                                     &mut self.new_plugin_draft.external_window,
                                     "Open as external window",
+                                )
+                                .changed()
+                            {
+                                changed = true;
+                            }
+                            if ui
+                                .checkbox(
+                                    &mut self.new_plugin_draft.starts_expanded,
+                                    "Starts expanded",
+                                )
+                                .changed()
+                            {
+                                changed = true;
+                            }
+                            ui.add_space(6.0);
+                            ui.label("Required connected input ports to start (comma-separated)");
+                            if ui
+                                .add(
+                                    egui::TextEdit::singleline(
+                                        &mut self.new_plugin_draft.required_input_ports_csv,
+                                    )
+                                    .hint_text("e.g. in_0,in_1"),
+                                )
+                                .changed()
+                            {
+                                changed = true;
+                            }
+                            ui.label("Required connected output ports to start (comma-separated)");
+                            if ui
+                                .add(
+                                    egui::TextEdit::singleline(
+                                        &mut self.new_plugin_draft.required_output_ports_csv,
+                                    )
+                                    .hint_text("e.g. out_0"),
                                 )
                                 .changed()
                             {
