@@ -316,7 +316,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 return Ok(());
                             }
                             if plugins.is_empty() {
-                                println!("[RTSyn][INFO] No plugins in runtime");
+                                println!("[RTSyn][INFO] No runtime plugins");
                             } else {
                                 println!("[RTSyn][INFO] Runtime plugins:");
                                 for plugin in plugins {

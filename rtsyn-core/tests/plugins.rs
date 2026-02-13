@@ -1,7 +1,7 @@
-use rtsyn_core::plugin::{PluginCatalog, PluginMetadataSource};
+use rtsyn_core::plugin::{plugin_display_name, InstalledPlugin, PluginCatalog, PluginManifest, PluginMetadataSource};
 use std::path::PathBuf;
 use std::time::Duration;
-use workspace::WorkspaceDefinition;
+use workspace::{PluginDefinition, WorkspaceDefinition};
 
 struct NoMetadata;
 
@@ -77,4 +77,53 @@ fn install_add_uninstall_plugin() {
         .uninstall_plugin_by_kind("test_plugin")
         .expect("uninstall plugin");
     assert_eq!(removed.manifest.kind, "test_plugin");
+}
+
+#[test]
+fn plugin_display_name_prefers_manifest_name_then_fallback() {
+    let installed = vec![InstalledPlugin {
+        manifest: PluginManifest {
+            name: "Named Plugin".to_string(),
+            kind: "named_plugin".to_string(),
+            version: Some("0.1.0".to_string()),
+            description: None,
+            library: None,
+        },
+        path: PathBuf::new(),
+        library_path: None,
+        removable: false,
+        metadata_inputs: Vec::new(),
+        metadata_outputs: Vec::new(),
+        metadata_variables: Vec::new(),
+        display_schema: None,
+        ui_schema: None,
+    }];
+
+    let workspace = WorkspaceDefinition {
+        name: "ws".to_string(),
+        description: String::new(),
+        target_hz: 1000,
+        plugins: vec![
+            PluginDefinition {
+                id: 1,
+                kind: "named_plugin".to_string(),
+                config: serde_json::json!({}),
+                priority: 99,
+                running: false,
+            },
+            PluginDefinition {
+                id: 2,
+                kind: "unknown_kind".to_string(),
+                config: serde_json::json!({}),
+                priority: 99,
+                running: false,
+            },
+        ],
+        connections: Vec::new(),
+        settings: workspace::WorkspaceSettings::default(),
+    };
+
+    assert_eq!(plugin_display_name(&installed, &workspace, 1), "Named Plugin");
+    assert_eq!(plugin_display_name(&installed, &workspace, 2), "Unknown Kind");
+    assert_eq!(plugin_display_name(&installed, &workspace, 999), "plugin");
 }

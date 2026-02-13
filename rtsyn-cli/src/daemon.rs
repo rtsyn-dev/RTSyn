@@ -3,7 +3,7 @@ use crate::protocol::{
     ConnectionSummary, DaemonRequest, DaemonResponse, PluginSummary, RuntimePluginState,
     RuntimePluginSummary, WorkspaceSummary, DEFAULT_SOCKET_PATH,
 };
-use rtsyn_core::connection::next_available_extendable_input_index;
+use rtsyn_core::connection::{extendable_input_index, next_available_extendable_input_index};
 use rtsyn_core::plugin::{
     is_extendable_inputs, InstalledPlugin, PluginCatalog, PluginMetadataSource,
 };
@@ -31,6 +31,22 @@ fn plugin_outputs(installed: &[InstalledPlugin], kind: &str) -> Vec<String> {
         .find(|p| p.manifest.kind == kind)
         .map(|p| p.metadata_outputs.clone())
         .unwrap_or_default()
+}
+
+fn source_port_is_valid(kind: &str, requested_port: &str, outputs: &[String]) -> bool {
+    if outputs.iter().any(|p| p == requested_port) {
+        return true;
+    }
+
+    // Backward-compatible aliases for historical performance monitor port names.
+    if kind == "performance_monitor" {
+        return matches!(
+            requested_port,
+            "period_us" | "latency_us" | "jitter_us" | "max_period_us"
+        );
+    }
+
+    false
 }
 
 fn plugin_library_path(installed: &[InstalledPlugin], kind: &str) -> Option<String> {
@@ -548,7 +564,7 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
                         DaemonResponse::Error {
                             message: "Source plugin outputs not available".to_string(),
                         }
-                    } else if !from_outputs.iter().any(|p| p == &from_port) {
+                    } else if !source_port_is_valid(&from_kind, &from_port, &from_outputs) {
                         DaemonResponse::Error {
                             message: "Source port not found".to_string(),
                         }
@@ -559,17 +575,35 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
                             .unwrap_or_default();
                         let to_inputs = plugin_inputs(installed, &to_kind);
                         if is_extendable_inputs(&to_kind) {
+                            if to_port == "in" {
+                                DaemonResponse::Error {
+                                    message:
+                                        "Target port must be the next in_<number> or an existing input"
+                                            .to_string(),
+                                }
+                            } else {
                             let next_idx = next_available_extendable_input_index(
                                 &state.workspace_manager.workspace,
                                 to_plugin,
                             );
-                            let next_port = format!("in_{next_idx}");
-                            if !to_inputs.iter().any(|p| p == &to_port) && to_port != next_port {
+                            let to_idx = extendable_input_index(&to_port);
+                            let has_existing_port = state
+                                .workspace_manager
+                                .workspace
+                                .connections
+                                .iter()
+                                .any(|c| c.to_plugin == to_plugin && c.to_port == to_port);
+                            let valid_extendable = match to_idx {
+                                Some(idx) if idx == next_idx => true,
+                                Some(idx) if idx < next_idx => has_existing_port,
+                                _ => false,
+                            };
+                            if !valid_extendable {
                                 DaemonResponse::Error {
-                                message:
-                                    "Target port must be the next in_<number> or an existing input"
-                                        .to_string(),
-                            }
+                                    message:
+                                        "Target port must be the next in_<number> or an existing input"
+                                            .to_string(),
+                                }
                             } else {
                                 match rtsyn_core::connection::add_connection(
                                     &mut state.workspace_manager.workspace,
@@ -590,6 +624,7 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
                                         message: format!("{err}"),
                                     },
                                 }
+                            }
                             }
                         } else if to_inputs.is_empty() {
                             DaemonResponse::Error {

@@ -104,6 +104,61 @@ impl PluginManager {
         }
     }
 
+    fn metadata_from_plugin(
+        plugin: &impl Plugin,
+        metadata_variables: Vec<(String, f64)>,
+    ) -> (
+        Vec<String>,
+        Vec<String>,
+        Vec<(String, f64)>,
+        Option<DisplaySchema>,
+        Option<UISchema>,
+    ) {
+        let inputs: Vec<String> = plugin.inputs().iter().map(|p| p.id.0.clone()).collect();
+        let outputs: Vec<String> = plugin.outputs().iter().map(|p| p.id.0.clone()).collect();
+        (
+            inputs,
+            outputs,
+            metadata_variables,
+            plugin.display_schema(),
+            plugin.ui_schema(),
+        )
+    }
+
+    fn query_metadata_with_fallback(
+        metadata: &impl PluginMetadataSource,
+        library_path: Option<&Path>,
+    ) -> (
+        Vec<String>,
+        Vec<String>,
+        Vec<(String, f64)>,
+        Option<DisplaySchema>,
+        Option<UISchema>,
+    ) {
+        let (inputs, outputs, vars, mut display_schema, ui_schema) =
+            if let Some(lib_path) = library_path {
+                let lib_path_str = lib_path.to_string_lossy();
+                match metadata.query_plugin_metadata(lib_path_str.as_ref(), Duration::from_secs(2)) {
+                    Some((inputs, outputs, vars, schema, ui_schema)) => {
+                        (inputs, outputs, vars, schema, ui_schema)
+                    }
+                    None => (Vec::new(), Vec::new(), Vec::new(), None, None),
+                }
+            } else {
+                (Vec::new(), Vec::new(), Vec::new(), None, None)
+            };
+
+        if display_schema.is_none() && (!outputs.is_empty() || !vars.is_empty()) {
+            display_schema = Some(DisplaySchema {
+                outputs: outputs.clone(),
+                inputs: Vec::new(),
+                variables: vars.iter().map(|(name, _)| name.clone()).collect(),
+            });
+        }
+
+        (inputs, outputs, vars, display_schema, ui_schema)
+    }
+
     fn load_bundled_plugins(&mut self) {
         let bundled = vec![
             ("csv_recorder", "CSV Recorder", "Records data to CSV files"),
@@ -126,60 +181,23 @@ impl PluginManager {
                 match kind {
                     "performance_monitor" => {
                         let plugin = PerformanceMonitorPlugin::new(0);
-                        let inputs: Vec<String> =
-                            plugin.inputs().iter().map(|p| p.id.0.clone()).collect();
-                        let outputs: Vec<String> =
-                            plugin.outputs().iter().map(|p| p.id.0.clone()).collect();
-                        (
-                            inputs,
-                            outputs,
+                        Self::metadata_from_plugin(
+                            &plugin,
                             vec![("max_latency_us".to_string(), 1000.0)],
-                            plugin.display_schema(),
-                            plugin.ui_schema(),
                         )
                     }
                     "csv_recorder" => {
                         let plugin = CsvRecorderedPlugin::new(0);
-                        let inputs: Vec<String> =
-                            plugin.inputs().iter().map(|p| p.id.0.clone()).collect();
-                        let outputs: Vec<String> =
-                            plugin.outputs().iter().map(|p| p.id.0.clone()).collect();
-                        (
-                            inputs,
-                            outputs,
-                            Vec::new(),
-                            plugin.display_schema(),
-                            plugin.ui_schema(),
-                        )
+                        Self::metadata_from_plugin(&plugin, Vec::new())
                     }
                     "live_plotter" => {
                         let plugin = LivePlotterPlugin::new(0);
-                        let inputs: Vec<String> =
-                            plugin.inputs().iter().map(|p| p.id.0.clone()).collect();
-                        let outputs: Vec<String> =
-                            plugin.outputs().iter().map(|p| p.id.0.clone()).collect();
-                        (
-                            inputs,
-                            outputs,
-                            Vec::new(),
-                            plugin.display_schema(),
-                            plugin.ui_schema(),
-                        )
+                        Self::metadata_from_plugin(&plugin, Vec::new())
                     }
                     #[cfg(feature = "comedi")]
                     "comedi_daq" => {
                         let plugin = ComediDaqPlugin::new(0);
-                        let inputs: Vec<String> =
-                            plugin.inputs().iter().map(|p| p.id.0.clone()).collect();
-                        let outputs: Vec<String> =
-                            plugin.outputs().iter().map(|p| p.id.0.clone()).collect();
-                        (
-                            inputs,
-                            outputs,
-                            Vec::new(),
-                            plugin.display_schema(),
-                            plugin.ui_schema(),
-                        )
+                        Self::metadata_from_plugin(&plugin, Vec::new())
                     }
                     _ => (Vec::new(), Vec::new(), Vec::new(), None, None),
                 };
@@ -306,31 +324,6 @@ impl PluginManager {
         api_mtime > lib_mtime
     }
 
-    pub fn scan_detected_plugins(&mut self) {
-        self.detected_plugins.clear();
-
-        if let Some(workspace_root) = Self::workspace_root() {
-            let plugins_dir = workspace_root.join("rtsyn-plugins");
-            if let Ok(entries) = fs::read_dir(&plugins_dir) {
-                for entry in entries.flatten() {
-                    if entry.path().is_dir() {
-                        let manifest_path = entry.path().join("plugin.toml");
-                        if manifest_path.exists() {
-                            if let Ok(data) = fs::read_to_string(&manifest_path) {
-                                if let Ok(manifest) = toml::from_str::<PluginManifest>(&data) {
-                                    self.detected_plugins.push(DetectedPlugin {
-                                        manifest,
-                                        path: entry.path(),
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     pub fn display_kind(kind: &str) -> String {
         kind.split('_')
             .map(|word| {
@@ -370,65 +363,18 @@ impl PluginManager {
             .find(|plugin| plugin.manifest.kind == kind)
         {
             installed.manifest = manifest;
-            if let Some(ref lib_path) = library_path {
-                let lib_path_str = lib_path.to_string_lossy();
-                if let Some((inputs, outputs, vars, display_schema, ui_schema)) =
-                    metadata.query_plugin_metadata(lib_path_str.as_ref(), Duration::from_secs(2))
-                {
-                    installed.metadata_inputs = inputs;
-                    installed.metadata_outputs = outputs;
-                    installed.metadata_variables = vars;
-                    installed.display_schema = display_schema;
-                    installed.ui_schema = ui_schema;
-                }
-            }
-            if installed.display_schema.is_none()
-                && (!installed.metadata_outputs.is_empty()
-                    || !installed.metadata_variables.is_empty())
-            {
-                installed.display_schema = Some(DisplaySchema {
-                    outputs: installed.metadata_outputs.clone(),
-                    inputs: Vec::new(),
-                    variables: installed
-                        .metadata_variables
-                        .iter()
-                        .map(|(name, _)| name.clone())
-                        .collect(),
-                });
-            }
+            let (inputs, outputs, vars, display_schema, ui_schema) =
+                Self::query_metadata_with_fallback(metadata, library_path.as_deref());
+            installed.metadata_inputs = inputs;
+            installed.metadata_outputs = outputs;
+            installed.metadata_variables = vars;
+            installed.display_schema = display_schema;
+            installed.ui_schema = ui_schema;
             installed.path = path.to_path_buf();
             installed.library_path = library_path;
         } else {
-            let (
-                metadata_inputs,
-                metadata_outputs,
-                metadata_variables,
-                mut display_schema,
-                ui_schema,
-            ) = if let Some(ref lib_path) = library_path {
-                let lib_path_str = lib_path.to_string_lossy();
-                match metadata.query_plugin_metadata(lib_path_str.as_ref(), Duration::from_secs(2))
-                {
-                    Some((inputs, outputs, vars, display_schema, ui_schema)) => {
-                        (inputs, outputs, vars, display_schema, ui_schema)
-                    }
-                    None => (vec![], vec![], vec![], None, None),
-                }
-            } else {
-                (vec![], vec![], vec![], None, None)
-            };
-            if display_schema.is_none()
-                && (!metadata_outputs.is_empty() || !metadata_variables.is_empty())
-            {
-                display_schema = Some(DisplaySchema {
-                    outputs: metadata_outputs.clone(),
-                    inputs: Vec::new(),
-                    variables: metadata_variables
-                        .iter()
-                        .map(|(name, _)| name.clone())
-                        .collect(),
-                });
-            }
+            let (metadata_inputs, metadata_outputs, metadata_variables, display_schema, ui_schema) =
+                Self::query_metadata_with_fallback(metadata, library_path.as_deref());
             self.installed_plugins.push(InstalledPlugin {
                 manifest,
                 path: path.to_path_buf(),
@@ -518,31 +464,8 @@ impl PluginManager {
         }
 
         let library_path = PluginManager::resolve_library_path(&manifest, folder);
-        let (metadata_inputs, metadata_outputs, metadata_variables, mut display_schema, ui_schema) =
-            if let Some(ref lib_path) = library_path {
-                let lib_path_str = lib_path.to_string_lossy();
-                match metadata.query_plugin_metadata(lib_path_str.as_ref(), Duration::from_secs(2))
-                {
-                    Some((inputs, outputs, vars, schema, ui_sch)) => {
-                        (inputs, outputs, vars, schema, ui_sch)
-                    }
-                    None => (vec![], vec![], vec![], None, None),
-                }
-            } else {
-                (vec![], vec![], vec![], None, None)
-            };
-        if display_schema.is_none()
-            && (!metadata_outputs.is_empty() || !metadata_variables.is_empty())
-        {
-            display_schema = Some(DisplaySchema {
-                outputs: metadata_outputs.clone(),
-                inputs: Vec::new(),
-                variables: metadata_variables
-                    .iter()
-                    .map(|(name, _)| name.clone())
-                    .collect(),
-            });
-        }
+        let (metadata_inputs, metadata_outputs, metadata_variables, display_schema, ui_schema) =
+            Self::query_metadata_with_fallback(metadata, library_path.as_deref());
 
         if self
             .installed_plugins
@@ -809,57 +732,8 @@ impl PluginCatalog {
     }
 
     pub fn scan_detected_plugins(&mut self) {
-        let mut detected = Vec::new();
-        for base in ["plugins", "app_plugins", "rtsyn-plugins"] {
-            let base = PathBuf::from(base);
-            if let Ok(entries) = fs::read_dir(&base) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if !path.is_dir() {
-                        continue;
-                    }
-                    let folder_name = path
-                        .file_name()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or_default();
-                    if folder_name.eq_ignore_ascii_case("template") {
-                        continue;
-                    }
-                    let manifest_path = path.join("plugin.toml");
-                    if !manifest_path.is_file() {
-                        continue;
-                    }
-                    let data = match fs::read_to_string(&manifest_path) {
-                        Ok(content) => content,
-                        Err(_) => continue,
-                    };
-                    let manifest: PluginManifest = match toml::from_str(&data) {
-                        Ok(parsed) => parsed,
-                        Err(_) => continue,
-                    };
-                    if manifest.kind == "plugin_creator" {
-                        continue;
-                    }
-                    if manifest.kind == "comedi_daq" && !cfg!(feature = "comedi") {
-                        continue;
-                    }
-                    detected.push(DetectedPlugin { manifest, path });
-                }
-            }
-        }
-        let mut detected_kinds: HashSet<String> =
-            detected.iter().map(|p| p.manifest.kind.clone()).collect();
-        for installed in &self.manager.installed_plugins {
-            if detected_kinds.contains(&installed.manifest.kind) {
-                continue;
-            }
-            detected.push(DetectedPlugin {
-                manifest: installed.manifest.clone(),
-                path: installed.path.clone(),
-            });
-            detected_kinds.insert(installed.manifest.kind.clone());
-        }
-        self.manager.detected_plugins = detected;
+        self.manager
+            .scan_detected_plugins_in(&["plugins", "app_plugins", "rtsyn-plugins"]);
     }
 
     pub fn install_plugin_from_folder<P: AsRef<Path>>(
@@ -869,67 +743,8 @@ impl PluginCatalog {
         persist: bool,
         metadata: &impl PluginMetadataSource,
     ) -> Result<(), String> {
-        let manifest_path = folder.as_ref().join("plugin.toml");
-        let data = fs::read_to_string(&manifest_path)
-            .map_err(|err| format!("Failed to read plugin.toml: {err}"))?;
-
-        let manifest: PluginManifest =
-            toml::from_str(&data).map_err(|err| format!("Invalid plugin.toml: {err}"))?;
-        if manifest.kind == "comedi_daq" && !cfg!(feature = "comedi") {
-            return Err("comedi_daq is not available without the comedi feature".to_string());
-        }
-
-        let library_path = PluginManager::resolve_library_path(&manifest, folder.as_ref());
-        let (metadata_inputs, metadata_outputs, metadata_variables, mut display_schema, ui_schema) =
-            if let Some(ref lib_path) = library_path {
-                let lib_path_str = lib_path.to_string_lossy();
-                match metadata.query_plugin_metadata(lib_path_str.as_ref(), Duration::from_secs(2))
-                {
-                    Some((inputs, outputs, vars, schema, ui_sch)) => {
-                        (inputs, outputs, vars, schema, ui_sch)
-                    }
-                    None => (vec![], vec![], vec![], None, None),
-                }
-            } else {
-                (vec![], vec![], vec![], None, None)
-            };
-        if display_schema.is_none()
-            && (!metadata_outputs.is_empty() || !metadata_variables.is_empty())
-        {
-            display_schema = Some(DisplaySchema {
-                outputs: metadata_outputs.clone(),
-                inputs: Vec::new(),
-                variables: metadata_variables
-                    .iter()
-                    .map(|(name, _)| name.clone())
-                    .collect(),
-            });
-        }
-
-        if self
-            .manager
-            .installed_plugins
-            .iter()
-            .any(|p| p.manifest.kind == manifest.kind)
-        {
-            return Err(format!("Plugin '{}' is already installed", manifest.kind));
-        }
-
-        self.manager.installed_plugins.push(InstalledPlugin {
-            manifest,
-            path: folder.as_ref().to_path_buf(),
-            library_path,
-            removable,
-            metadata_inputs,
-            metadata_outputs,
-            metadata_variables,
-            display_schema,
-            ui_schema,
-        });
-        if persist {
-            self.manager.persist_installed_plugins();
-        }
-        Ok(())
+        self.manager
+            .install_plugin_from_folder(folder.as_ref(), removable, persist, metadata)
     }
 
     pub fn uninstall_plugin_by_kind(
@@ -1010,23 +825,8 @@ impl PluginCatalog {
         kind: &str,
         workspace: &mut WorkspaceDefinition,
     ) -> Vec<u64> {
-        let removed_ids: Vec<u64> = workspace
-            .plugins
-            .iter()
-            .filter(|p| p.kind == kind)
-            .map(|p| p.id)
-            .collect();
-        if removed_ids.is_empty() {
-            return removed_ids;
-        }
-        workspace.plugins.retain(|p| p.kind != kind);
-        workspace.connections.retain(|conn| {
-            !removed_ids.contains(&conn.from_plugin) && !removed_ids.contains(&conn.to_plugin)
-        });
         self.manager
-            .available_plugin_ids
-            .extend(removed_ids.iter().copied());
-        removed_ids
+            .remove_plugins_by_kind_from_workspace(workspace, kind)
     }
 
     pub fn add_installed_plugin_to_workspace(
@@ -1138,17 +938,7 @@ impl PluginCatalog {
         plugin_id: u64,
         workspace: &mut WorkspaceDefinition,
     ) -> Result<(), String> {
-        let index = workspace
-            .plugins
-            .iter()
-            .position(|p| p.id == plugin_id)
-            .ok_or_else(|| "Plugin not found".to_string())?;
-        workspace.plugins.remove(index);
-        workspace
-            .connections
-            .retain(|conn| conn.from_plugin != plugin_id && conn.to_plugin != plugin_id);
-        self.manager.available_plugin_ids.push(plugin_id);
-        Ok(())
+        self.manager.remove_plugin_from_workspace(workspace, plugin_id)
     }
 
     pub fn sync_ids_from_workspace(&mut self, workspace: &WorkspaceDefinition) {
@@ -1174,21 +964,15 @@ pub fn plugin_display_name(
     workspace: &WorkspaceDefinition,
     plugin_id: u64,
 ) -> String {
-    let name_by_kind: HashMap<String, String> = installed
+    let Some(plugin) = workspace.plugins.iter().find(|plugin| plugin.id == plugin_id) else {
+        return "plugin".to_string();
+    };
+
+    installed
         .iter()
-        .map(|plugin| (plugin.manifest.kind.clone(), plugin.manifest.name.clone()))
-        .collect();
-    workspace
-        .plugins
-        .iter()
-        .find(|plugin| plugin.id == plugin_id)
-        .map(|plugin| {
-            name_by_kind
-                .get(&plugin.kind)
-                .cloned()
-                .unwrap_or_else(|| PluginManager::display_kind(&plugin.kind))
-        })
-        .unwrap_or_else(|| "plugin".to_string())
+        .find(|p| p.manifest.kind == plugin.kind)
+        .map(|p| p.manifest.name.clone())
+        .unwrap_or_else(|| PluginManager::display_kind(&plugin.kind))
 }
 
 pub fn empty_workspace() -> WorkspaceDefinition {
@@ -1204,34 +988,6 @@ pub fn empty_workspace() -> WorkspaceDefinition {
 
 impl PluginCatalog {
     pub fn inject_library_paths_into_workspace(&self, workspace: &mut WorkspaceDefinition) {
-        let mut paths_by_kind: HashMap<String, String> = HashMap::new();
-        for installed in &self.manager.installed_plugins {
-            if let Some(path) = installed.library_path.as_ref() {
-                if path.is_file() {
-                    paths_by_kind.insert(
-                        installed.manifest.kind.clone(),
-                        path.to_string_lossy().to_string(),
-                    );
-                }
-            }
-        }
-        if paths_by_kind.is_empty() {
-            return;
-        }
-        for plugin in &mut workspace.plugins {
-            if let Some(path) = paths_by_kind.get(&plugin.kind) {
-                if let Value::Object(ref mut map) = plugin.config {
-                    let needs_update = match map.get("library_path") {
-                        Some(Value::String(existing)) => {
-                            existing.is_empty() || !Path::new(existing).is_file()
-                        }
-                        _ => true,
-                    };
-                    if needs_update {
-                        map.insert("library_path".to_string(), Value::String(path.to_string()));
-                    }
-                }
-            }
-        }
+        self.manager.inject_library_paths_into_workspace(workspace);
     }
 }

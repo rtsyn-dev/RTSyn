@@ -2,6 +2,34 @@ use crate::plugin::{is_extendable_inputs, plugin_display_name, InstalledPlugin};
 use serde_json::Value;
 use workspace::{ConnectionDefinition, ConnectionRuleError, WorkspaceDefinition};
 
+fn ensure_config_object(config: &mut Value) -> &mut serde_json::Map<String, Value> {
+    if !config.is_object() {
+        *config = Value::Object(serde_json::Map::new());
+    }
+    match config {
+        Value::Object(map) => map,
+        _ => unreachable!("config must be object"),
+    }
+}
+
+fn read_columns(map: &serde_json::Map<String, Value>) -> Vec<String> {
+    map.get("columns")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|v| v.as_str().unwrap_or("").to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn write_columns(map: &mut serde_json::Map<String, Value>, columns: Vec<String>) {
+    map.insert(
+        "columns".to_string(),
+        Value::Array(columns.into_iter().map(Value::from).collect()),
+    );
+}
+
 pub fn extendable_input_index(port: &str) -> Option<usize> {
     if port == "in" {
         Some(0)
@@ -49,16 +77,7 @@ pub fn ensure_extendable_input_count(
     let Some(plugin) = workspace.plugins.iter_mut().find(|p| p.id == plugin_id) else {
         return;
     };
-    let map = match plugin.config {
-        Value::Object(ref mut map) => map,
-        _ => {
-            plugin.config = Value::Object(serde_json::Map::new());
-            match plugin.config {
-                Value::Object(ref mut map) => map,
-                _ => return,
-            }
-        }
-    };
+    let map = ensure_config_object(&mut plugin.config);
     let mut input_count = map.get("input_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
     if input_count < required_count {
         input_count = required_count;
@@ -66,21 +85,10 @@ pub fn ensure_extendable_input_count(
     }
 
     if plugin.kind == "csv_recorder" {
-        let mut columns: Vec<String> = map
-            .get("columns")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .map(|v| v.as_str().unwrap_or("").to_string())
-                    .collect()
-            })
-            .unwrap_or_default();
+        let mut columns = read_columns(map);
         if columns.len() < input_count {
             columns.resize(input_count, String::new());
-            map.insert(
-                "columns".to_string(),
-                Value::Array(columns.into_iter().map(Value::from).collect()),
-            );
+            write_columns(map, columns);
         }
     }
 }
@@ -114,39 +122,19 @@ pub fn sync_extendable_input_count(workspace: &mut WorkspaceDefinition, plugin_i
         }
     }
     let required_count = max_idx.map(|v| v + 1).unwrap_or(0);
-    let map = match plugin.config {
-        Value::Object(ref mut map) => map,
-        _ => {
-            plugin.config = Value::Object(serde_json::Map::new());
-            match plugin.config {
-                Value::Object(ref mut map) => map,
-                _ => return,
-            }
-        }
-    };
+    let map = ensure_config_object(&mut plugin.config);
     map.insert(
         "input_count".to_string(),
         Value::from(required_count as u64),
     );
     if plugin.kind == "csv_recorder" {
-        let mut columns: Vec<String> = map
-            .get("columns")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .map(|v| v.as_str().unwrap_or("").to_string())
-                    .collect()
-            })
-            .unwrap_or_default();
+        let mut columns = read_columns(map);
         if columns.len() > required_count {
             columns.truncate(required_count);
         } else if columns.len() < required_count {
             columns.resize(required_count, String::new());
         }
-        map.insert(
-            "columns".to_string(),
-            Value::Array(columns.into_iter().map(Value::from).collect()),
-        );
+        write_columns(map, columns);
     }
 }
 
@@ -222,15 +210,7 @@ pub fn add_connection(
                 if let Value::Object(ref mut map) = plugin.config {
                     let input_count =
                         map.get("input_count").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                    let mut columns: Vec<String> = map
-                        .get("columns")
-                        .and_then(|v| v.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .map(|v| v.as_str().unwrap_or("").to_string())
-                                .collect()
-                        })
-                        .unwrap_or_default();
+                    let mut columns = read_columns(map);
                     if columns.len() < input_count {
                         for _ in columns.len()..input_count {
                             columns.push(String::new());
@@ -238,10 +218,7 @@ pub fn add_connection(
                     }
                     if idx < columns.len() && columns[idx].is_empty() {
                         columns[idx] = default_name;
-                        map.insert(
-                            "columns".to_string(),
-                            Value::Array(columns.into_iter().map(Value::from).collect()),
-                        );
+                        write_columns(map, columns);
                     }
                 }
             }

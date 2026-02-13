@@ -231,18 +231,20 @@ pub fn parse_variable_line(line: &str) -> Result<PluginVariable, String> {
 }
 
 pub fn create_plugin(req: &PluginCreateRequest) -> Result<PathBuf, String> {
-    let plugin_name = req.name.trim();
-    if plugin_name.is_empty() {
+    let requested_name = req.name.trim();
+    if requested_name.is_empty() {
         return Err("Plugin name cannot be empty".to_string());
     }
-
-    let kind = to_snake_case(plugin_name);
-    let slug = to_kebab_case(plugin_name);
-    let folder_base = match req.language {
-        PluginLanguage::C => format!("{slug}_c"),
-        PluginLanguage::Cpp => format!("{slug}_cpp"),
-        PluginLanguage::Rust => format!("{slug}_rust"),
+    let plugin_name = strip_language_suffix(requested_name);
+    let plugin_name = if plugin_name.is_empty() {
+        requested_name.to_string()
+    } else {
+        plugin_name
     };
+
+    let kind = to_snake_case(&plugin_name);
+    let slug = to_kebab_case(&plugin_name);
+    let folder_base = slug.clone();
     let package_name = folder_base.clone();
     let rust_struct = to_pascal_case(&kind);
     let core_prefix = kind.clone();
@@ -347,13 +349,63 @@ pub fn create_plugin(req: &PluginCreateRequest) -> Result<PathBuf, String> {
         .map(|v| format!("    if (key_eq(name, len, \"{v}\")) return s->{v};\n"))
         .collect::<String>();
 
-    let process_body = match (inputs.first(), outputs.first()) {
-        (Some(i), Some(o)) => format!("        let _ = period_seconds;\n        self.{o} = self.{i};"),
-        _ => "        let _ = period_seconds;\n        // TODO: implement plugin dynamics".to_string(),
+    let process_body = if req.plugin_type == PluginKindType::Computational {
+        if internals.is_empty() {
+            "        let _ = period_seconds;\n        // TODO: computational plugin skeleton (add internal state vars and equations)."
+                .to_string()
+        } else {
+            let state_init = internals
+                .iter()
+                .map(|name| format!("self.{name}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let state_writeback = internals
+                .iter()
+                .enumerate()
+                .map(|(idx, name)| format!("        self.{name} = state[{idx}];\n"))
+                .collect::<String>();
+            let output_sync = match (outputs.first(), internals.first()) {
+                (Some(out), Some(internal)) => format!("        self.{out} = self.{internal};\n"),
+                _ => String::new(),
+            };
+            format!(
+                "        let dt = if period_seconds.is_finite() && period_seconds > 0.0 {{ period_seconds }} else {{ 1e-3 }};\n        let mut state = [{state_init}];\n        rk4_step(&mut state, dt, |_st, der| {{\n            for d in der.iter_mut() {{\n                *d = 0.0;\n            }}\n            // TODO: set derivatives from your model equations.\n        }});\n{state_writeback}{output_sync}"
+            )
+        }
+    } else {
+        match (inputs.first(), outputs.first()) {
+            (Some(i), Some(o)) => format!("        let _ = period_seconds;\n        self.{o} = self.{i};"),
+            _ => "        let _ = period_seconds;\n        // TODO: implement plugin dynamics".to_string(),
+        }
     };
-    let c_process_body = match (inputs.first(), outputs.first()) {
-        (Some(i), Some(o)) => format!("    s->{o} = s->{i};"),
-        _ => "    (void)s;".to_string(),
+    let c_process_body = if req.plugin_type == PluginKindType::Computational {
+        if internals.is_empty() {
+            "    (void)s;\n    (void)period_seconds;\n    // TODO: add internal state vars and model equations.".to_string()
+        } else {
+            let state_init = internals
+                .iter()
+                .map(|name| format!("s->{name}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let state_writeback = internals
+                .iter()
+                .enumerate()
+                .map(|(idx, name)| format!("    s->{name} = state[{idx}];\n"))
+                .collect::<String>();
+            let output_sync = match (outputs.first(), internals.first()) {
+                (Some(out), Some(internal)) => format!("    s->{out} = s->{internal};\n"),
+                _ => String::new(),
+            };
+            format!(
+                "    double dt = (period_seconds > 0.0 && period_seconds < 1e9) ? period_seconds : 1e-3;\n    (void)dt;\n    double state[] = {{{state_init}}};\n    // TODO: define deriv_fn(state, deriv, n, user_data) and call:\n    // rtsyn_plugin_rk4_step_n(state, {n}, dt, deriv_fn, s);\n{state_writeback}{output_sync}",
+                n = internals.len()
+            )
+        }
+    } else {
+        match (inputs.first(), outputs.first()) {
+            (Some(i), Some(o)) => format!("    s->{o} = s->{i};"),
+            _ => "    (void)s;".to_string(),
+        }
     };
 
     let req_input_json_raw = serde_json::to_string(&req.behavior.required_input_ports)
@@ -364,7 +416,7 @@ pub fn create_plugin(req: &PluginCreateRequest) -> Result<PathBuf, String> {
     let req_output_json = format!("{req_output_json_raw:?}");
 
     let mut replacements: Vec<(&str, String)> = vec![
-        ("PLUGIN_NAME", plugin_name.to_string()),
+        ("PLUGIN_NAME", plugin_name.clone()),
         ("PLUGIN_KIND", kind.clone()),
         ("DESCRIPTION", req.description.clone()),
         ("PACKAGE_NAME", package_name.clone()),
@@ -469,7 +521,7 @@ pub fn create_plugin(req: &PluginCreateRequest) -> Result<PathBuf, String> {
         )?;
         if req.language == PluginLanguage::C {
             replacements.push(("CORE_SOURCE_FILE", format!("{kind}.c")));
-            replacements.push(("CORE_BUILD_LIB", format!("{kind}_core_c")));
+            replacements.push(("CORE_BUILD_LIB", format!("{kind}_core")));
             render_to_file(
                 &tpl_dir.join("c_core.c.tpl"),
                 &src_dir.join(format!("{kind}.c")),
@@ -482,7 +534,7 @@ pub fn create_plugin(req: &PluginCreateRequest) -> Result<PathBuf, String> {
             )?;
         } else {
             replacements.push(("CORE_SOURCE_FILE", format!("{kind}.cpp")));
-            replacements.push(("CORE_BUILD_LIB", format!("{kind}_core_cpp")));
+            replacements.push(("CORE_BUILD_LIB", format!("{kind}_core")));
             render_to_file(
                 &tpl_dir.join("cpp_core.cpp.tpl"),
                 &src_dir.join(format!("{kind}.cpp")),
@@ -497,6 +549,44 @@ pub fn create_plugin(req: &PluginCreateRequest) -> Result<PathBuf, String> {
     }
 
     Ok(plugin_dir)
+}
+
+fn strip_language_suffix(input: &str) -> String {
+    let mut name = input.trim().to_string();
+    loop {
+        let lower = name.to_ascii_lowercase();
+        let mut changed = false;
+        for suffix in [
+            " (rust)",
+            " (c++)",
+            " (cpp)",
+            " (c)",
+            "-rust",
+            "-cpp",
+            "-c",
+            "_rust",
+            "_cpp",
+            "_c",
+            " rust",
+            " c++",
+            " cpp",
+            " c",
+        ] {
+            if lower.ends_with(suffix) {
+                let new_len = name.len().saturating_sub(suffix.len());
+                name = name[..new_len]
+                    .trim_end_matches([' ', '-', '_', '(', ')'])
+                    .trim()
+                    .to_string();
+                changed = true;
+                break;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    name
 }
 
 pub fn normalize_default(field_type: FieldType, value: &str) -> Result<String, String> {
@@ -621,4 +711,25 @@ fn sanitize_names(items: &[String]) -> Vec<String> {
         .map(|s| to_snake_case(s))
         .filter(|s| !s.is_empty())
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_language_suffix;
+
+    #[test]
+    fn strip_language_suffix_removes_common_trailing_markers() {
+        assert_eq!(strip_language_suffix("Example Plugin (C)"), "Example Plugin");
+        assert_eq!(strip_language_suffix("Example Plugin (C++)"), "Example Plugin");
+        assert_eq!(strip_language_suffix("Example Plugin (Rust)"), "Example Plugin");
+        assert_eq!(strip_language_suffix("example-plugin-cpp"), "example-plugin");
+        assert_eq!(strip_language_suffix("example_plugin_rust"), "example_plugin");
+        assert_eq!(strip_language_suffix("example plugin c"), "example plugin");
+    }
+
+    #[test]
+    fn strip_language_suffix_keeps_regular_names() {
+        assert_eq!(strip_language_suffix("Hindmarsh Rose v2"), "Hindmarsh Rose v2");
+        assert_eq!(strip_language_suffix("Electrical Synapse"), "Electrical Synapse");
+    }
 }

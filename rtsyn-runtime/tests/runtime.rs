@@ -82,6 +82,9 @@ fn runtime_executes_dynamic_mock_plugin_and_emits_outputs() {
     logic_tx
         .send(LogicMessage::UpdateWorkspace(workspace))
         .unwrap();
+    logic_tx
+        .send(LogicMessage::SetPluginRunning(1, true))
+        .unwrap();
 
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut last_tick = None;

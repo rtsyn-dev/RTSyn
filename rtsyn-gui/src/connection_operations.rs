@@ -2,7 +2,7 @@ use crate::GuiApp;
 use rtsyn_core::connection as core_connections;
 use rtsyn_runtime::runtime::LogicMessage;
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use workspace::{remove_extendable_input, ConnectionDefinition, ConnectionRuleError};
 
 impl GuiApp {
@@ -163,10 +163,6 @@ impl GuiApp {
     pub(crate) fn enforce_connection_dependent(&mut self) {
         let mut stopped = Vec::new();
         let mut plotter_closed = false;
-        let mut dependent_by_kind: HashMap<String, bool> = HashMap::new();
-        dependent_by_kind.insert("csv_recorder".to_string(), true);
-        dependent_by_kind.insert("live_plotter".to_string(), true);
-        dependent_by_kind.insert("comedi_daq".to_string(), true);
 
         let incoming: HashSet<u64> = self
             .workspace_manager
@@ -176,11 +172,10 @@ impl GuiApp {
             .map(|conn| conn.to_plugin)
             .collect();
         for plugin in &mut self.workspace_manager.workspace.plugins {
-            if !dependent_by_kind
-                .get(&plugin.kind)
-                .copied()
-                .unwrap_or(false)
-            {
+            if !matches!(
+                plugin.kind.as_str(),
+                "csv_recorder" | "live_plotter" | "comedi_daq"
+            ) {
                 continue;
             }
             if incoming.contains(&plugin.id) {

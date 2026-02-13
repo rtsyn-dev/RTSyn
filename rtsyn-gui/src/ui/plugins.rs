@@ -518,10 +518,32 @@ impl GuiApp {
                                     if !is_app_plugin {
                                         match plugin.config {
                                             Value::Object(ref mut map) => {
-                                                let vars = metadata_by_kind
+                                                let mut vars = metadata_by_kind
                                                     .get(&plugin.kind)
                                                     .cloned()
                                                     .unwrap_or_default();
+                                                if vars.is_empty() {
+                                                    let reserved = [
+                                                        "library_path",
+                                                        "input_count",
+                                                        "columns",
+                                                        "path",
+                                                        "path_autogen",
+                                                        "scan_nonce",
+                                                    ];
+                                                    vars = map
+                                                        .iter()
+                                                        .filter_map(|(name, value)| {
+                                                            if reserved.contains(&name.as_str()) {
+                                                                return None;
+                                                            }
+                                                            value
+                                                                .as_f64()
+                                                                .map(|v| (name.clone(), v))
+                                                        })
+                                                        .collect();
+                                                    vars.sort_by(|a, b| a.0.cmp(&b.0));
+                                                }
                                                 if !vars.is_empty() {
                                                     egui::CollapsingHeader::new(
                                                         RichText::new("\u{f013}  Variables").size(13.0).strong()  // gear icon
@@ -1493,6 +1515,22 @@ impl GuiApp {
         rebuilt.join(" ")
     }
 
+    fn truncate_plugin_list_name(name: &str, max_chars: usize) -> String {
+        let mut chars = name.chars();
+        let mut out = String::new();
+        for _ in 0..max_chars {
+            if let Some(ch) = chars.next() {
+                out.push(ch);
+            } else {
+                return out;
+            }
+        }
+        if chars.next().is_some() {
+            out.push_str("...");
+        }
+        out
+    }
+
     pub(crate) fn render_plugins_window(&mut self, ctx: &egui::Context) {
         if !self.windows.plugins_open {
             return;
@@ -1563,6 +1601,8 @@ impl GuiApp {
                                                 {
                                                     continue;
                                                 }
+                                                let display_label =
+                                                    Self::truncate_plugin_list_name(&label, 44);
                                                 let response = ui
                                                     .allocate_ui_with_layout(
                                                         egui::vec2(ui.available_width(), 22.0),
@@ -1573,7 +1613,7 @@ impl GuiApp {
                                                             ui.add(egui::SelectableLabel::new(
                                                                 self.windows.plugin_selected_index
                                                                     == Some(idx),
-                                                                egui::RichText::new(label)
+                                                                egui::RichText::new(display_label)
                                                                     .size(14.0),
                                                             ))
                                                         },
@@ -1650,6 +1690,7 @@ impl GuiApp {
         title: &str,
         add_label: &str,
         fields: &mut Vec<PluginFieldDraft>,
+        show_default_value: bool,
     ) -> bool {
         let mut changed = false;
         egui::Frame::group(ui.style())
@@ -1710,17 +1751,19 @@ impl GuiApp {
                                 .to_string();
                     }
                 }
-                let default_hint =
-                    Self::plugin_creator_default_by_type(&fields[idx].type_name).to_string();
-                if ui
-                    .add_sized(
-                        [120.0, 26.0],
-                        egui::TextEdit::singleline(&mut fields[idx].default_value)
-                            .hint_text(default_hint),
-                    )
-                    .changed()
-                {
-                    changed = true;
+                if show_default_value {
+                    let default_hint =
+                        Self::plugin_creator_default_by_type(&fields[idx].type_name).to_string();
+                    if ui
+                        .add_sized(
+                            [120.0, 26.0],
+                            egui::TextEdit::singleline(&mut fields[idx].default_value)
+                                .hint_text(default_hint),
+                        )
+                        .changed()
+                    {
+                        changed = true;
+                    }
                 }
                 if ui.small_button("Remove").clicked() {
                     remove = true;
@@ -1856,6 +1899,7 @@ impl GuiApp {
                         "Variables",
                         "Add Variable",
                         &mut self.new_plugin_draft.variables,
+                        true,
                     );
                     ui.add_space(8.0);
                     changed |= Self::render_new_plugin_fields_section(
@@ -1864,6 +1908,7 @@ impl GuiApp {
                         "Inputs",
                         "Add Input",
                         &mut self.new_plugin_draft.inputs,
+                        false,
                     );
                     ui.add_space(8.0);
                     changed |= Self::render_new_plugin_fields_section(
@@ -1872,6 +1917,7 @@ impl GuiApp {
                         "Outputs",
                         "Add Output",
                         &mut self.new_plugin_draft.outputs,
+                        false,
                     );
                     ui.add_space(8.0);
                     changed |= Self::render_new_plugin_fields_section(
@@ -1880,6 +1926,7 @@ impl GuiApp {
                         "Internal Variables",
                         "Add Internal Variable",
                         &mut self.new_plugin_draft.internal_variables,
+                        false,
                     );
 
                     ui.add_space(10.0);
