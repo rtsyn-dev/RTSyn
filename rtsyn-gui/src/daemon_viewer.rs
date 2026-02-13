@@ -180,6 +180,11 @@ impl DaemonPluginViewer {
         let refresh_hz = vars.get("refresh_hz").copied().unwrap_or(60.0);
         let window_ms = if let Some(window_ms) = vars.get("window_ms") {
             *window_ms
+        } else if let (Some(ms_div), Some(divisions)) = (
+            vars.get("timebase_ms_div"),
+            vars.get("timebase_divisions"),
+        ) {
+            ms_div * divisions
         } else {
             let multiplier = vars.get("window_multiplier").copied().unwrap_or(10000.0);
             let value = vars.get("window_value").copied().unwrap_or(10.0);

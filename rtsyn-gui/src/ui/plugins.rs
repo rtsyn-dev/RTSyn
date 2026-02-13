@@ -515,8 +515,244 @@ impl GuiApp {
                                             | "performance_monitor"
                                             | "comedi_daq"
                                     );
+                                    let plugin_ui_schema = self
+                                        .plugin_manager
+                                        .installed_plugins
+                                        .iter()
+                                        .find(|p| p.manifest.kind == plugin.kind)
+                                        .and_then(|p| p.ui_schema.clone());
                                     if !is_app_plugin {
-                                        match plugin.config {
+                                        if let Some(schema) = plugin_ui_schema.as_ref() {
+                                            match plugin.config {
+                                                Value::Object(ref mut map) => {
+                                                    for field in &schema.fields {
+                                                        if map.contains_key(&field.key) {
+                                                            continue;
+                                                        }
+                                                        let default_value = field.default.clone().unwrap_or_else(|| {
+                                                            match &field.field_type {
+                                                                rtsyn_plugin::ui::FieldType::Integer { .. } => {
+                                                                    Value::from(0)
+                                                                }
+                                                                rtsyn_plugin::ui::FieldType::Float { .. } => {
+                                                                    Value::from(0.0)
+                                                                }
+                                                                rtsyn_plugin::ui::FieldType::Text { .. }
+                                                                | rtsyn_plugin::ui::FieldType::FilePath { .. } => {
+                                                                    Value::from("")
+                                                                }
+                                                                rtsyn_plugin::ui::FieldType::Boolean => {
+                                                                    Value::from(false)
+                                                                }
+                                                                rtsyn_plugin::ui::FieldType::Choice { options } => {
+                                                                    Value::from(
+                                                                        options
+                                                                            .first()
+                                                                            .cloned()
+                                                                            .unwrap_or_default(),
+                                                                    )
+                                                                }
+                                                                rtsyn_plugin::ui::FieldType::DynamicList { .. } => {
+                                                                    Value::Array(Vec::new())
+                                                                }
+                                                            }
+                                                        });
+                                                        map.insert(field.key.clone(), default_value);
+                                                        plugin_changed = true;
+                                                    }
+
+                                                    if !schema.fields.is_empty() {
+                                                        egui::CollapsingHeader::new(
+                                                            RichText::new("\u{f013}  Variables")
+                                                                .size(13.0)
+                                                                .strong(),
+                                                        )
+                                                        .default_open(starts_expanded)
+                                                        .show(ui, |ui| {
+                                                            ui.add_space(4.0);
+                                                            let label_w = 140.0;
+                                                            let value_w = (ui.available_width()
+                                                                - label_w
+                                                                - 8.0)
+                                                                .max(80.0);
+                                                            for field in &schema.fields {
+                                                                let key = field.key.clone();
+                                                                let label = field.label.clone();
+                                                                if let Some(value) = map.get_mut(&key) {
+                                                                    kv_row_wrapped(
+                                                                        ui,
+                                                                        &label,
+                                                                        label_w,
+                                                                        |ui| match &field.field_type {
+                                                                            rtsyn_plugin::ui::FieldType::Choice {
+                                                                                options,
+                                                                            } => {
+                                                                                let mut selected = value
+                                                                                    .as_str()
+                                                                                    .map(|s| s.to_string())
+                                                                                    .unwrap_or_else(|| {
+                                                                                        options
+                                                                                            .first()
+                                                                                            .cloned()
+                                                                                            .unwrap_or_default()
+                                                                                    });
+                                                                                let old = selected.clone();
+                                                                                egui::ComboBox::from_id_source((
+                                                                                    plugin.id,
+                                                                                    key.clone(),
+                                                                                    "non_app_choice",
+                                                                                ))
+                                                                                .selected_text(selected.clone())
+                                                                                .width(value_w)
+                                                                                .show_ui(ui, |ui| {
+                                                                                    for option in options {
+                                                                                        let _ = ui.selectable_value(
+                                                                                            &mut selected,
+                                                                                            option.clone(),
+                                                                                            option,
+                                                                                        );
+                                                                                    }
+                                                                                });
+                                                                                if selected != old {
+                                                                                    *value = Value::String(selected);
+                                                                                    plugin_changed = true;
+                                                                                }
+                                                                            }
+                                                                            rtsyn_plugin::ui::FieldType::Boolean => {
+                                                                                let mut checked =
+                                                                                    value.as_bool().unwrap_or(false);
+                                                                                if ui
+                                                                                    .add_sized(
+                                                                                        [value_w, 0.0],
+                                                                                        egui::Checkbox::new(
+                                                                                            &mut checked,
+                                                                                            "",
+                                                                                        ),
+                                                                                    )
+                                                                                    .changed()
+                                                                                {
+                                                                                    *value = Value::Bool(checked);
+                                                                                    plugin_changed = true;
+                                                                                }
+                                                                            }
+                                                                            rtsyn_plugin::ui::FieldType::Integer {
+                                                                                min,
+                                                                                max,
+                                                                                step,
+                                                                            } => {
+                                                                                let mut val = value
+                                                                                    .as_i64()
+                                                                                    .unwrap_or_else(|| {
+                                                                                        value.as_f64().unwrap_or(0.0)
+                                                                                            as i64
+                                                                                    });
+                                                                                let range = match (min, max) {
+                                                                                    (Some(mn), Some(mx)) => {
+                                                                                        *mn..=*mx
+                                                                                    }
+                                                                                    (Some(mn), None) => {
+                                                                                        *mn..=i64::MAX
+                                                                                    }
+                                                                                    (None, Some(mx)) => {
+                                                                                        i64::MIN..=*mx
+                                                                                    }
+                                                                                    (None, None) => {
+                                                                                        i64::MIN..=i64::MAX
+                                                                                    }
+                                                                                };
+                                                                                if ui
+                                                                                    .add_sized(
+                                                                                        [value_w, 0.0],
+                                                                                        egui::DragValue::new(
+                                                                                            &mut val,
+                                                                                        )
+                                                                                        .speed(*step as f64)
+                                                                                        .clamp_range(range),
+                                                                                    )
+                                                                                    .changed()
+                                                                                {
+                                                                                    *value = Value::from(val);
+                                                                                    plugin_changed = true;
+                                                                                }
+                                                                            }
+                                                                            rtsyn_plugin::ui::FieldType::Float {
+                                                                                min,
+                                                                                max,
+                                                                                step,
+                                                                            } => {
+                                                                                let mut val =
+                                                                                    value.as_f64().unwrap_or(0.0);
+                                                                                let range = match (min, max) {
+                                                                                    (Some(mn), Some(mx)) => {
+                                                                                        *mn..=*mx
+                                                                                    }
+                                                                                    (Some(mn), None) => {
+                                                                                        *mn..=f64::INFINITY
+                                                                                    }
+                                                                                    (None, Some(mx)) => {
+                                                                                        f64::NEG_INFINITY..=*mx
+                                                                                    }
+                                                                                    (None, None) => {
+                                                                                        f64::NEG_INFINITY
+                                                                                            ..=f64::INFINITY
+                                                                                    }
+                                                                                };
+                                                                                if ui
+                                                                                    .add_sized(
+                                                                                        [value_w, 0.0],
+                                                                                        egui::DragValue::new(
+                                                                                            &mut val,
+                                                                                        )
+                                                                                        .speed(*step)
+                                                                                        .clamp_range(range),
+                                                                                    )
+                                                                                    .changed()
+                                                                                {
+                                                                                    *value = Value::from(val);
+                                                                                    plugin_changed = true;
+                                                                                }
+                                                                            }
+                                                                            rtsyn_plugin::ui::FieldType::Text {
+                                                                                ..
+                                                                            }
+                                                                            | rtsyn_plugin::ui::FieldType::FilePath {
+                                                                                ..
+                                                                            } => {
+                                                                                let mut text = value
+                                                                                    .as_str()
+                                                                                    .unwrap_or("")
+                                                                                    .to_string();
+                                                                                if ui
+                                                                                    .add_sized(
+                                                                                        [value_w, 0.0],
+                                                                                        egui::TextEdit::singleline(
+                                                                                            &mut text,
+                                                                                        ),
+                                                                                    )
+                                                                                    .changed()
+                                                                                {
+                                                                                    *value = Value::String(text);
+                                                                                    plugin_changed = true;
+                                                                                }
+                                                                            }
+                                                                            rtsyn_plugin::ui::FieldType::DynamicList {
+                                                                                ..
+                                                                            } => {
+                                                                                ui.label("List field not editable in this panel");
+                                                                            }
+                                                                        },
+                                                                    );
+                                                                }
+                                                            }
+                                                        });
+                                                    }
+                                                }
+                                                _ => {
+                                                    ui.label("Config is not an object.");
+                                                }
+                                            }
+                                        } else {
+                                            match plugin.config {
                                             Value::Object(ref mut map) => {
                                                 let mut vars = metadata_by_kind
                                                     .get(&plugin.kind)
@@ -662,6 +898,7 @@ impl GuiApp {
                                             _ => {
                                                 ui.label("Config is not an object.");
                                             }
+                                        }
                                         }
                                     }
 
@@ -1055,7 +1292,24 @@ impl GuiApp {
                                                                         u.to_string()
                                                                     } else {
                                                                         num.as_f64()
-                                                                            .map(|v| format!("{:.4}", v))
+                                                                            .map(|v| {
+                                                                                if v.is_finite()
+                                                                                    && (v.fract()
+                                                                                        - 0.0)
+                                                                                        .abs()
+                                                                                        < f64::EPSILON
+                                                                                {
+                                                                                    format!(
+                                                                                        "{:.0}",
+                                                                                        v
+                                                                                    )
+                                                                                } else {
+                                                                                    format!(
+                                                                                        "{:.4}",
+                                                                                        v
+                                                                                    )
+                                                                                }
+                                                                            })
                                                                             .unwrap_or_else(|| value.to_string())
                                                                     }
                                                                 }

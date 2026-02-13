@@ -750,7 +750,7 @@ impl GuiApp {
             .to_string()
     }
 
-    fn plotter_config_from_value(&self, config: &Value) -> (usize, f64) {
+    fn plotter_config_from_value(&self, config: &Value) -> (usize, f64, f64) {
         let input_count = config
             .get("input_count")
             .and_then(|v| v.as_u64())
@@ -759,7 +759,22 @@ impl GuiApp {
             .get("refresh_hz")
             .and_then(|v| v.as_f64())
             .unwrap_or(60.0);
-        (input_count, refresh_hz)
+        let window_ms = config
+            .get("window_ms")
+            .and_then(|v| v.as_f64())
+            .or_else(|| {
+                let div = config.get("timebase_ms_div").and_then(|v| v.as_f64())?;
+                let cols = config.get("timebase_divisions").and_then(|v| v.as_f64())?;
+                Some(div * cols)
+            })
+            .or_else(|| {
+                let mult = config.get("window_multiplier").and_then(|v| v.as_f64())?;
+                let val = config.get("window_value").and_then(|v| v.as_f64())?;
+                Some(mult * val)
+            })
+            .unwrap_or(10_000.0)
+            .max(1.0);
+        (input_count, refresh_hz, window_ms)
     }
 
     fn plotter_series_names(&self, plotter_id: u64, input_count: usize) -> Vec<String> {
@@ -827,13 +842,7 @@ impl GuiApp {
                 continue;
             }
             live_plotter_ids.insert(plugin.id);
-            let (input_count, refresh_hz) = self.plotter_config_from_value(&plugin.config);
-            let window_ms = self
-                .plotter_manager
-                .plotter_preview_settings
-                .get(&plugin.id)
-                .map(|(_, _, _, _, _, _, _, _, _, _, _, window_ms, _, _)| *window_ms)
-                .unwrap_or(10_000.0);
+            let (input_count, refresh_hz, window_ms) = self.plotter_config_from_value(&plugin.config);
             let series_names = self.plotter_series_names(plugin.id, input_count);
             let is_open = self
                 .plotter_manager
