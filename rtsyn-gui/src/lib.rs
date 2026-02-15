@@ -1,7 +1,6 @@
 use eframe::{egui, egui::RichText};
 use rtsyn_runtime::runtime::{LogicMessage, LogicSettings, LogicState};
 use rtsyn_runtime::spawn_runtime;
-use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::process::{self, Command};
@@ -99,7 +98,8 @@ use file_dialogs::FileDialogManager;
 use notifications::Notification;
 use plotter::LivePlotter;
 use plotter_manager::PlotterManager;
-use rtsyn_core::plugin::PluginManager;
+use rtsyn_core::plotter_view::{live_plotter_config, live_plotter_series_names};
+use rtsyn_core::plugin::{plugin_display_name as core_plugin_display_name, PluginManager};
 use rtsyn_core::workspace::WorkspaceManager;
 use state::{
     ConfirmAction, FrequencyUnit, PeriodUnit, TimeUnit, WorkspaceDialogMode, WorkspaceTimingTab,
@@ -717,27 +717,6 @@ impl GuiApp {
         self.ports_for_kind(&plugin.kind, inputs)
     }
 
-    fn plugin_display_name(&self, plugin_id: u64) -> String {
-        let name_by_kind: HashMap<String, String> = self
-            .plugin_manager
-            .installed_plugins
-            .iter()
-            .map(|plugin| (plugin.manifest.kind.clone(), plugin.manifest.name.clone()))
-            .collect();
-        self.workspace_manager
-            .workspace
-            .plugins
-            .iter()
-            .find(|plugin| plugin.id == plugin_id)
-            .map(|plugin| {
-                name_by_kind
-                    .get(&plugin.kind)
-                    .cloned()
-                    .unwrap_or_else(|| Self::display_kind(&plugin.kind))
-            })
-            .unwrap_or_else(|| "plugin".to_string())
-    }
-
     fn default_csv_path() -> String {
         let base = std::env::var("HOME")
             .map(|home| PathBuf::from(home).join("rtsyn-recorded"))
@@ -756,51 +735,12 @@ impl GuiApp {
             .to_string()
     }
 
-    fn plotter_config_from_value(&self, config: &Value) -> (usize, f64, f64) {
-        let input_count = config
-            .get("input_count")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as usize;
-        let refresh_hz = config
-            .get("refresh_hz")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(60.0);
-        let window_ms = config
-            .get("window_ms")
-            .and_then(|v| v.as_f64())
-            .or_else(|| {
-                let div = config.get("timebase_ms_div").and_then(|v| v.as_f64())?;
-                let cols = config.get("timebase_divisions").and_then(|v| v.as_f64())?;
-                Some(div * cols)
-            })
-            .or_else(|| {
-                let mult = config.get("window_multiplier").and_then(|v| v.as_f64())?;
-                let val = config.get("window_value").and_then(|v| v.as_f64())?;
-                Some(mult * val)
-            })
-            .unwrap_or(10_000.0)
-            .max(1.0);
-        (input_count, refresh_hz, window_ms)
-    }
-
-    fn plotter_series_names(&self, plotter_id: u64, input_count: usize) -> Vec<String> {
-        let mut names = Vec::with_capacity(input_count);
-        for idx in 0..input_count {
-            let port = format!("in_{idx}");
-            if let Some(conn) = self
-                .workspace_manager
-                .workspace
-                .connections
-                .iter()
-                .find(|conn| conn.to_plugin == plotter_id && conn.to_port == port)
-            {
-                let source_name = self.plugin_display_name(conn.from_plugin);
-                names.push(format!("{source_name}:{}", conn.from_port));
-            } else {
-                names.push(port);
-            }
-        }
-        names
+    fn plugin_display_name(&self, plugin_id: u64) -> String {
+        core_plugin_display_name(
+            &self.plugin_manager.installed_plugins,
+            &self.workspace_manager.workspace,
+            plugin_id,
+        )
     }
 
     fn plotter_input_values(
@@ -840,7 +780,6 @@ impl GuiApp {
         samples: &HashMap<u64, Vec<(u64, Vec<f64>)>>,
     ) {
         let mut max_refresh = 1.0;
-        let time_s = tick as f64 * self.state_sync.logic_period_seconds.max(0.0);
         let mut live_plotter_ids: HashSet<u64> = HashSet::new();
 
         for plugin in &self.workspace_manager.workspace.plugins {
@@ -848,9 +787,24 @@ impl GuiApp {
                 continue;
             }
             live_plotter_ids.insert(plugin.id);
-            let (input_count, refresh_hz, window_ms) =
-                self.plotter_config_from_value(&plugin.config);
-            let series_names = self.plotter_series_names(plugin.id, input_count);
+            let fallback_sample = samples
+                .get(&plugin.id)
+                .and_then(|rows| rows.last())
+                .map(|(_, values)| values.as_slice());
+            let (input_count, refresh_hz, config_window_ms) =
+                live_plotter_config(&plugin.config, fallback_sample);
+            let preview_window_ms = self
+                .plotter_manager
+                .plotter_preview_settings
+                .get(&plugin.id)
+                .map(|settings| settings.11);
+            let effective_window_ms = preview_window_ms.unwrap_or(config_window_ms).max(1.0);
+            let series_names = live_plotter_series_names(
+                &self.workspace_manager.workspace,
+                &self.plugin_manager.installed_plugins,
+                plugin.id,
+                input_count,
+            );
             let is_open = self
                 .plotter_manager
                 .plotters
@@ -868,34 +822,79 @@ impl GuiApp {
                 .entry(plugin.id)
                 .or_insert_with(|| Arc::new(Mutex::new(LivePlotter::new(plugin.id))));
             if let Ok(mut plotter) = plotter.lock() {
+                // Window size must be set before update_config, because decimation
+                // parameters are derived from current window_ms.
+                plotter.set_window_ms(effective_window_ms);
                 plotter.update_config(
                     input_count,
                     refresh_hz,
                     self.state_sync.logic_period_seconds,
                 );
-                plotter.set_window_ms(window_ms);
                 plotter.set_series_names(series_names);
-                if plotter.open && plugin.running {
+                if plugin.running {
                     if let Some(samples) = samples.get(&plugin.id) {
-                        for (sample_tick, values) in samples {
-                            let sample_time_s =
-                                *sample_tick as f64 * self.state_sync.logic_period_seconds.max(0.0);
-                            plotter.push_sample(
+                        let sample_budget = if plotter.open { 8192 } else { 1024 };
+                        let mut selected_indices: Vec<usize> = if samples.len() <= sample_budget {
+                            (0..samples.len()).collect()
+                        } else {
+                            // Preserve first-channel extrema per chunk to avoid cutting spikes.
+                            let chunk = (samples.len() + sample_budget - 1) / sample_budget;
+                            let mut idxs = Vec::with_capacity(sample_budget * 2);
+                            let mut start = 0usize;
+                            while start < samples.len() {
+                                let end = (start + chunk).min(samples.len());
+                                idxs.push(start);
+                                if end - start > 2 {
+                                    let mut min_i = start;
+                                    let mut max_i = start;
+                                    let mut min_v =
+                                        samples[start].1.first().copied().unwrap_or(0.0);
+                                    let mut max_v = min_v;
+                                    for (i, (_, values)) in
+                                        samples.iter().enumerate().take(end).skip(start + 1)
+                                    {
+                                        let v = values.first().copied().unwrap_or(0.0);
+                                        if v < min_v {
+                                            min_v = v;
+                                            min_i = i;
+                                        }
+                                        if v > max_v {
+                                            max_v = v;
+                                            max_i = i;
+                                        }
+                                    }
+                                    idxs.push(min_i);
+                                    idxs.push(max_i);
+                                }
+                                idxs.push(end - 1);
+                                start = end;
+                            }
+                            idxs.sort_unstable();
+                            idxs.dedup();
+                            idxs
+                        };
+                        if selected_indices.len() > sample_budget * 2 {
+                            let step = (selected_indices.len() / (sample_budget * 2)).max(1);
+                            selected_indices = selected_indices.into_iter().step_by(step).collect();
+                        }
+                        for idx in selected_indices {
+                            let (sample_tick, values) = &samples[idx];
+                            plotter.push_sample_from_tick(
                                 *sample_tick,
-                                sample_time_s,
+                                self.state_sync.logic_period_seconds,
                                 self.state_sync.logic_time_scale,
                                 values,
                             );
                         }
-                    } else {
-                        plotter.push_sample(
+                    } else if plotter.open {
+                        plotter.push_sample_from_tick(
                             tick,
-                            time_s,
+                            self.state_sync.logic_period_seconds,
                             self.state_sync.logic_time_scale,
                             &values,
                         );
                     }
-                    if refresh_hz > max_refresh {
+                    if plotter.open && refresh_hz > max_refresh {
                         max_refresh = refresh_hz;
                     }
                 }

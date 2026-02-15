@@ -454,9 +454,11 @@ impl eframe::App for DaemonPluginViewer {
                     Self::plotter_config(&view.state, &view.samples);
                 self.last_refresh_hz = refresh_hz;
                 let period_seconds = view.period_seconds;
+                // Window size must be set before update_config, because decimation
+                // parameters are derived from current window_ms.
+                self.plotter.set_window_ms(window_ms);
                 self.plotter
                     .update_config(input_count, refresh_hz, period_seconds);
-                self.plotter.set_window_ms(window_ms);
                 if !view.series_names.is_empty() {
                     self.plotter.set_series_names(view.series_names.clone());
                 } else {
@@ -476,8 +478,12 @@ impl eframe::App for DaemonPluginViewer {
                 let mut has_samples = false;
                 for (tick, values) in &view.samples {
                     if self.last_sample_tick.map_or(true, |last| *tick > last) {
-                        let time_s = *tick as f64 * period_seconds;
-                        self.plotter.push_sample(*tick, time_s, time_scale, values);
+                        self.plotter.push_sample_from_tick(
+                            *tick,
+                            period_seconds,
+                            time_scale,
+                            values,
+                        );
                         if *tick > latest_tick {
                             latest_tick = *tick;
                         }

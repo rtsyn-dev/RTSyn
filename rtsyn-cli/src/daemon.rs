@@ -4,6 +4,9 @@ use crate::protocol::{
     RuntimePluginSummary, WorkspaceSummary, DEFAULT_SOCKET_PATH,
 };
 use rtsyn_core::connection::{extendable_input_index, next_available_extendable_input_index};
+use rtsyn_core::plotter_view::{
+    live_plotter_config, live_plotter_series_names, live_plotter_window_ms,
+};
 use rtsyn_core::plugin::{
     is_extendable_inputs, InstalledPlugin, PluginCatalog, PluginMetadataSource,
 };
@@ -148,15 +151,37 @@ impl DaemonState {
     fn drain_logic_states(&mut self) {
         while let Ok(state_msg) = self.logic_state_rx.try_recv() {
             for (plugin_id, samples) in &state_msg.plotter_samples {
+                let max_history = self.max_plotter_history_for(*plugin_id);
                 let entry = self.plotter_history.entry(*plugin_id).or_default();
                 entry.extend(samples.iter().cloned());
-                if entry.len() > 5000 {
-                    let excess = entry.len() - 5000;
+                if entry.len() > max_history {
+                    let excess = entry.len() - max_history;
                     entry.drain(0..excess);
                 }
             }
             self.last_logic_state = Some(state_msg);
         }
+    }
+
+    fn max_plotter_history_for(&self, plugin_id: u64) -> usize {
+        let Some(plugin) = self
+            .workspace_manager
+            .workspace
+            .plugins
+            .iter()
+            .find(|p| p.id == plugin_id)
+        else {
+            return 50_000;
+        };
+
+        if plugin.kind != "live_plotter" {
+            return 50_000;
+        }
+
+        let period_s = self.logic_settings.period_seconds.max(1e-9);
+        let window_ms = live_plotter_window_ms(&plugin.config).max(1.0);
+        let expected = (window_ms / (period_s * 1000.0)).ceil() as usize;
+        expected.saturating_mul(2).clamp(20_000, 300_000)
     }
 }
 
@@ -848,11 +873,26 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
                 latest_state,
             ) {
                 Ok((kind, plugin_state, _)) => {
-                    let series_names = build_plotter_series_names(
-                        &state.workspace_manager,
+                    let input_count = state
+                        .workspace_manager
+                        .workspace
+                        .plugins
+                        .iter()
+                        .find(|p| p.id == id)
+                        .map(|p| {
+                            let fallback_sample =
+                                samples.last().map(|(_, values)| values.as_slice());
+                            let (count, _, _) = live_plotter_config(&p.config, fallback_sample);
+                            count
+                        })
+                        .unwrap_or_else(|| {
+                            samples.last().map(|(_, values)| values.len()).unwrap_or(0)
+                        });
+                    let series_names = live_plotter_series_names(
+                        &state.workspace_manager.workspace,
                         &state.catalog.manager.installed_plugins,
                         id,
-                        &samples,
+                        input_count,
                     );
                     DaemonResponse::RuntimePluginView {
                         id,
@@ -1071,72 +1111,6 @@ fn build_runtime_state(
     }
 }
 
-fn build_plotter_series_names(
-    manager: &WorkspaceManager,
-    installed: &[rtsyn_core::plugin::InstalledPlugin],
-    plotter_id: u64,
-    samples: &[(u64, Vec<f64>)],
-) -> Vec<String> {
-    let plugin = manager
-        .workspace
-        .plugins
-        .iter()
-        .find(|p| p.id == plotter_id);
-    let input_count = if let Some(plugin) = plugin {
-        plugin
-            .config
-            .get("input_count")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as usize
-    } else {
-        0
-    };
-    let mut input_count = input_count;
-    if input_count == 0 {
-        if let Some((_, values)) = samples.last() {
-            input_count = values.len();
-        }
-    }
-
-    let name_by_kind: std::collections::HashMap<String, String> = installed
-        .iter()
-        .map(|plugin| (plugin.manifest.kind.clone(), plugin.manifest.name.clone()))
-        .collect();
-    let plugin_display_name = |plugin_id: u64| {
-        manager
-            .workspace
-            .plugins
-            .iter()
-            .find(|plugin| plugin.id == plugin_id)
-            .map(|plugin| {
-                name_by_kind.get(&plugin.kind).cloned().unwrap_or_else(|| {
-                    rtsyn_core::plugin::PluginManager::display_kind(&plugin.kind)
-                })
-            })
-            .unwrap_or_else(|| "plugin".to_string())
-    };
-
-    let mut names = Vec::with_capacity(input_count);
-    for idx in 0..input_count {
-        let port = format!("in_{idx}");
-        if let Some(conn) = manager
-            .workspace
-            .connections
-            .iter()
-            .find(|conn| conn.to_plugin == plotter_id && conn.to_port == port)
-        {
-            let source_name = plugin_display_name(conn.from_plugin);
-            names.push(format!(
-                "{source_name}({}):{}",
-                conn.from_plugin, conn.from_port
-            ));
-        } else {
-            names.push(port);
-        }
-    }
-    names
-}
-
 fn normalize_plugin_key(input: &str) -> String {
     let trimmed = input.trim();
     if let Some(start) = trimmed.rfind('(') {
@@ -1147,4 +1121,18 @@ fn normalize_plugin_key(input: &str) -> String {
         }
     }
     trimmed.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use rtsyn_core::plotter_view::live_plotter_window_ms;
+
+    #[test]
+    fn plotter_window_ms_parses_timebase_divisions() {
+        let config = serde_json::json!({
+            "timebase_ms_div": 5000.0,
+            "timebase_divisions": 10.0
+        });
+        assert!((live_plotter_window_ms(&config) - 50_000.0).abs() < f64::EPSILON);
+    }
 }

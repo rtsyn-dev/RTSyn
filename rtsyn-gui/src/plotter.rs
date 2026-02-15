@@ -34,6 +34,7 @@ pub(crate) struct LivePlotter {
     bucket_count: u64,
     bucket_minmax: Vec<SeriesMinMax>,
     last_tick: Option<u64>,
+    last_time_s: Option<f64>,
     last_time_x: Option<f64>,
     last_time_scale: f64,
     series: Vec<PlotSeries>,
@@ -66,6 +67,7 @@ impl LivePlotter {
             bucket_count: 0,
             bucket_minmax: Vec::new(),
             last_tick: None,
+            last_time_s: None,
             last_time_x: None,
             last_time_scale: 1000.0,
             series: Vec::new(),
@@ -83,14 +85,16 @@ impl LivePlotter {
             0
         };
         const MIN_POINTS: usize = 200;
-        const MAX_POINTS: usize = 100000;
+        // Target point budget for interactive rendering. Beyond this we bucket.
+        const TARGET_POINTS: usize = 12_000;
         self.max_points = if expected_points == 0 {
             MIN_POINTS
         } else {
-            expected_points.clamp(MIN_POINTS, MAX_POINTS)
+            expected_points.clamp(MIN_POINTS, TARGET_POINTS)
         };
-        self.bucket_size = if expected_points > self.max_points && expected_points > 0 {
-            1 // Force no bucketing to avoid min-max artifacts
+        self.bucket_size = if expected_points > self.max_points && self.max_points > 0 {
+            // Keep roughly TARGET_POINTS visible by aggregating per bucket.
+            ((expected_points + self.max_points - 1) / self.max_points) as u64
         } else {
             1
         };
@@ -142,6 +146,7 @@ impl LivePlotter {
             return;
         }
         self.last_tick = Some(tick);
+        self.last_time_s = Some(time_s);
         let time_x = time_s * time_scale;
         if let (Some(_prev_time), prev_scale) = (self.last_time_x, self.last_time_scale) {
             let scale_shift = (prev_scale - time_scale).abs() > f64::EPSILON;
@@ -219,6 +224,23 @@ impl LivePlotter {
             }
         }
         self.prune_old(time_x, time_scale);
+    }
+
+    pub(crate) fn push_sample_from_tick(
+        &mut self,
+        tick: u64,
+        period_s: f64,
+        time_scale: f64,
+        values: &[f64],
+    ) {
+        let period_s = period_s.max(0.0);
+        let time_s = match (self.last_tick, self.last_time_s) {
+            (Some(prev_tick), Some(prev_time_s)) if tick >= prev_tick => {
+                prev_time_s + (tick - prev_tick) as f64 * period_s
+            }
+            _ => tick as f64 * period_s,
+        };
+        self.push_sample(tick, time_s, time_scale, values);
     }
 
     pub(crate) fn render(&mut self, ui: &mut egui::Ui, title: &str, time_label: &str) {
@@ -903,6 +925,7 @@ impl LivePlotter {
             }
         }
         // Also prune raw data
+        const RAW_MAX_POINTS: usize = 300_000;
         for raw_series in &mut self.raw_series {
             while let Some((t, _)) = raw_series.front().copied() {
                 if t >= min_time {
@@ -910,7 +933,7 @@ impl LivePlotter {
                 }
                 raw_series.pop_front();
             }
-            while raw_series.len() > self.max_points_effective * 2 {
+            while raw_series.len() > RAW_MAX_POINTS {
                 raw_series.pop_front();
             }
         }
@@ -978,6 +1001,21 @@ fn palette_color(idx: usize) -> Color32 {
         Color32::from_rgb(214, 157, 133),
     ];
     COLORS[idx % COLORS.len()]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LivePlotter;
+
+    #[test]
+    fn high_rate_window_uses_bucketing() {
+        let mut plotter = LivePlotter::new(1);
+        plotter.set_window_ms(50_000.0);
+        plotter.update_config(1, 60.0, 0.0001); // 100 us
+
+        assert!(plotter.bucket_size > 1);
+        assert!(plotter.max_points_effective <= 24_000);
+    }
 }
 
 fn transform_value(value: f64, idx: usize, transforms: Option<&[SeriesTransform]>) -> Option<f64> {

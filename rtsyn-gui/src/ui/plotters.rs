@@ -380,6 +380,7 @@ impl GuiApp {
                 .get(&plugin_id)
                 .cloned();
             let time_label = self.state_sync.logic_time_label.clone();
+            let logic_period_seconds = self.state_sync.logic_period_seconds;
 
             ctx.show_viewport_deferred(viewport_id, builder, move |ctx, class| {
                 if class == egui::ViewportClass::Embedded {
@@ -677,6 +678,14 @@ impl GuiApp {
                                         state.series_names.len(),
                                     );
                                     ui.allocate_ui(preview_size, |ui| {
+                                        let input_count = plotter.input_count;
+                                        let refresh_hz = plotter.refresh_hz;
+                                        plotter.set_window_ms(state.window_ms);
+                                        plotter.update_config(
+                                            input_count,
+                                            refresh_hz,
+                                            logic_period_seconds,
+                                        );
                                         plotter.render_with_settings(
                                             ui,
                                             "",
@@ -1161,6 +1170,14 @@ impl GuiApp {
                             self.plotter_preview.series_names.len(),
                         );
                         ui.allocate_ui(preview_size, |ui| {
+                            let input_count = plotter.input_count;
+                            let refresh_hz = plotter.refresh_hz;
+                            plotter.set_window_ms(self.plotter_preview.window_ms);
+                            plotter.update_config(
+                                input_count,
+                                refresh_hz,
+                                self.state_sync.logic_period_seconds,
+                            );
                             plotter.render_with_settings(
                                 ui,
                                 "Preview",

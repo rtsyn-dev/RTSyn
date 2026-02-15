@@ -1065,12 +1065,17 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                 };
                 if last_state.elapsed() >= ui_interval {
                     // Limit plotter samples to prevent memory issues
+                    let max_samples_per_plugin = ((ui_interval.as_secs_f64()
+                        / settings.period_seconds.max(1e-9))
+                    .ceil() as usize)
+                        .saturating_mul(2)
+                        .clamp(128, 20_000);
                     let mut limited_plotter_samples = HashMap::new();
                     for (plugin_id, samples) in &plotter_samples {
                         let mut limited_samples = samples.clone();
-                        // Keep only the last 1000 samples per plugin to prevent memory overflow
-                        if limited_samples.len() > 1000 {
-                            limited_samples.drain(0..limited_samples.len() - 1000);
+                        if limited_samples.len() > max_samples_per_plugin {
+                            limited_samples
+                                .drain(0..limited_samples.len() - max_samples_per_plugin);
                         }
                         limited_plotter_samples.insert(*plugin_id, limited_samples);
                     }
@@ -1768,12 +1773,16 @@ pub fn run_runtime_current(
             };
             if last_state.elapsed() >= ui_interval {
                 // Limit plotter samples to prevent memory issues
+                let max_samples_per_plugin = ((ui_interval.as_secs_f64()
+                    / settings.period_seconds.max(1e-9))
+                .ceil() as usize)
+                    .saturating_mul(2)
+                    .clamp(128, 20_000);
                 let mut limited_plotter_samples = HashMap::new();
                 for (plugin_id, samples) in &plotter_samples {
                     let mut limited_samples = samples.clone();
-                    // Keep only the last 1000 samples per plugin to prevent memory overflow
-                    if limited_samples.len() > 1000 {
-                        limited_samples.drain(0..limited_samples.len() - 1000);
+                    if limited_samples.len() > max_samples_per_plugin {
+                        limited_samples.drain(0..limited_samples.len() - max_samples_per_plugin);
                     }
                     limited_plotter_samples.insert(*plugin_id, limited_samples);
                 }
