@@ -46,9 +46,18 @@ impl PluginMetadataSource for GuiMetadataSource<'_> {
 }
 
 impl GuiApp {
+    fn drain_plugin_compatibility_warnings_to_notifications(&mut self) {
+        for warning in self.plugin_manager.take_compatibility_warnings() {
+            if self.seen_compatibility_warnings.insert(warning.clone()) {
+                self.show_info("Plugin Compatibility", &warning);
+            }
+        }
+    }
+
     pub(crate) fn scan_detected_plugins(&mut self) {
         self.plugin_manager
             .scan_detected_plugins_in(&["plugins", "app_plugins"]);
+        self.drain_plugin_compatibility_warnings_to_notifications();
     }
 
     pub(crate) fn add_installed_plugin(&mut self, installed_index: usize) {
@@ -191,9 +200,11 @@ impl GuiApp {
             &metadata,
         ) {
             self.status = err;
+            self.show_info("Plugin Install Error", &self.status.clone());
             return;
         }
         self.status = "Plugin installed".to_string();
+        self.drain_plugin_compatibility_warnings_to_notifications();
     }
 
     pub(crate) fn refresh_installed_plugin(&mut self, kind: String, path: &Path) {
@@ -229,9 +240,11 @@ impl GuiApp {
             .refresh_installed_plugin(&kind, path, &metadata)
         {
             self.status = err;
+            self.show_info("Plugin Refresh Error", &self.status.clone());
             return;
         }
         self.status = "Plugin refreshed".to_string();
+        self.drain_plugin_compatibility_warnings_to_notifications();
     }
 
     pub(crate) fn refresh_installed_library_paths(&mut self) {
@@ -245,6 +258,7 @@ impl GuiApp {
 
     pub(crate) fn load_installed_plugins(&mut self) {
         self.plugin_manager.load_installed_plugins();
+        self.drain_plugin_compatibility_warnings_to_notifications();
     }
 
     pub(crate) fn refresh_installed_plugin_metadata_cache(&mut self) {

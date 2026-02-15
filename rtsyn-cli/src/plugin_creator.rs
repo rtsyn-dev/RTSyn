@@ -114,12 +114,19 @@ pub struct PluginVariable {
 }
 
 impl PluginVariable {
-    pub fn new(name: &str, field_type: FieldType, default_text: Option<&str>) -> Result<Self, String> {
+    pub fn new(
+        name: &str,
+        field_type: FieldType,
+        default_text: Option<&str>,
+    ) -> Result<Self, String> {
         let clean_name = to_snake_case(name);
         if clean_name.is_empty() {
             return Err("Variable name cannot be empty".to_string());
         }
-        let normalized_default = normalize_default(field_type, default_text.unwrap_or(field_type.default_text()))?;
+        let normalized_default = normalize_default(
+            field_type,
+            default_text.unwrap_or(field_type.default_text()),
+        )?;
         Ok(Self {
             name: clean_name,
             field_type,
@@ -252,8 +259,12 @@ pub fn create_plugin(req: &PluginCreateRequest) -> Result<PathBuf, String> {
     let core_state_type = format!("{kind}_state_t");
     let ffi_core_struct = format!("{rust_struct}Core");
 
-    fs::create_dir_all(&req.base_dir)
-        .map_err(|e| format!("Failed to create base directory {}: {e}", req.base_dir.display()))?;
+    fs::create_dir_all(&req.base_dir).map_err(|e| {
+        format!(
+            "Failed to create base directory {}: {e}",
+            req.base_dir.display()
+        )
+    })?;
     let plugin_dir = unique_dir(&req.base_dir, &folder_base);
     let src_dir = plugin_dir.join("src");
     fs::create_dir_all(&src_dir)
@@ -327,7 +338,8 @@ pub fn create_plugin(req: &PluginCreateRequest) -> Result<PathBuf, String> {
             format!(
                 "                [{:?}, {}],\n",
                 v.name,
-                serde_json::to_string(&v.default_json_value()).unwrap_or_else(|_| "null".to_string())
+                serde_json::to_string(&v.default_json_value())
+                    .unwrap_or_else(|_| "null".to_string())
             )
         })
         .collect::<String>();
@@ -374,8 +386,11 @@ pub fn create_plugin(req: &PluginCreateRequest) -> Result<PathBuf, String> {
         }
     } else {
         match (inputs.first(), outputs.first()) {
-            (Some(i), Some(o)) => format!("        let _ = period_seconds;\n        self.{o} = self.{i};"),
-            _ => "        let _ = period_seconds;\n        // TODO: implement plugin dynamics".to_string(),
+            (Some(i), Some(o)) => {
+                format!("        let _ = period_seconds;\n        self.{o} = self.{i};")
+            }
+            _ => "        let _ = period_seconds;\n        // TODO: implement plugin dynamics"
+                .to_string(),
         }
     };
     let c_process_body = if req.plugin_type == PluginKindType::Computational {
@@ -428,7 +443,12 @@ pub fn create_plugin(req: &PluginCreateRequest) -> Result<PathBuf, String> {
         ("PLUGIN_TYPE_STR", req.plugin_type.as_str().to_string()),
         (
             "LOADS_STARTED",
-            if req.behavior.autostart { "true" } else { "false" }.to_string(),
+            if req.behavior.autostart {
+                "true"
+            } else {
+                "false"
+            }
+            .to_string(),
         ),
         (
             "SUPPORTS_START_STOP",
@@ -441,19 +461,39 @@ pub fn create_plugin(req: &PluginCreateRequest) -> Result<PathBuf, String> {
         ),
         (
             "SUPPORTS_RESTART",
-            if req.behavior.supports_restart { "true" } else { "false" }.to_string(),
+            if req.behavior.supports_restart {
+                "true"
+            } else {
+                "false"
+            }
+            .to_string(),
         ),
         (
             "SUPPORTS_APPLY",
-            if req.behavior.supports_apply { "true" } else { "false" }.to_string(),
+            if req.behavior.supports_apply {
+                "true"
+            } else {
+                "false"
+            }
+            .to_string(),
         ),
         (
             "EXTERNAL_WINDOW",
-            if req.behavior.external_window { "true" } else { "false" }.to_string(),
+            if req.behavior.external_window {
+                "true"
+            } else {
+                "false"
+            }
+            .to_string(),
         ),
         (
             "STARTS_EXPANDED",
-            if req.behavior.starts_expanded { "true" } else { "false" }.to_string(),
+            if req.behavior.starts_expanded {
+                "true"
+            } else {
+                "false"
+            }
+            .to_string(),
         ),
         ("REQ_INPUT_JSON", req_input_json),
         ("REQ_OUTPUT_JSON", req_output_json),
@@ -557,20 +597,8 @@ fn strip_language_suffix(input: &str) -> String {
         let lower = name.to_ascii_lowercase();
         let mut changed = false;
         for suffix in [
-            " (rust)",
-            " (c++)",
-            " (cpp)",
-            " (c)",
-            "-rust",
-            "-cpp",
-            "-c",
-            "_rust",
-            "_cpp",
-            "_c",
-            " rust",
-            " c++",
-            " cpp",
-            " c",
+            " (rust)", " (c++)", " (cpp)", " (c)", "-rust", "-cpp", "-c", "_rust", "_cpp", "_c",
+            " rust", " c++", " cpp", " c",
         ] {
             if lower.ends_with(suffix) {
                 let new_len = name.len().saturating_sub(suffix.len());
@@ -606,7 +634,9 @@ pub fn normalize_default(field_type: FieldType, value: &str) -> Result<String, S
         FieldType::Bool => match candidate.to_ascii_lowercase().as_str() {
             "true" | "1" | "yes" | "y" => Ok("true".to_string()),
             "false" | "0" | "no" | "n" => Ok("false".to_string()),
-            _ => Err(format!("Invalid bool default '{candidate}' (use true/false)")),
+            _ => Err(format!(
+                "Invalid bool default '{candidate}' (use true/false)"
+            )),
         },
         FieldType::Int => {
             let v = candidate
@@ -719,17 +749,38 @@ mod tests {
 
     #[test]
     fn strip_language_suffix_removes_common_trailing_markers() {
-        assert_eq!(strip_language_suffix("Example Plugin (C)"), "Example Plugin");
-        assert_eq!(strip_language_suffix("Example Plugin (C++)"), "Example Plugin");
-        assert_eq!(strip_language_suffix("Example Plugin (Rust)"), "Example Plugin");
-        assert_eq!(strip_language_suffix("example-plugin-cpp"), "example-plugin");
-        assert_eq!(strip_language_suffix("example_plugin_rust"), "example_plugin");
+        assert_eq!(
+            strip_language_suffix("Example Plugin (C)"),
+            "Example Plugin"
+        );
+        assert_eq!(
+            strip_language_suffix("Example Plugin (C++)"),
+            "Example Plugin"
+        );
+        assert_eq!(
+            strip_language_suffix("Example Plugin (Rust)"),
+            "Example Plugin"
+        );
+        assert_eq!(
+            strip_language_suffix("example-plugin-cpp"),
+            "example-plugin"
+        );
+        assert_eq!(
+            strip_language_suffix("example_plugin_rust"),
+            "example_plugin"
+        );
         assert_eq!(strip_language_suffix("example plugin c"), "example plugin");
     }
 
     #[test]
     fn strip_language_suffix_keeps_regular_names() {
-        assert_eq!(strip_language_suffix("Hindmarsh Rose v2"), "Hindmarsh Rose v2");
-        assert_eq!(strip_language_suffix("Electrical Synapse"), "Electrical Synapse");
+        assert_eq!(
+            strip_language_suffix("Hindmarsh Rose v2"),
+            "Hindmarsh Rose v2"
+        );
+        assert_eq!(
+            strip_language_suffix("Electrical Synapse"),
+            "Electrical Synapse"
+        );
     }
 }

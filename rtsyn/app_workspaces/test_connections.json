@@ -5,9 +5,9 @@
   "plugins": [],
   "connections": [],
   "settings": {
-    "frequency_value": 250.0,
+    "frequency_value": 1000.0,
     "frequency_unit": "hz",
-    "period_value": 4.0,
+    "period_value": 1.0,
     "period_unit": "ms",
     "selected_cores": [
       0

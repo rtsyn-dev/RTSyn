@@ -67,8 +67,8 @@ impl GuiApp {
                         } else {
                             1.0
                         };
-                        *value = (*value + dir * sensitivity * ramp * dt * 60.0 * fine)
-                            .clamp(min, max);
+                        *value =
+                            (*value + dir * sensitivity * ramp * dt * 60.0 * fine).clamp(min, max);
                         ui.ctx().request_repaint();
                     }
                 } else {
@@ -85,8 +85,8 @@ impl GuiApp {
                         } else {
                             1.0
                         };
-                        *value = (*value + dir * sensitivity * ramp * dt * 60.0 * fine)
-                            .clamp(min, max);
+                        *value =
+                            (*value + dir * sensitivity * ramp * dt * 60.0 * fine).clamp(min, max);
                         ui.ctx().request_repaint();
                     }
                 }
@@ -123,7 +123,8 @@ impl GuiApp {
             let tip = center + egui::vec2(angle.cos(), angle.sin()) * (radius * 0.75);
 
             let stroke = egui::Stroke::new(1.25, ui.visuals().widgets.active.bg_fill);
-            ui.painter().circle_filled(center, radius, ui.visuals().widgets.inactive.bg_fill);
+            ui.painter()
+                .circle_filled(center, radius, ui.visuals().widgets.inactive.bg_fill);
             ui.painter().circle_stroke(center, radius, stroke);
             ui.painter().line_segment(
                 [center, tip],
@@ -279,21 +280,19 @@ impl GuiApp {
         }
     }
 
-    fn sync_series_controls_from_seed(
-        state: &mut PlotterPreviewState,
-        seed: &PlotterPreviewState,
-    ) {
+    fn sync_series_controls_from_seed(state: &mut PlotterPreviewState, seed: &PlotterPreviewState) {
         let target = seed.series_names.len();
         if target == state.series_names.len() {
             return;
         }
         if state.series_names.len() < target {
             for idx in state.series_names.len()..target {
-                state
-                    .series_names
-                    .push(seed.series_names.get(idx).cloned().unwrap_or_else(|| {
-                        format!("Series {}", idx + 1)
-                    }));
+                state.series_names.push(
+                    seed.series_names
+                        .get(idx)
+                        .cloned()
+                        .unwrap_or_else(|| format!("Series {}", idx + 1)),
+                );
                 state.series_scales.push(1.0);
                 state.series_offsets.push(0.0);
                 state.colors.push(
@@ -626,7 +625,8 @@ impl GuiApp {
                                         } else {
                                             available
                                         };
-                                        let visible = ((tabs_width / tab_w).floor() as usize).max(1);
+                                        let visible =
+                                            ((tabs_width / tab_w).floor() as usize).max(1);
                                         let end = (state.series_tab_start + visible).min(total);
                                         for i in state.series_tab_start..end {
                                             let full = state.series_names[i].clone();
@@ -661,7 +661,9 @@ impl GuiApp {
                                         ui.horizontal(|ui| {
                                             ui.add_sized(
                                                 [900.0, 22.0],
-                                                egui::TextEdit::singleline(&mut state.series_names[i]),
+                                                egui::TextEdit::singleline(
+                                                    &mut state.series_names[i],
+                                                ),
                                             );
                                             ui.color_edit_button_srgba(&mut state.colors[i]);
                                         });
@@ -702,7 +704,8 @@ impl GuiApp {
                                             |ui| {
                                                 let left_w = 180.0;
                                                 let right_w = 180.0;
-                                                let center_w = (row_w - left_w - right_w).max(260.0);
+                                                let center_w =
+                                                    (row_w - left_w - right_w).max(260.0);
 
                                                 ui.allocate_ui_with_layout(
                                                     egui::vec2(left_w, 150.0),
@@ -961,11 +964,12 @@ impl GuiApp {
             if live_count > 0 {
                 if state.series_names.len() < live_count {
                     for i in state.series_names.len()..live_count {
-                        state
-                            .series_names
-                            .push(live_names.get(i).cloned().unwrap_or_else(|| {
-                                format!("Series {}", i + 1)
-                            }));
+                        state.series_names.push(
+                            live_names
+                                .get(i)
+                                .cloned()
+                                .unwrap_or_else(|| format!("Series {}", i + 1)),
+                        );
                         state.series_scales.push(1.0);
                         state.series_offsets.push(0.0);
                         state.colors.push(match i % 8 {

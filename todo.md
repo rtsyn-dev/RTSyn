@@ -90,3 +90,4 @@
 - [ ] When clicking reinstall/uninstall to fast the plugin install/uninstall window gets leaked into notification view
 - [ ] Change dt in hindmarsh rose plugin
 - [ ] Do a poc to see if its better to extract all the plotter outside the plugin view and manage the connections in window
+- [ ] Optimize plotter (100 us dots)

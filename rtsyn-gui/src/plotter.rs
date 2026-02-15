@@ -73,12 +73,7 @@ impl LivePlotter {
         }
     }
 
-    pub(crate) fn update_config(
-        &mut self,
-        input_count: usize,
-        refresh_hz: f64,
-        period_s: f64,
-    ) {
+    pub(crate) fn update_config(&mut self, input_count: usize, refresh_hz: f64, period_s: f64) {
         self.input_count = input_count.min(MAX_SERIES);
         self.refresh_hz = if refresh_hz <= 0.0 { 60.0 } else { refresh_hz };
         let period_s = if period_s <= 0.0 { 0.0 } else { period_s };
@@ -228,20 +223,7 @@ impl LivePlotter {
 
     pub(crate) fn render(&mut self, ui: &mut egui::Ui, title: &str, time_label: &str) {
         self.render_with_settings(
-            ui,
-            title,
-            time_label,
-            true,
-            true,
-            true,
-            None,
-            None,
-            None,
-            None,
-            true,
-            None,
-            None,
-            None,
+            ui, title, time_label, true, true, true, None, None, None, None, true, None, None, None,
         );
     }
 

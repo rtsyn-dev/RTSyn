@@ -77,14 +77,13 @@ impl Plugin for LivePlotterPlugin {
 
     fn ui_schema(&self) -> Option<UISchema> {
         Some(
-            UISchema::new()
-                .field(
-                    ConfigField::float("refresh_hz", "Refresh Hz")
-                        .min_f(1.0)
-                        .max_f(120.0)
-                        .default_value(Value::from(60.0))
-                        .hint("Plot refresh rate"),
-                ),
+            UISchema::new().field(
+                ConfigField::float("refresh_hz", "Refresh Hz")
+                    .min_f(1.0)
+                    .max_f(120.0)
+                    .default_value(Value::from(60.0))
+                    .hint("Plot refresh rate"),
+            ),
         )
     }
 

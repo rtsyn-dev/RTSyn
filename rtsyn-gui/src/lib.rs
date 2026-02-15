@@ -312,6 +312,7 @@ struct GuiApp {
     plugin_creator_last_path: Option<PathBuf>,
     new_plugin_draft: NewPluginDraft,
     notifications: Vec<Notification>,
+    seen_compatibility_warnings: HashSet<String>,
     plugin_positions: HashMap<u64, egui::Pos2>,
     plugin_rects: HashMap<u64, egui::Rect>,
     connections_view_enabled: bool,
@@ -401,6 +402,7 @@ impl GuiApp {
             plugin_creator_last_path: None,
             new_plugin_draft: NewPluginDraft::default(),
             notifications: Vec::new(),
+            seen_compatibility_warnings: HashSet::new(),
             plugin_positions: HashMap::new(),
             plugin_rects: HashMap::new(),
             connections_view_enabled: true,
@@ -430,6 +432,10 @@ impl GuiApp {
             uml_export_height: 1080,
             uml_preview_zoom: 0.0,
         };
+        for warning in app.plugin_manager.take_compatibility_warnings() {
+            app.show_info("Plugin Compatibility", &warning);
+            app.seen_compatibility_warnings.insert(warning);
+        }
         app.refresh_installed_plugin_metadata_cache();
         app.apply_workspace_settings();
         app
@@ -842,7 +848,8 @@ impl GuiApp {
                 continue;
             }
             live_plotter_ids.insert(plugin.id);
-            let (input_count, refresh_hz, window_ms) = self.plotter_config_from_value(&plugin.config);
+            let (input_count, refresh_hz, window_ms) =
+                self.plotter_config_from_value(&plugin.config);
             let series_names = self.plotter_series_names(plugin.id, input_count);
             let is_open = self
                 .plotter_manager

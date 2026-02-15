@@ -475,9 +475,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             DaemonRequest::RuntimeSettingsSet { json }
                         }
                         RuntimeSettingsCommands::Save => DaemonRequest::RuntimeSettingsSave,
-                        RuntimeSettingsCommands::Restore => {
-                            DaemonRequest::RuntimeSettingsRestore
-                        }
+                        RuntimeSettingsCommands::Restore => DaemonRequest::RuntimeSettingsRestore,
                         RuntimeSettingsCommands::Options { json_query } => {
                             settings_json_query = json_query;
                             DaemonRequest::RuntimeSettingsOptions
@@ -633,7 +631,10 @@ fn run_plugin_creator_wizard() -> Result<(), String> {
 
     let mut inputs = Vec::with_capacity(n_inputs);
     for i in 0..n_inputs {
-        let v = prompt_line(&format!("Input #{} name: ", i + 1), Some(&format!("in_{i}")))?;
+        let v = prompt_line(
+            &format!("Input #{} name: ", i + 1),
+            Some(&format!("in_{i}")),
+        )?;
         inputs.push(v);
     }
     let mut outputs = Vec::with_capacity(n_outputs);
@@ -686,10 +687,14 @@ fn run_plugin_creator_wizard() -> Result<(), String> {
         variables.push(var);
     }
 
-    let required_input_ports_csv =
-        prompt_line("Required connected input ports to start (csv, optional): ", Some(""))?;
-    let required_output_ports_csv =
-        prompt_line("Required connected output ports to start (csv, optional): ", Some(""))?;
+    let required_input_ports_csv = prompt_line(
+        "Required connected input ports to start (csv, optional): ",
+        Some(""),
+    )?;
+    let required_output_ports_csv = prompt_line(
+        "Required connected output ports to start (csv, optional): ",
+        Some(""),
+    )?;
 
     let req = PluginCreateRequest {
         base_dir: std::path::PathBuf::from(base_dir.trim()),

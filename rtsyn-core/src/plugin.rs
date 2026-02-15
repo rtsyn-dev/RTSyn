@@ -5,6 +5,7 @@ use live_plotter_plugin::LivePlotterPlugin;
 use performance_monitor_plugin::PerformanceMonitorPlugin;
 use rtsyn_plugin::ui::{DisplaySchema, PluginBehavior, UISchema};
 use rtsyn_plugin::Plugin;
+use rtsyn_plugin::RTSYN_PLUGIN_ABI_VERSION;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -21,6 +22,7 @@ pub struct PluginManifest {
     pub version: Option<String>,
     pub description: Option<String>,
     pub library: Option<String>,
+    pub api_version: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,6 +69,7 @@ pub struct PluginManager {
     pub installed_plugins: Vec<InstalledPlugin>,
     pub plugin_behaviors: HashMap<String, PluginBehavior>,
     pub detected_plugins: Vec<DetectedPlugin>,
+    pub compatibility_warnings: Vec<String>,
     pub next_plugin_id: u64,
     pub available_plugin_ids: Vec<u64>,
     install_db_path: PathBuf,
@@ -78,6 +81,7 @@ impl PluginManager {
             installed_plugins: Vec::new(),
             plugin_behaviors: HashMap::new(),
             detected_plugins: Vec::new(),
+            compatibility_warnings: Vec::new(),
             next_plugin_id: 1,
             available_plugin_ids: Vec::new(),
             install_db_path,
@@ -96,11 +100,46 @@ impl PluginManager {
 
     pub fn load_installed_plugins(&mut self) {
         self.installed_plugins.clear();
+        self.compatibility_warnings.clear();
         self.load_bundled_plugins();
         if let Ok(data) = fs::read(&self.install_db_path) {
             if let Ok(plugins) = serde_json::from_slice::<Vec<InstalledPlugin>>(&data) {
-                self.installed_plugins.extend(plugins);
+                for plugin in plugins {
+                    if let Err(err) = Self::validate_manifest_api_compat(&plugin.manifest) {
+                        let warning = format!(
+                            "Skipping incompatible installed plugin '{}': {}",
+                            plugin.manifest.kind, err
+                        );
+                        eprintln!("[RTSyn][WARN] {warning}");
+                        self.compatibility_warnings.push(warning);
+                        continue;
+                    }
+                    self.installed_plugins.push(plugin);
+                }
             }
+        }
+    }
+
+    pub fn take_compatibility_warnings(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.compatibility_warnings)
+    }
+
+    fn validate_manifest_api_compat(manifest: &PluginManifest) -> Result<(), String> {
+        // Dynamic plugins (with shared library) must explicitly declare ABI version.
+        if manifest.library.is_none() {
+            return Ok(());
+        }
+
+        match manifest.api_version {
+            Some(version) if version == RTSYN_PLUGIN_ABI_VERSION => Ok(()),
+            Some(version) => Err(format!(
+                "Incompatible plugin API version in manifest (plugin={}, runtime={})",
+                version, RTSYN_PLUGIN_ABI_VERSION
+            )),
+            None => Err(format!(
+                "Missing plugin API version in manifest (expected api_version = {})",
+                RTSYN_PLUGIN_ABI_VERSION
+            )),
         }
     }
 
@@ -135,18 +174,19 @@ impl PluginManager {
         Option<DisplaySchema>,
         Option<UISchema>,
     ) {
-        let (inputs, outputs, vars, mut display_schema, ui_schema) =
-            if let Some(lib_path) = library_path {
-                let lib_path_str = lib_path.to_string_lossy();
-                match metadata.query_plugin_metadata(lib_path_str.as_ref(), Duration::from_secs(2)) {
-                    Some((inputs, outputs, vars, schema, ui_schema)) => {
-                        (inputs, outputs, vars, schema, ui_schema)
-                    }
-                    None => (Vec::new(), Vec::new(), Vec::new(), None, None),
+        let (inputs, outputs, vars, mut display_schema, ui_schema) = if let Some(lib_path) =
+            library_path
+        {
+            let lib_path_str = lib_path.to_string_lossy();
+            match metadata.query_plugin_metadata(lib_path_str.as_ref(), Duration::from_secs(2)) {
+                Some((inputs, outputs, vars, schema, ui_schema)) => {
+                    (inputs, outputs, vars, schema, ui_schema)
                 }
-            } else {
-                (Vec::new(), Vec::new(), Vec::new(), None, None)
-            };
+                None => (Vec::new(), Vec::new(), Vec::new(), None, None),
+            }
+        } else {
+            (Vec::new(), Vec::new(), Vec::new(), None, None)
+        };
 
         if display_schema.is_none() && (!outputs.is_empty() || !vars.is_empty()) {
             display_schema = Some(DisplaySchema {
@@ -209,6 +249,7 @@ impl PluginManager {
                     description: Some(desc.to_string()),
                     version: Some("1.0.0".to_string()),
                     library: None,
+                    api_version: Some(RTSYN_PLUGIN_ABI_VERSION),
                 },
                 path: PathBuf::new(),
                 library_path: None,
@@ -354,8 +395,21 @@ impl PluginManager {
             .map_err(|err| format!("Failed to read plugin.toml: {err}"))?;
         let manifest: PluginManifest =
             toml::from_str(&data).map_err(|err| format!("Failed to parse plugin.toml: {err}"))?;
+        Self::validate_manifest_api_compat(&manifest)?;
 
         let library_path = PluginManager::resolve_library_path(&manifest, path);
+        if let Some(lib_path) = library_path.as_deref() {
+            let lib_path_str = lib_path.to_string_lossy();
+            if metadata
+                .query_plugin_metadata(lib_path_str.as_ref(), Duration::from_secs(2))
+                .is_none()
+            {
+                return Err(
+                    "Incompatible plugin API. Rebuild plugin with current rtsyn-plugin."
+                        .to_string(),
+                );
+            }
+        }
 
         if let Some(installed) = self
             .installed_plugins
@@ -393,6 +447,7 @@ impl PluginManager {
     }
 
     pub fn scan_detected_plugins_in(&mut self, bases: &[&str]) {
+        self.compatibility_warnings.clear();
         let mut detected = Vec::new();
         for base in bases {
             let base = PathBuf::from(base);
@@ -427,6 +482,16 @@ impl PluginManager {
                     if manifest.kind == "comedi_daq" && !cfg!(feature = "comedi") {
                         continue;
                     }
+                    if let Err(err) = Self::validate_manifest_api_compat(&manifest) {
+                        let warning = format!(
+                            "Ignoring incompatible detected plugin '{}' at '{}': {}",
+                            manifest.kind,
+                            path.display(),
+                            err
+                        );
+                        self.compatibility_warnings.push(warning);
+                        continue;
+                    }
                     detected.push(DetectedPlugin { manifest, path });
                 }
             }
@@ -459,11 +524,24 @@ impl PluginManager {
 
         let manifest: PluginManifest =
             toml::from_str(&data).map_err(|err| format!("Invalid plugin.toml: {err}"))?;
+        Self::validate_manifest_api_compat(&manifest)?;
         if manifest.kind == "comedi_daq" && !cfg!(feature = "comedi") {
             return Err("comedi_daq is not available without the comedi feature".to_string());
         }
 
         let library_path = PluginManager::resolve_library_path(&manifest, folder);
+        if let Some(lib_path) = library_path.as_deref() {
+            let lib_path_str = lib_path.to_string_lossy();
+            if metadata
+                .query_plugin_metadata(lib_path_str.as_ref(), Duration::from_secs(2))
+                .is_none()
+            {
+                return Err(
+                    "Incompatible plugin API. Rebuild plugin with current rtsyn-plugin."
+                        .to_string(),
+                );
+            }
+        }
         let (metadata_inputs, metadata_outputs, metadata_variables, display_schema, ui_schema) =
             Self::query_metadata_with_fallback(metadata, library_path.as_deref());
 
@@ -938,7 +1016,8 @@ impl PluginCatalog {
         plugin_id: u64,
         workspace: &mut WorkspaceDefinition,
     ) -> Result<(), String> {
-        self.manager.remove_plugin_from_workspace(workspace, plugin_id)
+        self.manager
+            .remove_plugin_from_workspace(workspace, plugin_id)
     }
 
     pub fn sync_ids_from_workspace(&mut self, workspace: &WorkspaceDefinition) {
@@ -964,7 +1043,11 @@ pub fn plugin_display_name(
     workspace: &WorkspaceDefinition,
     plugin_id: u64,
 ) -> String {
-    let Some(plugin) = workspace.plugins.iter().find(|plugin| plugin.id == plugin_id) else {
+    let Some(plugin) = workspace
+        .plugins
+        .iter()
+        .find(|plugin| plugin.id == plugin_id)
+    else {
         return "plugin".to_string();
     };
 

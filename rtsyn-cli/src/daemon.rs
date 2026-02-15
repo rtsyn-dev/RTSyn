@@ -582,49 +582,49 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
                                             .to_string(),
                                 }
                             } else {
-                            let next_idx = next_available_extendable_input_index(
-                                &state.workspace_manager.workspace,
-                                to_plugin,
-                            );
-                            let to_idx = extendable_input_index(&to_port);
-                            let has_existing_port = state
-                                .workspace_manager
-                                .workspace
-                                .connections
-                                .iter()
-                                .any(|c| c.to_plugin == to_plugin && c.to_port == to_port);
-                            let valid_extendable = match to_idx {
-                                Some(idx) if idx == next_idx => true,
-                                Some(idx) if idx < next_idx => has_existing_port,
-                                _ => false,
-                            };
-                            if !valid_extendable {
-                                DaemonResponse::Error {
+                                let next_idx = next_available_extendable_input_index(
+                                    &state.workspace_manager.workspace,
+                                    to_plugin,
+                                );
+                                let to_idx = extendable_input_index(&to_port);
+                                let has_existing_port = state
+                                    .workspace_manager
+                                    .workspace
+                                    .connections
+                                    .iter()
+                                    .any(|c| c.to_plugin == to_plugin && c.to_port == to_port);
+                                let valid_extendable = match to_idx {
+                                    Some(idx) if idx == next_idx => true,
+                                    Some(idx) if idx < next_idx => has_existing_port,
+                                    _ => false,
+                                };
+                                if !valid_extendable {
+                                    DaemonResponse::Error {
                                     message:
                                         "Target port must be the next in_<number> or an existing input"
                                             .to_string(),
                                 }
-                            } else {
-                                match rtsyn_core::connection::add_connection(
-                                    &mut state.workspace_manager.workspace,
-                                    &state.catalog.manager.installed_plugins,
-                                    from_plugin,
-                                    &from_port,
-                                    to_plugin,
-                                    &to_port,
-                                    &kind,
-                                ) {
-                                    Ok(()) => {
-                                        state.refresh_runtime();
-                                        DaemonResponse::Ok {
-                                            message: "Connection added".to_string(),
+                                } else {
+                                    match rtsyn_core::connection::add_connection(
+                                        &mut state.workspace_manager.workspace,
+                                        &state.catalog.manager.installed_plugins,
+                                        from_plugin,
+                                        &from_port,
+                                        to_plugin,
+                                        &to_port,
+                                        &kind,
+                                    ) {
+                                        Ok(()) => {
+                                            state.refresh_runtime();
+                                            DaemonResponse::Ok {
+                                                message: "Connection added".to_string(),
+                                            }
                                         }
+                                        Err(err) => DaemonResponse::Error {
+                                            message: format!("{err}"),
+                                        },
                                     }
-                                    Err(err) => DaemonResponse::Error {
-                                        message: format!("{err}"),
-                                    },
                                 }
-                            }
                             }
                         } else if to_inputs.is_empty() {
                             DaemonResponse::Error {
@@ -786,7 +786,10 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
             }
         }
         DaemonRequest::RuntimeSettingsSave => {
-            match state.workspace_manager.persist_runtime_settings_current_context() {
+            match state
+                .workspace_manager
+                .persist_runtime_settings_current_context()
+            {
                 Ok(RuntimeSettingsSaveTarget::Defaults) => DaemonResponse::Ok {
                     message: "Default values saved".to_string(),
                 },

@@ -195,9 +195,7 @@ impl GuiApp {
                     .find(|v| v.name.trim() == name)
                     .map(|v| v.default_value.as_str())
                     .unwrap_or_else(|| Self::plugin_creator_default_by_type(ty));
-                rtsyn_cli::plugin_creator::parse_variable_line(&format!(
-                    "{name}:{ty}={default}"
-                ))
+                rtsyn_cli::plugin_creator::parse_variable_line(&format!("{name}:{ty}={default}"))
             })
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -287,28 +285,26 @@ impl GuiApp {
         const CARD_FIXED_HEIGHT: f32 = 132.0;
         const PANEL_PAD: f32 = 8.0;
         let mut pending_info: Option<String> = None;
-        let connected_input_ports: HashMap<u64, HashSet<String>> = self
-            .workspace_manager
-            .workspace
-            .connections
-            .iter()
-            .fold(HashMap::new(), |mut acc, conn| {
-                acc.entry(conn.to_plugin)
-                    .or_insert_with(HashSet::new)
-                    .insert(conn.to_port.clone());
-                acc
-            });
-        let connected_output_ports: HashMap<u64, HashSet<String>> = self
-            .workspace_manager
-            .workspace
-            .connections
-            .iter()
-            .fold(HashMap::new(), |mut acc, conn| {
-                acc.entry(conn.from_plugin)
-                    .or_insert_with(HashSet::new)
-                    .insert(conn.from_port.clone());
-                acc
-            });
+        let connected_input_ports: HashMap<u64, HashSet<String>> =
+            self.workspace_manager.workspace.connections.iter().fold(
+                HashMap::new(),
+                |mut acc, conn| {
+                    acc.entry(conn.to_plugin)
+                        .or_insert_with(HashSet::new)
+                        .insert(conn.to_port.clone());
+                    acc
+                },
+            );
+        let connected_output_ports: HashMap<u64, HashSet<String>> =
+            self.workspace_manager.workspace.connections.iter().fold(
+                HashMap::new(),
+                |mut acc, conn| {
+                    acc.entry(conn.from_plugin)
+                        .or_insert_with(HashSet::new)
+                        .insert(conn.from_port.clone());
+                    acc
+                },
+            );
         let name_by_kind: HashMap<String, String> = self
             .plugin_manager
             .installed_plugins

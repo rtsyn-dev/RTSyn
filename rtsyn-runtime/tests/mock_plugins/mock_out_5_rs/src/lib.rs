@@ -89,13 +89,22 @@ pub extern "C" fn rtsyn_plugin_api() -> *const PluginApi {
         meta_json,
         inputs_json,
         outputs_json,
-        set_config_json,
-        set_input,
-        process,
-        get_output,
         behavior_json: None,
         display_schema_json: None,
         ui_schema_json: None,
+        set_config_json,
+        set_input,
+        resolve_input_index: None,
+        set_input_by_index: None,
+        process,
+        get_output,
+        resolve_output_index: None,
+        get_output_by_index: None,
     };
     &API as *const PluginApi
+}
+
+#[no_mangle]
+pub extern "C" fn rtsyn_plugin_abi_version() -> u32 {
+    rtsyn_plugin::RTSYN_PLUGIN_ABI_VERSION
 }

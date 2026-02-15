@@ -414,7 +414,8 @@ impl ComediDaqPlugin {
                 if let Some(value) = self.output_values.get_mut("no device detected") {
                     *value = 1.0;
                 } else {
-                    self.output_values.insert("no device detected".to_string(), 1.0);
+                    self.output_values
+                        .insert("no device detected".to_string(), 1.0);
                 }
             }
             return Ok(());
@@ -423,15 +424,19 @@ impl ComediDaqPlugin {
         self.ao_calibration.clear();
         self.ao_calibration.reserve(self.ao_channels.len());
         for (sd, ch) in &self.ao_channels {
-            let range = unsafe { comedilib::get_range(dev, *sd, *ch) }.map_err(Self::comedi_error)?;
-            let max = unsafe { comedilib::get_maxdata(dev, *sd, *ch) }.map_err(Self::comedi_error)?;
+            let range =
+                unsafe { comedilib::get_range(dev, *sd, *ch) }.map_err(Self::comedi_error)?;
+            let max =
+                unsafe { comedilib::get_maxdata(dev, *sd, *ch) }.map_err(Self::comedi_error)?;
             self.ao_calibration.push(Some((range, max)));
         }
         self.ai_calibration.clear();
         self.ai_calibration.reserve(self.ai_channels.len());
         for (sd, ch) in &self.ai_channels {
-            let range = unsafe { comedilib::get_range(dev, *sd, *ch) }.map_err(Self::comedi_error)?;
-            let max = unsafe { comedilib::get_maxdata(dev, *sd, *ch) }.map_err(Self::comedi_error)?;
+            let range =
+                unsafe { comedilib::get_range(dev, *sd, *ch) }.map_err(Self::comedi_error)?;
+            let max =
+                unsafe { comedilib::get_maxdata(dev, *sd, *ch) }.map_err(Self::comedi_error)?;
             self.ai_calibration.push(Some((range, max)));
         }
         Ok(())
@@ -520,12 +525,11 @@ impl Plugin for ComediDaqPlugin {
 
     fn ui_schema(&self) -> Option<UISchema> {
         Some(
-            UISchema::new()
-                .field(
-                    ConfigField::text("device_path", "Device")
-                        .default_value(Value::String("/dev/comedi0".to_string()))
-                        .hint("Comedi device node (e.g. /dev/comedi0)"),
-                ),
+            UISchema::new().field(
+                ConfigField::text("device_path", "Device")
+                    .default_value(Value::String("/dev/comedi0".to_string()))
+                    .hint("Comedi device node (e.g. /dev/comedi0)"),
+            ),
         )
     }
 

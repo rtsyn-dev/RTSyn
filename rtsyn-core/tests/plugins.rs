@@ -1,4 +1,6 @@
-use rtsyn_core::plugin::{plugin_display_name, InstalledPlugin, PluginCatalog, PluginManifest, PluginMetadataSource};
+use rtsyn_core::plugin::{
+    plugin_display_name, InstalledPlugin, PluginCatalog, PluginManifest, PluginMetadataSource,
+};
 use std::path::PathBuf;
 use std::time::Duration;
 use workspace::{PluginDefinition, WorkspaceDefinition};
@@ -34,6 +36,22 @@ fn write_plugin_manifest(dir: &PathBuf, kind: &str, name: &str) {
     let manifest = format!(
         "name = \"{}\"\nkind = \"{}\"\nversion = \"0.1.0\"\n",
         name, kind
+    );
+    std::fs::write(dir.join("plugin.toml"), manifest).expect("write plugin.toml");
+}
+
+fn write_dynamic_manifest_without_api(dir: &PathBuf, kind: &str, name: &str) {
+    let manifest = format!(
+        "name = \"{}\"\nkind = \"{}\"\nversion = \"0.1.0\"\nlibrary = \"lib{}.so\"\n",
+        name, kind, kind
+    );
+    std::fs::write(dir.join("plugin.toml"), manifest).expect("write plugin.toml");
+}
+
+fn write_dynamic_manifest_with_api(dir: &PathBuf, kind: &str, name: &str, api_version: u32) {
+    let manifest = format!(
+        "name = \"{}\"\nkind = \"{}\"\nversion = \"0.1.0\"\nlibrary = \"lib{}.so\"\napi_version = {}\n",
+        name, kind, kind, api_version
     );
     std::fs::write(dir.join("plugin.toml"), manifest).expect("write plugin.toml");
 }
@@ -88,6 +106,7 @@ fn plugin_display_name_prefers_manifest_name_then_fallback() {
             version: Some("0.1.0".to_string()),
             description: None,
             library: None,
+            api_version: None,
         },
         path: PathBuf::new(),
         library_path: None,
@@ -123,7 +142,45 @@ fn plugin_display_name_prefers_manifest_name_then_fallback() {
         settings: workspace::WorkspaceSettings::default(),
     };
 
-    assert_eq!(plugin_display_name(&installed, &workspace, 1), "Named Plugin");
-    assert_eq!(plugin_display_name(&installed, &workspace, 2), "Unknown Kind");
+    assert_eq!(
+        plugin_display_name(&installed, &workspace, 1),
+        "Named Plugin"
+    );
+    assert_eq!(
+        plugin_display_name(&installed, &workspace, 2),
+        "Unknown Kind"
+    );
     assert_eq!(plugin_display_name(&installed, &workspace, 999), "plugin");
+}
+
+#[test]
+fn install_rejects_dynamic_plugin_without_api_version() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let plugin_dir = temp.path().join("missing-api-plugin");
+    std::fs::create_dir_all(&plugin_dir).expect("create plugin dir");
+    write_dynamic_manifest_without_api(&plugin_dir, "missing_api_plugin", "Missing API Plugin");
+
+    let install_db = temp.path().join("installed_plugins.json");
+    let mut catalog = PluginCatalog::new(install_db);
+
+    let err = catalog
+        .install_plugin_from_folder(&plugin_dir, true, true, &NoMetadata)
+        .expect_err("install should fail");
+    assert!(err.contains("Missing plugin API version in manifest"));
+}
+
+#[test]
+fn install_rejects_dynamic_plugin_with_wrong_api_version() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let plugin_dir = temp.path().join("wrong-api-plugin");
+    std::fs::create_dir_all(&plugin_dir).expect("create plugin dir");
+    write_dynamic_manifest_with_api(&plugin_dir, "wrong_api_plugin", "Wrong API Plugin", 999);
+
+    let install_db = temp.path().join("installed_plugins.json");
+    let mut catalog = PluginCatalog::new(install_db);
+
+    let err = catalog
+        .install_plugin_from_folder(&plugin_dir, true, true, &NoMetadata)
+        .expect_err("install should fail");
+    assert!(err.contains("Incompatible plugin API version in manifest"));
 }

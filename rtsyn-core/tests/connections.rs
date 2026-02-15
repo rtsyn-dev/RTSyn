@@ -1,8 +1,12 @@
-use rtsyn_core::connection::{add_connection as add_connection_with_workspace, sync_extendable_input_count};
+use rtsyn_core::connection::{
+    add_connection as add_connection_with_workspace, sync_extendable_input_count,
+};
 use rtsyn_core::plugin::{InstalledPlugin, PluginManifest};
 use serde_json::json;
 use std::path::PathBuf;
-use workspace::{add_connection, ConnectionDefinition, PluginDefinition, WorkspaceDefinition, WorkspaceSettings};
+use workspace::{
+    add_connection, ConnectionDefinition, PluginDefinition, WorkspaceDefinition, WorkspaceSettings,
+};
 
 #[test]
 fn add_connection_rejects_duplicate_between_same_plugins() {
@@ -58,6 +62,7 @@ fn add_connection_sets_extendable_input_and_csv_column() {
                 name: "Source Plugin".to_string(),
                 kind: "source_plugin".to_string(),
                 version: Some("0.1.0".to_string()),
+                api_version: None,
                 description: None,
                 library: None,
             },
@@ -75,6 +80,7 @@ fn add_connection_sets_extendable_input_and_csv_column() {
                 name: "CSV Recorder".to_string(),
                 kind: "csv_recorder".to_string(),
                 version: Some("0.1.0".to_string()),
+                api_version: None,
                 description: None,
                 library: None,
             },
@@ -127,7 +133,10 @@ fn add_connection_sets_extendable_input_and_csv_column() {
     assert_eq!(workspace.connections.len(), 1);
     assert_eq!(workspace.connections[0].to_port, "in_0");
     assert_eq!(
-        workspace.plugins[1].config.get("input_count").and_then(|v| v.as_u64()),
+        workspace.plugins[1]
+            .config
+            .get("input_count")
+            .and_then(|v| v.as_u64()),
         Some(1)
     );
     let columns = workspace.plugins[1]

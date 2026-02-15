@@ -568,13 +568,7 @@ fn runtime_plugin_set_updates_config() {
         .status();
 
     let status = Command::new(exe)
-        .args([
-            "daemon",
-            "plugin",
-            "set",
-            "1",
-            "{\"max_latency_us\":2000}",
-        ])
+        .args(["daemon", "plugin", "set", "1", "{\"max_latency_us\":2000}"])
         .status()
         .expect("set runtime plugin variables");
     assert!(status.success());

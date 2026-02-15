@@ -1,5 +1,5 @@
 use crate::{ConnectionDefinition, PluginDefinition};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 pub fn input_sum(
     connections: &[ConnectionDefinition],
@@ -37,6 +37,12 @@ pub fn order_plugins_for_execution(
     plugins: &[PluginDefinition],
     connections: &[ConnectionDefinition],
 ) -> Vec<PluginDefinition> {
+    // Execution ordering strategy:
+    // 1) Partition by priority and process priorities in ascending order.
+    // 2) Inside each priority group, perform a deterministic topological traversal
+    //    (Kahn-like) using only intra-group connections.
+    // 3) If the graph has cycles, append remaining nodes with a stable fallback order
+    //    (non-sinks first, then sinks, tie-broken by plugin id).
     let mut by_priority: HashMap<i32, Vec<PluginDefinition>> = HashMap::new();
     for plugin in plugins {
         by_priority
@@ -69,16 +75,14 @@ pub fn order_plugins_for_execution(
             }
         }
 
-        let mut ready: Vec<u64> = indegree
+        let mut ready: BTreeSet<u64> = indegree
             .iter()
             .filter(|(_, count)| **count == 0)
             .map(|(id, _)| *id)
             .collect();
-        ready.sort();
 
         let mut ordered_ids: Vec<u64> = Vec::new();
-        while let Some(id) = ready.first().copied() {
-            ready.remove(0);
+        while let Some(id) = ready.pop_first() {
             ordered_ids.push(id);
             if let Some(children) = edges.get(&id) {
                 for child in children {
@@ -86,18 +90,18 @@ pub fn order_plugins_for_execution(
                         if *count > 0 {
                             *count -= 1;
                             if *count == 0 {
-                                ready.push(*child);
+                                ready.insert(*child);
                             }
                         }
                     }
                 }
-                ready.sort();
             }
         }
 
+        let ordered_set: HashSet<u64> = ordered_ids.iter().copied().collect();
         let mut remaining: Vec<u64> = ids
             .iter()
-            .filter(|id| !ordered_ids.contains(id))
+            .filter(|id| !ordered_set.contains(id))
             .copied()
             .collect();
         let mut out_degree: HashMap<u64, usize> = HashMap::new();

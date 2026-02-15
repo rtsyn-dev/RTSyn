@@ -1,5 +1,6 @@
 use rtsyn_plugin::prelude::*;
 use serde_json::Value;
+use std::collections::VecDeque;
 use std::time::Instant;
 
 pub struct PerformanceMonitorPlugin {
@@ -13,7 +14,7 @@ pub struct PerformanceMonitorPlugin {
     period_unit: String,
     output_values: Vec<f64>,
     workspace_period_us: f64,
-    period_history: Vec<f64>,
+    period_history: VecDeque<f64>,
 }
 
 impl PerformanceMonitorPlugin {
@@ -53,7 +54,7 @@ impl PerformanceMonitorPlugin {
             period_unit: "us".to_string(),
             output_values: vec![0.0; 5],
             workspace_period_us: 1000.0,
-            period_history: Vec::with_capacity(10),
+            period_history: VecDeque::with_capacity(10),
         }
     }
 
@@ -117,9 +118,9 @@ impl Plugin for PerformanceMonitorPlugin {
             }
 
             // Add to history for jitter calculation
-            self.period_history.push(actual_period_us);
+            self.period_history.push_back(actual_period_us);
             if self.period_history.len() > 10 {
-                self.period_history.remove(0);
+                let _ = self.period_history.pop_front();
             }
 
             // Latency: how much we're late (only positive delays count)
@@ -155,7 +156,8 @@ impl Plugin for PerformanceMonitorPlugin {
             self.output_values[1] = self.convert_us_to_selected_unit(latency_us); // latency
             self.output_values[2] = self.convert_us_to_selected_unit(jitter_us); // jitter
             self.output_values[3] = violation; // realtime_violation
-            self.output_values[4] = self.convert_us_to_selected_unit(self.max_period_us); // max_period
+            self.output_values[4] = self.convert_us_to_selected_unit(self.max_period_us);
+            // max_period
         }
 
         self.last_trigger_time = Some(process_start);
@@ -165,29 +167,30 @@ impl Plugin for PerformanceMonitorPlugin {
 
     fn ui_schema(&self) -> Option<UISchema> {
         Some(
-            UISchema::new().field(
-                ConfigField::float("latency", "Latency")
-                    .min_f(0.0)
-                    .step_f(100.0)
-                    .default_value(Value::from(1000.0))
-                    .hint("Maximum allowed latency before violation"),
-            )
-            .field(
-                ConfigField::new(
-                    "units",
-                    "Units",
-                    rtsyn_plugin::ui::FieldType::Choice {
-                        options: vec![
-                            "ns".to_string(),
-                            "us".to_string(),
-                            "ms".to_string(),
-                            "s".to_string(),
-                        ],
-                    },
+            UISchema::new()
+                .field(
+                    ConfigField::float("latency", "Latency")
+                        .min_f(0.0)
+                        .step_f(100.0)
+                        .default_value(Value::from(1000.0))
+                        .hint("Maximum allowed latency before violation"),
                 )
+                .field(
+                    ConfigField::new(
+                        "units",
+                        "Units",
+                        rtsyn_plugin::ui::FieldType::Choice {
+                            options: vec![
+                                "ns".to_string(),
+                                "us".to_string(),
+                                "ms".to_string(),
+                                "s".to_string(),
+                            ],
+                        },
+                    )
                     .default_value(Value::from("us"))
                     .hint("Units used by max_period output"),
-            ),
+                ),
         )
     }
 
