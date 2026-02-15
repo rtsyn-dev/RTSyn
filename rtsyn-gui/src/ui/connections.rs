@@ -3,6 +3,7 @@ use crate::WindowFocus;
 
 impl GuiApp {
     pub(crate) fn open_connection_editor(&mut self, plugin_id: u64, mode: ConnectionEditMode) {
+        self.connection_editor_host = ConnectionEditorHost::Main;
         self.connection_editor.open = true;
         self.connection_editor.mode = mode;
         self.connection_editor.tab = ConnectionEditTab::Outputs;
@@ -17,6 +18,16 @@ impl GuiApp {
             ConnectionEditMode::Add => WindowFocus::ConnectionEditorAdd,
             ConnectionEditMode::Remove => WindowFocus::ConnectionEditorRemove,
         });
+    }
+
+    pub(crate) fn open_connection_editor_in_plugin_window(
+        &mut self,
+        host_plugin_id: u64,
+        plugin_id: u64,
+        mode: ConnectionEditMode,
+    ) {
+        self.open_connection_editor(plugin_id, mode);
+        self.connection_editor_host = ConnectionEditorHost::PluginWindow(host_plugin_id);
     }
 
     pub(crate) fn render_manage_connections_window(&mut self, ctx: &egui::Context) {
@@ -323,6 +334,7 @@ impl GuiApp {
         let Some(current_id) = self.connection_editor.plugin_id else {
             self.connection_highlight_plugin_id = None;
             self.connection_editor.open = false;
+            self.connection_editor_host = ConnectionEditorHost::Main;
             return;
         };
         let current_plugin = match self
@@ -336,6 +348,7 @@ impl GuiApp {
             None => {
                 self.connection_highlight_plugin_id = None;
                 self.connection_editor.open = false;
+                self.connection_editor_host = ConnectionEditorHost::Main;
                 return;
             }
         };
@@ -813,6 +826,7 @@ impl GuiApp {
             self.connection_editor.open = false;
             self.connection_highlight_plugin_id = None;
             self.connection_editor.plugin_id = None;
+            self.connection_editor_host = ConnectionEditorHost::Main;
         }
     }
 

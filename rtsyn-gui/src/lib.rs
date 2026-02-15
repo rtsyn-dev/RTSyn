@@ -102,9 +102,12 @@ use rtsyn_core::plotter_view::{live_plotter_config, live_plotter_series_names};
 use rtsyn_core::plugin::{plugin_display_name as core_plugin_display_name, PluginManager};
 use rtsyn_core::workspace::WorkspaceManager;
 use state::{
-    ConfirmAction, FrequencyUnit, PeriodUnit, TimeUnit, WorkspaceDialogMode, WorkspaceTimingTab,
+    ConfirmAction, ConnectionEditorHost, FrequencyUnit, PeriodUnit, TimeUnit, WorkspaceDialogMode,
+    WorkspaceTimingTab,
 };
 use state_sync::StateSync;
+
+const DEDICATED_PLOTTER_VIEW_KINDS: &[&str] = &["live_plotter"];
 
 #[derive(Debug, Clone)]
 pub struct GuiConfig {
@@ -312,6 +315,7 @@ struct GuiApp {
     plugin_creator_last_path: Option<PathBuf>,
     new_plugin_draft: NewPluginDraft,
     notifications: Vec<Notification>,
+    plugin_notifications: HashMap<u64, Vec<Notification>>,
     seen_compatibility_warnings: HashSet<String>,
     plugin_positions: HashMap<u64, egui::Pos2>,
     plugin_rects: HashMap<u64, egui::Rect>,
@@ -328,6 +332,8 @@ struct GuiApp {
     selected_plugin_id: Option<u64>,
     plugin_context_menu: Option<(u64, egui::Pos2, u64)>,
     connection_context_menu: Option<(Vec<ConnectionDefinition>, egui::Pos2, u64)>,
+    connection_editor_host: ConnectionEditorHost,
+    active_notification_plugin_id: Option<u64>,
     number_edit_buffers: HashMap<(u64, String), String>,
     window_rects: Vec<egui::Rect>,
     pending_window_focus: Option<WindowFocus>,
@@ -402,6 +408,7 @@ impl GuiApp {
             plugin_creator_last_path: None,
             new_plugin_draft: NewPluginDraft::default(),
             notifications: Vec::new(),
+            plugin_notifications: HashMap::new(),
             seen_compatibility_warnings: HashSet::new(),
             plugin_positions: HashMap::new(),
             plugin_rects: HashMap::new(),
@@ -418,6 +425,8 @@ impl GuiApp {
             selected_plugin_id: None,
             plugin_context_menu: None,
             connection_context_menu: None,
+            connection_editor_host: ConnectionEditorHost::Main,
+            active_notification_plugin_id: None,
             number_edit_buffers: HashMap::new(),
             window_rects: Vec::new(),
             pending_window_focus: None,
@@ -474,7 +483,31 @@ impl GuiApp {
     }
 
     fn show_info(&mut self, title: &str, message: &str) {
-        self.push_notification(title, message);
+        if let Some(plugin_id) = self.active_notification_plugin_id {
+            let notification = Notification {
+                title: title.to_string(),
+                message: message.to_string(),
+                created_at: Instant::now(),
+            };
+            self.plugin_notifications
+                .entry(plugin_id)
+                .or_default()
+                .push(notification);
+        } else {
+            self.push_notification(title, message);
+        }
+    }
+
+    fn show_plugin_info(&mut self, plugin_id: u64, title: &str, message: &str) {
+        let notification = Notification {
+            title: title.to_string(),
+            message: message.to_string(),
+            created_at: Instant::now(),
+        };
+        self.plugin_notifications
+            .entry(plugin_id)
+            .or_default()
+            .push(notification);
     }
 
     fn push_notification(&mut self, title: &str, message: &str) {
@@ -623,6 +656,22 @@ impl GuiApp {
             );
         }
         rtsyn_core::plugin::is_extendable_inputs(kind)
+    }
+
+    fn plugin_uses_external_window(&self, kind: &str) -> bool {
+        self.plugin_manager
+            .plugin_behaviors
+            .get(kind)
+            .map(|b| b.external_window)
+            .unwrap_or(false)
+    }
+
+    fn plugin_uses_plotter_viewport(&self, kind: &str) -> bool {
+        self.plugin_uses_external_window(kind) && DEDICATED_PLOTTER_VIEW_KINDS.contains(&kind)
+    }
+
+    fn plugin_uses_external_config_viewport(&self, kind: &str) -> bool {
+        self.plugin_uses_external_window(kind) && !self.plugin_uses_plotter_viewport(kind)
     }
 
     fn auto_extend_inputs(&self, kind: &str) -> bool {
@@ -1097,7 +1146,11 @@ impl GuiApp {
     fn open_running_plotters(&mut self) {
         let mut recompute = false;
         for plugin in &self.workspace_manager.workspace.plugins {
-            if plugin.kind != "live_plotter" || !plugin.running {
+            if !self.plugin_uses_plotter_viewport(&plugin.kind) {
+                continue;
+            }
+            let should_open = plugin.running || self.plugin_uses_external_window(&plugin.kind);
+            if !should_open {
                 continue;
             }
             let plotter = self
@@ -1336,7 +1389,9 @@ impl eframe::App for GuiApp {
         self.render_plugins_window(ctx);
         self.render_new_plugin_window(ctx);
         self.render_manage_connections_window(ctx);
-        self.render_connection_editor(ctx);
+        if self.connection_editor_host == ConnectionEditorHost::Main {
+            self.render_connection_editor(ctx);
+        }
         self.render_plugin_context_menu(ctx);
         self.render_connection_context_menu(ctx);
         self.render_plugin_config_window(ctx);

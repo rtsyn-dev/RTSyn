@@ -138,7 +138,7 @@ impl GuiApp {
                     self.reindex_extendable_inputs(connection.to_plugin);
                     self.mark_workspace_dirty();
                     self.enforce_connection_dependent();
-                    if kind == "live_plotter" {
+                    if self.plugin_uses_plotter_viewport(&kind) {
                         self.recompute_plotter_ui_hz();
                     }
                     return;
@@ -162,7 +162,6 @@ impl GuiApp {
 
     pub(crate) fn enforce_connection_dependent(&mut self) {
         let mut stopped = Vec::new();
-        let mut plotter_closed = false;
 
         let incoming: HashSet<u64> = self
             .workspace_manager
@@ -181,16 +180,6 @@ impl GuiApp {
             if incoming.contains(&plugin.id) {
                 continue;
             }
-            if plugin.kind == "live_plotter" {
-                if let Some(plotter) = self.plotter_manager.plotters.get(&plugin.id) {
-                    if let Ok(mut plotter) = plotter.lock() {
-                        if plotter.open {
-                            plotter.open = false;
-                            plotter_closed = true;
-                        }
-                    }
-                }
-            }
             if plugin.running {
                 plugin.running = false;
                 stopped.push(plugin.id);
@@ -201,9 +190,6 @@ impl GuiApp {
                 .state_sync
                 .logic_tx
                 .send(LogicMessage::SetPluginRunning(id, false));
-        }
-        if plotter_closed {
-            self.recompute_plotter_ui_hz();
         }
     }
 
@@ -347,7 +333,7 @@ impl GuiApp {
 
         self.mark_workspace_dirty();
         self.enforce_connection_dependent();
-        if kind == "live_plotter" {
+        if self.plugin_uses_plotter_viewport(&kind) {
             self.recompute_plotter_ui_hz();
         }
     }

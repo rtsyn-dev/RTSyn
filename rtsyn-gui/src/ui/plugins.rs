@@ -348,6 +348,8 @@ impl GuiApp {
                 .cloned()
                 .unwrap_or_default();
             let opens_external_window = behavior.external_window;
+            let opens_plotter_window = opens_external_window
+                && crate::DEDICATED_PLOTTER_VIEW_KINDS.contains(&plugin.kind.as_str());
             let starts_expanded = behavior.starts_expanded;
 
             if let Some(default_vars) = metadata_by_kind.get(&plugin.kind) {
@@ -1423,8 +1425,7 @@ impl GuiApp {
                                                     pending_running.push((plugin.id, plugin.running));
                                                     controls_changed = true;
 
-                                                    // Auto-open plotter when starting live_plotter
-                                                    if plugin.kind == "live_plotter" && plugin.running {
+                                                    if opens_plotter_window && plugin.running {
                                                         let plotter = self.plotter_manager.plotters.entry(plugin.id).or_insert_with(|| {
                                                             Arc::new(Mutex::new(LivePlotter::new(plugin.id)))
                                                         });
@@ -3235,13 +3236,7 @@ impl GuiApp {
             .workspace
             .plugins
             .iter()
-            .filter(|plugin| {
-                self.plugin_manager
-                    .plugin_behaviors
-                    .get(&plugin.kind)
-                    .map(|b| b.external_window)
-                    .unwrap_or(false)
-            })
+            .filter(|plugin| self.plugin_uses_external_config_viewport(&plugin.kind))
             .map(|plugin| plugin.id)
             .collect();
         for plugin_id in external_plugin_ids {
@@ -3293,13 +3288,7 @@ impl GuiApp {
             .find(|p| p.id == plugin_id)
             .map(|p| p.kind.as_str())
             .unwrap_or("");
-        let external_window = self
-            .plugin_manager
-            .plugin_behaviors
-            .get(plugin_kind)
-            .map(|b| b.external_window)
-            .unwrap_or(false);
-        if external_window {
+        if self.plugin_uses_external_window(plugin_kind) {
             self.windows.plugin_config_open = false;
             self.windows.plugin_config_id = None;
             return;

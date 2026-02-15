@@ -280,11 +280,16 @@ impl GuiApp {
         }
     }
 
+    fn is_placeholder_series_name(name: &str) -> bool {
+        let trimmed = name.trim();
+        if !trimmed.starts_with("Series ") {
+            return false;
+        }
+        trimmed["Series ".len()..].parse::<usize>().is_ok()
+    }
+
     fn sync_series_controls_from_seed(state: &mut PlotterPreviewState, seed: &PlotterPreviewState) {
         let target = seed.series_names.len();
-        if target == state.series_names.len() {
-            return;
-        }
         if state.series_names.len() < target {
             for idx in state.series_names.len()..target {
                 state.series_names.push(
@@ -307,6 +312,19 @@ impl GuiApp {
             state.series_scales.truncate(target);
             state.series_offsets.truncate(target);
             state.colors.truncate(target);
+        }
+        // Keep user-defined custom labels, but replace placeholder fallback labels
+        // with concrete seed names once real connections/series metadata is available.
+        for idx in 0..target {
+            if let (Some(current), Some(seed_name)) =
+                (state.series_names.get_mut(idx), seed.series_names.get(idx))
+            {
+                if (current.is_empty() || Self::is_placeholder_series_name(current))
+                    && !seed_name.is_empty()
+                {
+                    *current = seed_name.clone();
+                }
+            }
         }
     }
 
@@ -331,10 +349,171 @@ impl GuiApp {
             .collect()
     }
 
+    fn render_plotter_notifications(&mut self, ctx: &egui::Context, plugin_id: u64) {
+        let Some(list) = self.plugin_notifications.get_mut(&plugin_id) else {
+            return;
+        };
+        if list.is_empty() {
+            return;
+        }
+
+        let now = std::time::Instant::now();
+        let total = 2.8_f32;
+        let max_width = 360.0;
+        let mut y = ctx.screen_rect().min.y + 12.0;
+        let x = ctx.screen_rect().max.x - 10.0;
+        let mut shown = 0usize;
+
+        for (idx, notification) in list.iter().enumerate() {
+            let age = now.duration_since(notification.created_at).as_secs_f32();
+            if age >= total {
+                continue;
+            }
+            let slide_in = 0.35_f32;
+            let slide_out = 0.45_f32;
+            let smooth = |t: f32| t * t * (3.0 - 2.0 * t);
+            let slide = if age < slide_in {
+                smooth((age / slide_in).clamp(0.0, 1.0))
+            } else if age > total - slide_out {
+                smooth(((total - age) / slide_out).clamp(0.0, 1.0))
+            } else {
+                1.0
+            };
+
+            let offscreen = max_width + 24.0;
+            let x_pos = x + (1.0 - slide) * offscreen;
+            egui::Area::new(egui::Id::new(("plotter_toast", plugin_id, idx)))
+                .order(egui::Order::Foreground)
+                .interactable(false)
+                .pivot(egui::Align2::RIGHT_TOP)
+                .fixed_pos(egui::pos2(x_pos, y))
+                .show(ctx, |ui| {
+                    egui::Frame::popup(ui.style())
+                        .fill(egui::Color32::from_rgba_premultiplied(20, 20, 20, 220))
+                        .stroke(egui::Stroke::new(
+                            1.0,
+                            egui::Color32::from_rgba_premultiplied(80, 80, 80, 220),
+                        ))
+                        .rounding(egui::Rounding::same(6.0))
+                        .show(ui, |ui| {
+                            ui.set_max_width(max_width);
+                            ui.label(egui::RichText::new(&notification.title).strong().size(14.0));
+                            ui.label(egui::RichText::new(&notification.message).size(13.0));
+                        });
+                });
+            y += 62.0;
+            shown += 1;
+            if shown >= 4 {
+                break;
+            }
+        }
+
+        list.retain(|n| now.duration_since(n.created_at).as_secs_f32() < total);
+        if !list.is_empty() {
+            ctx.request_repaint_after(Duration::from_millis(16));
+        }
+    }
+
+    fn toggle_plugin_running_from_plotter_window(
+        &mut self,
+        plugin_id: u64,
+    ) -> Result<bool, String> {
+        let plugin_index = self
+            .workspace_manager
+            .workspace
+            .plugins
+            .iter()
+            .position(|plugin| plugin.id == plugin_id)
+            .ok_or_else(|| "Plugin not found".to_string())?;
+
+        let plugin_kind = self.workspace_manager.workspace.plugins[plugin_index]
+            .kind
+            .clone();
+        let currently_running = self.workspace_manager.workspace.plugins[plugin_index].running;
+        self.ensure_plugin_behavior_cached(&plugin_kind);
+        let behavior = self
+            .plugin_manager
+            .plugin_behaviors
+            .get(&plugin_kind)
+            .cloned()
+            .unwrap_or_default();
+
+        if !behavior.supports_start_stop {
+            return Err("Plugin does not support start/stop.".to_string());
+        }
+
+        if !currently_running {
+            let connected_inputs: std::collections::HashSet<String> = self
+                .workspace_manager
+                .workspace
+                .connections
+                .iter()
+                .filter(|conn| conn.to_plugin == plugin_id)
+                .map(|conn| conn.to_port.clone())
+                .collect();
+            let connected_outputs: std::collections::HashSet<String> = self
+                .workspace_manager
+                .workspace
+                .connections
+                .iter()
+                .filter(|conn| conn.from_plugin == plugin_id)
+                .map(|conn| conn.from_port.clone())
+                .collect();
+
+            let missing_inputs: Vec<String> = behavior
+                .start_requires_connected_inputs
+                .iter()
+                .filter(|port| !connected_inputs.contains(*port))
+                .cloned()
+                .collect();
+            if !missing_inputs.is_empty() {
+                return Err(format!(
+                    "Cannot start: missing input connections on ports: {}",
+                    missing_inputs.join(", ")
+                ));
+            }
+
+            let missing_outputs: Vec<String> = behavior
+                .start_requires_connected_outputs
+                .iter()
+                .filter(|port| !connected_outputs.contains(*port))
+                .cloned()
+                .collect();
+            if !missing_outputs.is_empty() {
+                return Err(format!(
+                    "Cannot start: missing output connections on ports: {}",
+                    missing_outputs.join(", ")
+                ));
+            }
+        }
+
+        let new_running = !currently_running;
+        self.workspace_manager.workspace.plugins[plugin_index].running = new_running;
+        let _ = self
+            .state_sync
+            .logic_tx
+            .send(LogicMessage::SetPluginRunning(plugin_id, new_running));
+        self.mark_workspace_dirty();
+
+        if self.plugin_uses_plotter_viewport(&plugin_kind) && new_running {
+            if let Some(plotter) = self.plotter_manager.plotters.get(&plugin_id) {
+                if let Ok(mut plotter) = plotter.lock() {
+                    plotter.open = true;
+                }
+            }
+            self.recompute_plotter_ui_hz();
+        }
+
+        Ok(new_running)
+    }
+
     pub(crate) fn render_plotter_windows(&mut self, ctx: &egui::Context) {
         let mut closed = Vec::new();
         let mut export_saved: Vec<u64> = Vec::new();
         let mut settings_saved: Vec<u64> = Vec::new();
+        let mut start_toggle_requested: Vec<u64> = Vec::new();
+        let mut add_connection_requested: Vec<u64> = Vec::new();
+        let mut remove_connection_requested: Vec<u64> = Vec::new();
         let name_by_id: HashMap<u64, String> = self
             .workspace_manager
             .workspace
@@ -356,6 +535,14 @@ impl GuiApp {
 
         for plugin_id in plotter_ids {
             let settings_seed = self.build_plotter_preview_state(plugin_id);
+            let plugin_running = self
+                .workspace_manager
+                .workspace
+                .plugins
+                .iter()
+                .find(|plugin| plugin.id == plugin_id)
+                .map(|plugin| plugin.running)
+                .unwrap_or(false);
             let display_name = name_by_id
                 .get(&plugin_id)
                 .cloned()
@@ -382,7 +569,7 @@ impl GuiApp {
             let time_label = self.state_sync.logic_time_label.clone();
             let logic_period_seconds = self.state_sync.logic_period_seconds;
 
-            ctx.show_viewport_deferred(viewport_id, builder, move |ctx, class| {
+            ctx.show_viewport_immediate(viewport_id, builder, |ctx, class| {
                 if class == egui::ViewportClass::Embedded {
                     return;
                 }
@@ -445,59 +632,107 @@ impl GuiApp {
                         });
                         ui.allocate_space(egui::vec2(available.x, plot_h));
                         ui.add_space(gap_h);
-                        let button_gap = 8.0;
                         let button_rect = egui::Rect::from_min_size(
-                            egui::pos2(
-                                plot_rect.right()
-                                    - (BUTTON_SIZE.x * 2.0 + button_gap)
-                                    - plot_margin,
-                                plot_rect.bottom() + gap_h,
+                            egui::pos2(plot_rect.left() + plot_margin, plot_rect.bottom() + gap_h),
+                            egui::vec2(
+                                (plot_rect.width() - plot_margin * 2.0).max(0.0),
+                                BUTTON_SIZE.y,
                             ),
-                            egui::vec2(BUTTON_SIZE.x * 2.0 + button_gap, BUTTON_SIZE.y),
                         );
                         ui.allocate_ui_at_rect(button_rect, |ui| {
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    let capture = styled_button(
-                                        ui,
-                                        egui::RichText::new("Capture").size(12.0),
-                                    )
-                                    .on_hover_text("Save plot image");
-                                    if capture.clicked() {
-                                        let export_open =
-                                            egui::Id::new(("plotter_export_open", plugin_id));
-                                        let export_state =
-                                            egui::Id::new(("plotter_export_state", plugin_id));
-                                        ctx.data_mut(|d| {
-                                            d.insert_temp(export_open, true);
-                                            if d.get_temp::<PlotterPreviewState>(export_state)
-                                                .is_none()
-                                            {
-                                                d.insert_temp(export_state, settings_seed.clone());
-                                            }
-                                        });
-                                    }
-                                    let settings = styled_button(
-                                        ui,
-                                        egui::RichText::new("Settings").size(12.0),
-                                    )
-                                    .on_hover_text("Plot settings");
-                                    if settings.clicked() {
-                                        let open_id =
-                                            egui::Id::new(("plotter_settings_open", plugin_id));
-                                        let state_id =
-                                            egui::Id::new(("plotter_settings_state", plugin_id));
-                                        ctx.data_mut(|d| {
-                                            d.insert_temp(open_id, true);
-                                            if d.get_temp::<PlotterPreviewState>(state_id).is_none()
-                                            {
-                                                d.insert_temp(state_id, settings_seed.clone());
-                                            }
-                                        });
-                                    }
-                                },
-                            );
+                            ui.horizontal(|ui| {
+                                let start_label = if plugin_running { "Stop" } else { "Start" };
+                                if styled_button(ui, egui::RichText::new(start_label).size(12.0))
+                                    .on_hover_text("Start/stop this live plotter plugin")
+                                    .clicked()
+                                {
+                                    ctx.data_mut(|d| {
+                                        d.insert_temp(
+                                            egui::Id::new(("plotter_start_toggle", plugin_id)),
+                                            true,
+                                        )
+                                    });
+                                }
+                                if styled_button(
+                                    ui,
+                                    egui::RichText::new("Add connections").size(12.0),
+                                )
+                                .on_hover_text("Add connections for this live plotter")
+                                .clicked()
+                                {
+                                    ctx.data_mut(|d| {
+                                        d.insert_temp(
+                                            egui::Id::new(("plotter_add_connections", plugin_id)),
+                                            true,
+                                        )
+                                    });
+                                }
+                                if styled_button(
+                                    ui,
+                                    egui::RichText::new("Remove connections").size(12.0),
+                                )
+                                .on_hover_text("Remove connections for this live plotter")
+                                .clicked()
+                                {
+                                    ctx.data_mut(|d| {
+                                        d.insert_temp(
+                                            egui::Id::new((
+                                                "plotter_remove_connections",
+                                                plugin_id,
+                                            )),
+                                            true,
+                                        )
+                                    });
+                                }
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        let capture = styled_button(
+                                            ui,
+                                            egui::RichText::new("Capture").size(12.0),
+                                        )
+                                        .on_hover_text("Save plot image");
+                                        if capture.clicked() {
+                                            let export_open =
+                                                egui::Id::new(("plotter_export_open", plugin_id));
+                                            let export_state =
+                                                egui::Id::new(("plotter_export_state", plugin_id));
+                                            ctx.data_mut(|d| {
+                                                d.insert_temp(export_open, true);
+                                                if d.get_temp::<PlotterPreviewState>(export_state)
+                                                    .is_none()
+                                                {
+                                                    d.insert_temp(
+                                                        export_state,
+                                                        settings_seed.clone(),
+                                                    );
+                                                }
+                                            });
+                                        }
+                                        let settings = styled_button(
+                                            ui,
+                                            egui::RichText::new("Settings").size(12.0),
+                                        )
+                                        .on_hover_text("Plot settings");
+                                        if settings.clicked() {
+                                            let open_id =
+                                                egui::Id::new(("plotter_settings_open", plugin_id));
+                                            let state_id = egui::Id::new((
+                                                "plotter_settings_state",
+                                                plugin_id,
+                                            ));
+                                            ctx.data_mut(|d| {
+                                                d.insert_temp(open_id, true);
+                                                if d.get_temp::<PlotterPreviewState>(state_id)
+                                                    .is_none()
+                                                {
+                                                    d.insert_temp(state_id, settings_seed.clone());
+                                                }
+                                            });
+                                        }
+                                    },
+                                );
+                            });
                         });
 
                         let export_open = egui::Id::new(("plotter_export_open", plugin_id));
@@ -584,199 +819,253 @@ impl GuiApp {
                                 state.series_tab_start =
                                     state.series_tab_start.min(state.series_names.len() - 1);
                             }
+                            let viewport_size = ctx.screen_rect().size();
+                            let width_limit = (viewport_size.x - 24.0).max(420.0);
+                            let height_limit = (viewport_size.y - 24.0).max(320.0);
+                            // Keep a stable "dense" settings layout (no huge blank area on large monitors),
+                            // while still fitting smaller windows. Target profile is close to the
+                            // visually good minimized case.
+                            let width_cap = width_limit.min(980.0);
+                            let height_cap = height_limit.min(560.0);
+                            let k = (width_cap / 16.0).min(height_cap / 9.0);
+                            let fixed_size =
+                                egui::vec2((k * 16.0).max(420.0), (k * 9.0).max(320.0));
                             egui::Window::new("Plot Settings")
                                 .resizable(false)
-                                .fixed_size(egui::vec2(
-                                    (ctx.screen_rect().width() * 0.92).clamp(900.0, 1400.0),
-                                    (ctx.screen_rect().height() * 0.92).clamp(760.0, 980.0),
-                                ))
+                                .fixed_size(fixed_size)
                                 .open(&mut open)
                                 .show(ctx, |ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.label("Title:");
-                                        ui.text_edit_singleline(&mut state.title);
-                                    });
-                                    ui.horizontal(|ui| {
-                                        ui.checkbox(&mut state.show_axes, "Show axes");
-                                        ui.checkbox(&mut state.show_legend, "Show legend");
-                                        ui.checkbox(&mut state.show_grid, "Show grid");
-                                        ui.checkbox(&mut state.dark_theme, "Dark theme");
-                                    });
-                                    ui.horizontal(|ui| {
-                                        ui.label("X-axis:");
-                                        ui.text_edit_singleline(&mut state.x_axis_name);
-                                        ui.label("Y-axis:");
-                                        ui.text_edit_singleline(&mut state.y_axis_name);
-                                    });
-                                    Self::render_timebase_controls(
-                                        ui,
-                                        &mut state.window_ms,
-                                        &mut state.timebase_divisions,
-                                    );
-                                    ui.separator();
-
-                                    ui.horizontal(|ui| {
-                                        let total = state.series_names.len();
-                                        let tab_w = 180.0_f32;
-                                        let arrow_w = 28.0_f32;
-                                        let available = ui.available_width().max(tab_w);
-                                        let can_page = (total as f32 * tab_w) > available;
-                                        let tabs_width = if can_page {
-                                            (available - arrow_w).max(tab_w)
-                                        } else {
-                                            available
-                                        };
-                                        let visible =
-                                            ((tabs_width / tab_w).floor() as usize).max(1);
-                                        let end = (state.series_tab_start + visible).min(total);
-                                        for i in state.series_tab_start..end {
-                                            let full = state.series_names[i].clone();
-                                            let text = Self::truncate_tab_label(&full, 20);
-                                            let selected = state.selected_series_tab == i;
-                                            let resp = ui.add_sized(
-                                                [180.0, 24.0],
-                                                egui::SelectableLabel::new(selected, text),
+                                    let apply_bar_h = BUTTON_SIZE.y + 6.0;
+                                    let scroll_h = (ui.available_height() - apply_bar_h).max(120.0);
+                                    egui::ScrollArea::vertical()
+                                        .auto_shrink([false, false])
+                                        .max_height(scroll_h)
+                                        .show(ui, |ui| {
+                                            ui.horizontal(|ui| {
+                                                ui.label("Title:");
+                                                ui.text_edit_singleline(&mut state.title);
+                                            });
+                                            ui.horizontal(|ui| {
+                                                ui.checkbox(&mut state.show_axes, "Show axes");
+                                                ui.checkbox(&mut state.show_legend, "Show legend");
+                                                ui.checkbox(&mut state.show_grid, "Show grid");
+                                                ui.checkbox(&mut state.dark_theme, "Dark theme");
+                                            });
+                                            ui.horizontal(|ui| {
+                                                ui.label("X-axis:");
+                                                ui.text_edit_singleline(&mut state.x_axis_name);
+                                                ui.label("Y-axis:");
+                                                ui.text_edit_singleline(&mut state.y_axis_name);
+                                            });
+                                            Self::render_timebase_controls(
+                                                ui,
+                                                &mut state.window_ms,
+                                                &mut state.timebase_divisions,
                                             );
-                                            if resp.clicked() {
-                                                state.selected_series_tab = i;
-                                            }
-                                            if !selected {
-                                                let _ = resp.on_hover_text(full);
-                                            }
-                                        }
-                                        if can_page
-                                            && ui
-                                                .add_enabled(
-                                                    state.series_tab_start + visible < total,
-                                                    egui::Button::new(">"),
-                                                )
-                                                .clicked()
-                                        {
-                                            state.series_tab_start = (state.series_tab_start + 1)
-                                                .min(total.saturating_sub(1));
-                                        }
-                                    });
+                                            ui.horizontal(|ui| {
+                                                ui.label("Refresh Hz:");
+                                                ui.add(
+                                                    egui::DragValue::new(&mut state.refresh_hz)
+                                                        .clamp_range(1.0..=1000.0)
+                                                        .speed(1.0),
+                                                );
+                                                ui.separator();
+                                                ui.label("Priority:");
+                                                ui.add(
+                                                    egui::DragValue::new(&mut state.priority)
+                                                        .clamp_range(-100..=1000)
+                                                        .speed(1.0),
+                                                );
+                                            });
+                                            ui.separator();
 
-                                    if !state.series_names.is_empty() {
-                                        let i = state.selected_series_tab;
-                                        ui.horizontal(|ui| {
-                                            ui.add_sized(
-                                                [900.0, 22.0],
-                                                egui::TextEdit::singleline(
-                                                    &mut state.series_names[i],
-                                                ),
+                                            ui.horizontal(|ui| {
+                                                let total = state.series_names.len();
+                                                let tab_w = 180.0_f32;
+                                                let arrow_w = 28.0_f32;
+                                                let available = ui.available_width().max(tab_w);
+                                                let can_page = (total as f32 * tab_w) > available;
+                                                let tabs_width = if can_page {
+                                                    (available - arrow_w).max(tab_w)
+                                                } else {
+                                                    available
+                                                };
+                                                let visible =
+                                                    ((tabs_width / tab_w).floor() as usize).max(1);
+                                                let end =
+                                                    (state.series_tab_start + visible).min(total);
+                                                for i in state.series_tab_start..end {
+                                                    let full = state.series_names[i].clone();
+                                                    let text = Self::truncate_tab_label(&full, 20);
+                                                    let selected = state.selected_series_tab == i;
+                                                    let resp = ui.add_sized(
+                                                        [180.0, 24.0],
+                                                        egui::SelectableLabel::new(selected, text),
+                                                    );
+                                                    if resp.clicked() {
+                                                        state.selected_series_tab = i;
+                                                    }
+                                                    if !selected {
+                                                        let _ = resp.on_hover_text(full);
+                                                    }
+                                                }
+                                                if can_page
+                                                    && ui
+                                                        .add_enabled(
+                                                            state.series_tab_start + visible
+                                                                < total,
+                                                            egui::Button::new(">"),
+                                                        )
+                                                        .clicked()
+                                                {
+                                                    state.series_tab_start =
+                                                        (state.series_tab_start + 1)
+                                                            .min(total.saturating_sub(1));
+                                                }
+                                            });
+
+                                            if !state.series_names.is_empty() {
+                                                let i = state.selected_series_tab;
+                                                ui.horizontal(|ui| {
+                                                    ui.add_sized(
+                                                        [
+                                                            (ui.available_width() - 28.0)
+                                                                .max(120.0),
+                                                            22.0,
+                                                        ],
+                                                        egui::TextEdit::singleline(
+                                                            &mut state.series_names[i],
+                                                        ),
+                                                    );
+                                                    ui.color_edit_button_srgba(
+                                                        &mut state.colors[i],
+                                                    );
+                                                });
+                                            }
+                                            ui.separator();
+                                            let preview_height =
+                                                (ui.available_height() * 0.5).clamp(170.0, 360.0);
+                                            let preview_size =
+                                                egui::vec2(ui.available_width(), preview_height);
+                                            let series_transforms = Self::build_series_transforms(
+                                                &state.series_scales,
+                                                &state.series_offsets,
+                                                state.series_names.len(),
                                             );
-                                            ui.color_edit_button_srgba(&mut state.colors[i]);
+                                            ui.allocate_ui(preview_size, |ui| {
+                                                let input_count = plotter.input_count;
+                                                let refresh_hz = plotter.refresh_hz;
+                                                plotter.set_window_ms(state.window_ms);
+                                                plotter.update_config(
+                                                    input_count,
+                                                    refresh_hz,
+                                                    logic_period_seconds,
+                                                );
+                                                plotter.render_with_settings(
+                                                    ui,
+                                                    "",
+                                                    &time_label,
+                                                    state.show_axes,
+                                                    state.show_legend,
+                                                    state.show_grid,
+                                                    Some(&state.title),
+                                                    Some(&state.series_names),
+                                                    Some(&series_transforms),
+                                                    Some(&state.colors),
+                                                    state.dark_theme,
+                                                    Some(&state.x_axis_name),
+                                                    Some(&state.y_axis_name),
+                                                    Some(state.window_ms),
+                                                );
+                                            });
+                                            ui.separator();
+                                            if !state.series_names.is_empty() {
+                                                let i = state.selected_series_tab;
+                                                let row_w = ui.available_width();
+                                                let row_h = (ui.available_height() - 56.0)
+                                                    .clamp(120.0, 180.0);
+                                                ui.allocate_ui_with_layout(
+                                                    egui::vec2(row_w, row_h),
+                                                    egui::Layout::left_to_right(
+                                                        egui::Align::Center,
+                                                    ),
+                                                    |ui| {
+                                                        let left_w =
+                                                            (row_w * 0.18).clamp(110.0, 180.0);
+                                                        let right_w =
+                                                            (row_w * 0.18).clamp(110.0, 180.0);
+                                                        let center_w =
+                                                            (row_w - left_w - right_w).max(260.0);
+
+                                                        ui.allocate_ui_with_layout(
+                                                            egui::vec2(left_w, row_h),
+                                                            egui::Layout::top_down(
+                                                                egui::Align::Center,
+                                                            ),
+                                                            |ui| {
+                                                                Self::knob_control(
+                                                                    ui,
+                                                                    "DC Offset",
+                                                                    &mut state.series_offsets[i],
+                                                                    -1_000_000_000.0,
+                                                                    1_000_000_000.0,
+                                                                    1.0,
+                                                                    1,
+                                                                );
+                                                            },
+                                                        );
+
+                                                        ui.allocate_ui_with_layout(
+                                                            egui::vec2(center_w, row_h),
+                                                            egui::Layout::top_down(
+                                                                egui::Align::Center,
+                                                            ),
+                                                            |ui| {
+                                                                ui.vertical_centered(|ui| {
+                                                                    Self::wheel_value_box(
+                                                                        ui,
+                                                                        "Offset Value",
+                                                                        &mut state.series_offsets
+                                                                            [i],
+                                                                        1,
+                                                                        -1_000_000_000.0,
+                                                                        1_000_000_000.0,
+                                                                    );
+                                                                    ui.add_space(8.0);
+                                                                    Self::wheel_value_box(
+                                                                        ui,
+                                                                        "Scale Value",
+                                                                        &mut state.series_scales[i],
+                                                                        3,
+                                                                        0.001,
+                                                                        1_000_000.0,
+                                                                    );
+                                                                });
+                                                            },
+                                                        );
+
+                                                        ui.allocate_ui_with_layout(
+                                                            egui::vec2(right_w, row_h),
+                                                            egui::Layout::top_down(
+                                                                egui::Align::Center,
+                                                            ),
+                                                            |ui| {
+                                                                Self::knob_control(
+                                                                    ui,
+                                                                    "Gain",
+                                                                    &mut state.series_scales[i],
+                                                                    0.001,
+                                                                    1_000_000.0,
+                                                                    0.08,
+                                                                    3,
+                                                                );
+                                                            },
+                                                        );
+                                                    },
+                                                );
+                                            }
                                         });
-                                    }
-                                    ui.separator();
-                                    let preview_rect = ui.available_rect_before_wrap();
-                                    let preview_size = egui::vec2(preview_rect.width(), 340.0);
-                                    let series_transforms = Self::build_series_transforms(
-                                        &state.series_scales,
-                                        &state.series_offsets,
-                                        state.series_names.len(),
-                                    );
-                                    ui.allocate_ui(preview_size, |ui| {
-                                        let input_count = plotter.input_count;
-                                        let refresh_hz = plotter.refresh_hz;
-                                        plotter.set_window_ms(state.window_ms);
-                                        plotter.update_config(
-                                            input_count,
-                                            refresh_hz,
-                                            logic_period_seconds,
-                                        );
-                                        plotter.render_with_settings(
-                                            ui,
-                                            "",
-                                            &time_label,
-                                            state.show_axes,
-                                            state.show_legend,
-                                            state.show_grid,
-                                            Some(&state.title),
-                                            Some(&state.series_names),
-                                            Some(&series_transforms),
-                                            Some(&state.colors),
-                                            state.dark_theme,
-                                            Some(&state.x_axis_name),
-                                            Some(&state.y_axis_name),
-                                            Some(state.window_ms),
-                                        );
-                                    });
-                                    ui.separator();
-                                    if !state.series_names.is_empty() {
-                                        let i = state.selected_series_tab;
-                                        let row_w = ui.available_width();
-                                        ui.allocate_ui_with_layout(
-                                            egui::vec2(row_w, 150.0),
-                                            egui::Layout::left_to_right(egui::Align::Center),
-                                            |ui| {
-                                                let left_w = 180.0;
-                                                let right_w = 180.0;
-                                                let center_w =
-                                                    (row_w - left_w - right_w).max(260.0);
-
-                                                ui.allocate_ui_with_layout(
-                                                    egui::vec2(left_w, 150.0),
-                                                    egui::Layout::top_down(egui::Align::Center),
-                                                    |ui| {
-                                                        Self::knob_control(
-                                                            ui,
-                                                            "DC Offset",
-                                                            &mut state.series_offsets[i],
-                                                            -1_000_000_000.0,
-                                                            1_000_000_000.0,
-                                                            1.0,
-                                                            1,
-                                                        );
-                                                    },
-                                                );
-
-                                                ui.allocate_ui_with_layout(
-                                                    egui::vec2(center_w, 150.0),
-                                                    egui::Layout::top_down(egui::Align::Center),
-                                                    |ui| {
-                                                        ui.vertical_centered(|ui| {
-                                                            Self::wheel_value_box(
-                                                                ui,
-                                                                "Offset Value",
-                                                                &mut state.series_offsets[i],
-                                                                1,
-                                                                -1_000_000_000.0,
-                                                                1_000_000_000.0,
-                                                            );
-                                                            ui.add_space(8.0);
-                                                            Self::wheel_value_box(
-                                                                ui,
-                                                                "Scale Value",
-                                                                &mut state.series_scales[i],
-                                                                3,
-                                                                0.001,
-                                                                1_000_000.0,
-                                                            );
-                                                        });
-                                                    },
-                                                );
-
-                                                ui.allocate_ui_with_layout(
-                                                    egui::vec2(right_w, 150.0),
-                                                    egui::Layout::top_down(egui::Align::Center),
-                                                    |ui| {
-                                                        Self::knob_control(
-                                                            ui,
-                                                            "Gain",
-                                                            &mut state.series_scales[i],
-                                                            0.001,
-                                                            1_000_000.0,
-                                                            0.08,
-                                                            3,
-                                                        );
-                                                    },
-                                                );
-                                            },
-                                        );
-                                    }
-                                    ui.separator();
+                                    ui.add_space(2.0);
                                     if styled_button(ui, "Apply").clicked() {
                                         ctx.data_mut(|d| d.insert_temp(save_id, true));
                                         ctx.request_repaint();
@@ -791,6 +1080,12 @@ impl GuiApp {
                         ctx.request_repaint_after(Duration::from_secs_f64(1.0 / refresh_hz));
                     }
                 });
+                if self.connection_editor_host == ConnectionEditorHost::PluginWindow(plugin_id) {
+                    self.active_notification_plugin_id = Some(plugin_id);
+                    self.render_connection_editor(ctx);
+                    self.active_notification_plugin_id = None;
+                }
+                self.render_plotter_notifications(ctx, plugin_id);
             });
 
             // Check for capture request
@@ -810,6 +1105,33 @@ impl GuiApp {
                 settings_saved.push(plugin_id);
                 ctx.data_mut(|d| {
                     d.remove::<bool>(egui::Id::new(("plotter_settings_save", plugin_id)))
+                });
+            }
+            if ctx.data(|d| {
+                d.get_temp::<bool>(egui::Id::new(("plotter_start_toggle", plugin_id)))
+                    .unwrap_or(false)
+            }) {
+                start_toggle_requested.push(plugin_id);
+                ctx.data_mut(|d| {
+                    d.remove::<bool>(egui::Id::new(("plotter_start_toggle", plugin_id)))
+                });
+            }
+            if ctx.data(|d| {
+                d.get_temp::<bool>(egui::Id::new(("plotter_add_connections", plugin_id)))
+                    .unwrap_or(false)
+            }) {
+                add_connection_requested.push(plugin_id);
+                ctx.data_mut(|d| {
+                    d.remove::<bool>(egui::Id::new(("plotter_add_connections", plugin_id)));
+                });
+            }
+            if ctx.data(|d| {
+                d.get_temp::<bool>(egui::Id::new(("plotter_remove_connections", plugin_id)))
+                    .unwrap_or(false)
+            }) {
+                remove_connection_requested.push(plugin_id);
+                ctx.data_mut(|d| {
+                    d.remove::<bool>(egui::Id::new(("plotter_remove_connections", plugin_id)));
                 });
             }
             if ctx.embed_viewports() {
@@ -883,27 +1205,35 @@ impl GuiApp {
         }
 
         for id in closed {
-            if let Some(plotter) = self.plotter_manager.plotters.get(&id) {
-                if let Ok(mut plotter) = plotter.lock() {
-                    plotter.open = false;
-                }
+            let open_id = egui::Id::new(("plotter_settings_open", id));
+            let state_id = egui::Id::new(("plotter_settings_state", id));
+            let save_id = egui::Id::new(("plotter_settings_save", id));
+            let export_open_id = egui::Id::new(("plotter_export_open", id));
+            let export_state_id = egui::Id::new(("plotter_export_state", id));
+            let export_save_id = egui::Id::new(("plotter_export_save", id));
+            let export_close_id = egui::Id::new(("plotter_export_close", id));
+            ctx.data_mut(|d| {
+                d.remove::<bool>(open_id);
+                d.remove::<PlotterPreviewState>(state_id);
+                d.remove::<bool>(save_id);
+                d.remove::<bool>(export_open_id);
+                d.remove::<PlotterPreviewState>(export_state_id);
+                d.remove::<bool>(export_save_id);
+                d.remove::<bool>(export_close_id);
+            });
+            if self.connection_editor_host == ConnectionEditorHost::PluginWindow(id) {
+                self.connection_editor.open = false;
+                self.connection_editor.plugin_id = None;
+                self.connection_editor_host = ConnectionEditorHost::Main;
             }
-            // Stop the plugin when plot window closes
-            if let Some(plugin) = self
+            if let Some(index) = self
                 .workspace_manager
                 .workspace
                 .plugins
-                .iter_mut()
-                .find(|p| p.id == id)
+                .iter()
+                .position(|p| p.id == id)
             {
-                if plugin.running {
-                    plugin.running = false;
-                    let _ = self
-                        .state_sync
-                        .logic_tx
-                        .send(LogicMessage::SetPluginRunning(id, false));
-                    self.mark_workspace_dirty();
-                }
+                self.remove_plugin(index);
             }
         }
 
@@ -920,6 +1250,27 @@ impl GuiApp {
             if let Some(state) = ctx.data(|d| d.get_temp::<PlotterPreviewState>(state_id)) {
                 self.apply_plotter_preview_state(plugin_id, &state);
             }
+        }
+        for plugin_id in start_toggle_requested {
+            if let Err(err) = self.toggle_plugin_running_from_plotter_window(plugin_id) {
+                self.show_plugin_info(plugin_id, "Plugin", &err);
+            }
+        }
+        for plugin_id in add_connection_requested {
+            self.selected_plugin_id = Some(plugin_id);
+            self.open_connection_editor_in_plugin_window(
+                plugin_id,
+                plugin_id,
+                ConnectionEditMode::Add,
+            );
+        }
+        for plugin_id in remove_connection_requested {
+            self.selected_plugin_id = Some(plugin_id);
+            self.open_connection_editor_in_plugin_window(
+                plugin_id,
+                plugin_id,
+                ConnectionEditMode::Remove,
+            );
         }
     }
 
@@ -1004,6 +1355,12 @@ impl GuiApp {
                     }
                 }
             }
+            if state.series_names.is_empty() {
+                state.series_names.push("Series 1".to_string());
+                state.series_scales.push(1.0);
+                state.series_offsets.push(0.0);
+                state.colors.push(egui::Color32::from_rgb(86, 156, 214));
+            }
             return state;
         }
         if let Some(plotter) = self.plotter_manager.plotters.get(&plugin_id) {
@@ -1028,6 +1385,7 @@ impl GuiApp {
                 state.series_offsets = vec![0.0; plotter.input_count];
                 state.window_ms = plotter.window_ms;
                 state.timebase_divisions = 10;
+                state.refresh_hz = plotter.refresh_hz;
                 state.colors = (0..plotter.input_count)
                     .map(|i| match i % 8 {
                         0 => egui::Color32::from_rgb(86, 156, 214),
@@ -1041,6 +1399,26 @@ impl GuiApp {
                     })
                     .collect();
             }
+        }
+        if let Some(plugin) = self
+            .workspace_manager
+            .workspace
+            .plugins
+            .iter()
+            .find(|plugin| plugin.id == plugin_id)
+        {
+            state.priority = plugin.priority;
+            state.refresh_hz = plugin
+                .config
+                .get("refresh_hz")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(state.refresh_hz);
+        }
+        if state.series_names.is_empty() {
+            state.series_names.push("Series 1".to_string());
+            state.series_scales.push(1.0);
+            state.series_offsets.push(0.0);
+            state.colors.push(egui::Color32::from_rgb(86, 156, 214));
         }
         state
     }
@@ -1066,6 +1444,25 @@ impl GuiApp {
                 state.export_svg,
             ),
         );
+        if let Some(plugin) = self
+            .workspace_manager
+            .workspace
+            .plugins
+            .iter_mut()
+            .find(|plugin| plugin.id == plugin_id)
+        {
+            plugin.priority = state.priority;
+            if let Some(config) = plugin.config.as_object_mut() {
+                config.insert(
+                    "refresh_hz".to_string(),
+                    Value::from(state.refresh_hz.max(1.0)),
+                );
+            }
+            self.mark_workspace_dirty();
+            let _ = self.state_sync.logic_tx.send(LogicMessage::UpdateWorkspace(
+                self.workspace_manager.workspace.clone(),
+            ));
+        }
     }
 
     fn build_series_transforms(

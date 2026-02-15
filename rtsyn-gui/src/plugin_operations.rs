@@ -83,6 +83,23 @@ impl GuiApp {
             self.status = err;
             return;
         }
+        if let Some(added) = self.workspace_manager.workspace.plugins.last() {
+            if self.plugin_uses_plotter_viewport(&added.kind) {
+                let plotter = self
+                    .plotter_manager
+                    .plotters
+                    .entry(added.id)
+                    .or_insert_with(|| {
+                        std::sync::Arc::new(std::sync::Mutex::new(
+                            crate::plotter::LivePlotter::new(added.id),
+                        ))
+                    });
+                if let Ok(mut plotter) = plotter.lock() {
+                    plotter.open = true;
+                }
+                self.recompute_plotter_ui_hz();
+            }
+        }
         self.status = "Installed plugin added".to_string();
         self.mark_workspace_dirty();
     }
@@ -128,6 +145,9 @@ impl GuiApp {
             self.windows.plugin_config_open = false;
         }
         self.plotter_manager.plotters.remove(&removed_id);
+        self.plotter_manager
+            .plotter_preview_settings
+            .remove(&removed_id);
 
         if let Err(err) = self
             .plugin_manager
@@ -178,6 +198,7 @@ impl GuiApp {
                 self.windows.plugin_config_open = false;
             }
             self.plotter_manager.plotters.remove(id);
+            self.plotter_manager.plotter_preview_settings.remove(id);
         }
 
         self.scan_detected_plugins();
@@ -226,6 +247,7 @@ impl GuiApp {
                 self.windows.plugin_config_open = false;
             }
             self.plotter_manager.plotters.remove(id);
+            self.plotter_manager.plotter_preview_settings.remove(id);
         }
 
         if path.as_os_str().is_empty() {

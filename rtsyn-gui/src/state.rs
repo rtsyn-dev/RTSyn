@@ -65,3 +65,9 @@ pub(crate) enum ConnectionEditTab {
     Inputs,
     Outputs,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ConnectionEditorHost {
+    Main,
+    PluginWindow(u64),
+}

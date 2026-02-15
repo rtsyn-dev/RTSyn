@@ -96,7 +96,7 @@ impl Plugin for LivePlotterPlugin {
                 pattern: "in_{}".to_string(),
             },
             loads_started: false,
-            external_window: false,
+            external_window: true,
             starts_expanded: true,
             start_requires_connected_inputs: vec!["in_0".to_string()],
             start_requires_connected_outputs: Vec::new(),
