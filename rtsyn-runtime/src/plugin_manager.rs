@@ -209,7 +209,7 @@ pub fn set_dynamic_config_if_needed(
     (api.set_config_json)(
         plugin_instance.handle,
         json.as_bytes().as_ptr(),
-        json.as_bytes().len(),
+        json.len(),
     );
     plugin_instance.last_base_config = Some(plugin_config.clone());
     plugin_instance.last_period_seconds = Some(period_seconds);
@@ -224,7 +224,7 @@ pub fn set_dynamic_config_patch(plugin_instance: &mut DynamicPluginInstance, key
     (api.set_config_json)(
         plugin_instance.handle,
         json.as_bytes().as_ptr(),
-        json.as_bytes().len(),
+        json.len(),
     );
 
     if let Some(Value::Object(ref mut cfg)) = plugin_instance.last_base_config {

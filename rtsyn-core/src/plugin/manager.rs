@@ -1,3 +1,4 @@
+use super::types::{DetectedPlugin, InstalledPlugin, PluginManifest, PluginMetadataSource};
 #[cfg(feature = "comedi")]
 use comedi_daq_plugin::ComediDaqPlugin;
 use csv_recorder_plugin::CsvRecorderedPlugin;
@@ -6,7 +7,6 @@ use performance_monitor_plugin::PerformanceMonitorPlugin;
 use rtsyn_plugin::ui::{DisplaySchema, PluginBehavior, UISchema};
 use rtsyn_plugin::Plugin;
 use rtsyn_plugin::RTSYN_PLUGIN_ABI_VERSION;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -14,56 +14,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 use workspace::{PluginDefinition, WorkspaceDefinition};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PluginManifest {
-    pub name: String,
-    pub kind: String,
-    pub version: Option<String>,
-    pub description: Option<String>,
-    pub library: Option<String>,
-    pub api_version: Option<u32>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InstalledPlugin {
-    pub manifest: PluginManifest,
-    pub path: PathBuf,
-    pub library_path: Option<PathBuf>,
-    pub removable: bool,
-    pub metadata_inputs: Vec<String>,
-    pub metadata_outputs: Vec<String>,
-    pub metadata_variables: Vec<(String, f64)>,
-    pub display_schema: Option<DisplaySchema>,
-    pub ui_schema: Option<UISchema>,
-}
-
-#[derive(Debug, Clone)]
-pub struct DetectedPlugin {
-    pub manifest: PluginManifest,
-    pub path: PathBuf,
-}
-
-pub trait PluginMetadataSource {
-    fn query_plugin_metadata(
-        &self,
-        library_path: &str,
-        timeout: Duration,
-    ) -> Option<(
-        Vec<String>,
-        Vec<String>,
-        Vec<(String, f64)>,
-        Option<DisplaySchema>,
-        Option<UISchema>,
-    )>;
-
-    fn query_plugin_behavior(
-        &self,
-        kind: &str,
-        library_path: Option<&str>,
-        timeout: Duration,
-    ) -> Option<PluginBehavior>;
-}
 
 pub struct PluginManager {
     pub installed_plugins: Vec<InstalledPlugin>,
@@ -125,7 +75,6 @@ impl PluginManager {
     }
 
     fn validate_manifest_api_compat(manifest: &PluginManifest) -> Result<(), String> {
-        // Dynamic plugins (with shared library) must explicitly declare ABI version.
         if manifest.library.is_none() {
             return Ok(());
         }
@@ -378,74 +327,6 @@ impl PluginManager {
             .join(" ")
     }
 
-    pub fn refresh_installed_plugin(
-        &mut self,
-        kind: &str,
-        path: &Path,
-        metadata: &impl PluginMetadataSource,
-    ) -> Result<(), String> {
-        self.plugin_behaviors.remove(kind);
-
-        if path.as_os_str().is_empty() {
-            return Ok(());
-        }
-
-        let manifest_path = path.join("plugin.toml");
-        let data = std::fs::read_to_string(&manifest_path)
-            .map_err(|err| format!("Failed to read plugin.toml: {err}"))?;
-        let manifest: PluginManifest =
-            toml::from_str(&data).map_err(|err| format!("Failed to parse plugin.toml: {err}"))?;
-        Self::validate_manifest_api_compat(&manifest)?;
-
-        let library_path = PluginManager::resolve_library_path(&manifest, path);
-        if let Some(lib_path) = library_path.as_deref() {
-            let lib_path_str = lib_path.to_string_lossy();
-            if metadata
-                .query_plugin_metadata(lib_path_str.as_ref(), Duration::from_secs(2))
-                .is_none()
-            {
-                return Err(
-                    "Incompatible plugin API. Rebuild plugin with current rtsyn-plugin."
-                        .to_string(),
-                );
-            }
-        }
-
-        if let Some(installed) = self
-            .installed_plugins
-            .iter_mut()
-            .find(|plugin| plugin.manifest.kind == kind)
-        {
-            installed.manifest = manifest;
-            let (inputs, outputs, vars, display_schema, ui_schema) =
-                Self::query_metadata_with_fallback(metadata, library_path.as_deref());
-            installed.metadata_inputs = inputs;
-            installed.metadata_outputs = outputs;
-            installed.metadata_variables = vars;
-            installed.display_schema = display_schema;
-            installed.ui_schema = ui_schema;
-            installed.path = path.to_path_buf();
-            installed.library_path = library_path;
-        } else {
-            let (metadata_inputs, metadata_outputs, metadata_variables, display_schema, ui_schema) =
-                Self::query_metadata_with_fallback(metadata, library_path.as_deref());
-            self.installed_plugins.push(InstalledPlugin {
-                manifest,
-                path: path.to_path_buf(),
-                library_path,
-                removable: false,
-                metadata_inputs,
-                metadata_outputs,
-                metadata_variables,
-                display_schema,
-                ui_schema,
-            });
-        }
-
-        self.persist_installed_plugins();
-        Ok(())
-    }
-
     pub fn scan_detected_plugins_in(&mut self, bases: &[&str]) {
         self.compatibility_warnings.clear();
         let mut detected = Vec::new();
@@ -570,7 +451,7 @@ impl PluginManager {
         Ok(())
     }
 
-    pub fn uninstall_plugin_by_index(&mut self, index: usize) -> Result<InstalledPlugin, String> {
+    pub fn uninstall_plugin(&mut self, index: usize) -> Result<InstalledPlugin, String> {
         let plugin = self
             .installed_plugins
             .get(index)
@@ -583,26 +464,6 @@ impl PluginManager {
         self.installed_plugins.remove(index);
         self.persist_installed_plugins();
         Ok(plugin)
-    }
-
-    pub fn refresh_installed_library_paths(&mut self) -> bool {
-        let mut changed = false;
-        for installed in &mut self.installed_plugins {
-            let needs_update = installed
-                .library_path
-                .as_ref()
-                .map(|path| !path.is_file())
-                .unwrap_or(true);
-            if needs_update {
-                installed.library_path =
-                    PluginManager::resolve_library_path(&installed.manifest, &installed.path);
-                changed = true;
-            }
-        }
-        if changed {
-            self.persist_installed_plugins();
-        }
-        changed
     }
 
     pub fn inject_library_paths_into_workspace(&self, workspace: &mut WorkspaceDefinition) {
@@ -729,6 +590,29 @@ impl PluginManager {
         Ok(id)
     }
 
+    pub fn remove_plugins_by_kind(
+        &mut self,
+        workspace: &mut WorkspaceDefinition,
+        kind: &str,
+    ) -> Vec<u64> {
+        let removed_ids: Vec<u64> = workspace
+            .plugins
+            .iter()
+            .filter(|p| p.kind == kind)
+            .map(|p| p.id)
+            .collect();
+        if removed_ids.is_empty() {
+            return removed_ids;
+        }
+        workspace.plugins.retain(|p| p.kind != kind);
+        workspace.connections.retain(|conn| {
+            !removed_ids.contains(&conn.from_plugin) && !removed_ids.contains(&conn.to_plugin)
+        });
+        self.available_plugin_ids
+            .extend(removed_ids.iter().copied());
+        removed_ids
+    }
+
     pub fn duplicate_plugin_in_workspace(
         &mut self,
         workspace: &mut WorkspaceDefinition,
@@ -774,303 +658,85 @@ impl PluginManager {
         Ok(())
     }
 
-    pub fn remove_plugins_by_kind_from_workspace(
-        &mut self,
-        workspace: &mut WorkspaceDefinition,
-        kind: &str,
-    ) -> Vec<u64> {
-        let removed_ids: Vec<u64> = workspace
-            .plugins
-            .iter()
-            .filter(|p| p.kind == kind)
-            .map(|p| p.id)
-            .collect();
-        if removed_ids.is_empty() {
-            return removed_ids;
+    pub fn uninstall_plugin_by_index(&mut self, index: usize) -> Result<InstalledPlugin, String> {
+        if index >= self.installed_plugins.len() {
+            return Err("Invalid plugin index".to_string());
         }
-        workspace.plugins.retain(|p| p.kind != kind);
-        workspace.connections.retain(|conn| {
-            !removed_ids.contains(&conn.from_plugin) && !removed_ids.contains(&conn.to_plugin)
-        });
-        self.available_plugin_ids
-            .extend(removed_ids.iter().copied());
-        removed_ids
-    }
-}
-
-pub struct PluginCatalog {
-    pub manager: PluginManager,
-}
-
-impl PluginCatalog {
-    pub fn new(install_db_path: PathBuf) -> Self {
-        Self {
-            manager: PluginManager::new(install_db_path),
-        }
-    }
-
-    pub fn scan_detected_plugins(&mut self) {
-        self.manager
-            .scan_detected_plugins_in(&["plugins", "app_plugins", "rtsyn-plugins"]);
-    }
-
-    pub fn install_plugin_from_folder<P: AsRef<Path>>(
-        &mut self,
-        folder: P,
-        removable: bool,
-        persist: bool,
-        metadata: &impl PluginMetadataSource,
-    ) -> Result<(), String> {
-        self.manager
-            .install_plugin_from_folder(folder.as_ref(), removable, persist, metadata)
-    }
-
-    pub fn uninstall_plugin_by_kind(
-        &mut self,
-        kind_or_name: &str,
-    ) -> Result<InstalledPlugin, String> {
-        let index = self
-            .manager
-            .installed_plugins
-            .iter()
-            .position(|p| {
-                p.manifest.kind == kind_or_name
-                    || p.manifest.name.eq_ignore_ascii_case(kind_or_name)
-            })
-            .ok_or_else(|| "Plugin not installed".to_string())?;
-        let plugin = self.manager.installed_plugins[index].clone();
+        let plugin = self.installed_plugins[index].clone();
         if !plugin.removable {
             return Err("Plugin is bundled and cannot be uninstalled".to_string());
         }
-        self.manager.installed_plugins.remove(index);
-        self.manager.persist_installed_plugins();
+        self.installed_plugins.remove(index);
+        self.persist_installed_plugins();
         Ok(plugin)
     }
 
-    pub fn reinstall_plugin_by_kind(
-        &mut self,
-        kind_or_name: &str,
-        metadata: &impl PluginMetadataSource,
-    ) -> Result<(), String> {
-        let index = self
-            .manager
-            .installed_plugins
-            .iter()
-            .position(|p| {
-                p.manifest.kind == kind_or_name
-                    || p.manifest.name.eq_ignore_ascii_case(kind_or_name)
-            })
-            .ok_or_else(|| "Plugin not installed".to_string())?;
-        let path = self.manager.installed_plugins[index].path.clone();
-        if path.as_os_str().is_empty() {
-            return Err("Plugin path is not set".to_string());
-        }
-        let kind = self.manager.installed_plugins[index].manifest.kind.clone();
-        if self.manager.installed_plugins[index].removable {
-            if !PluginManager::build_plugin(&path) {
-                return Err("Plugin rebuild failed".to_string());
+    pub fn refresh_installed_library_paths(&mut self) -> bool {
+        let mut changed = false;
+        for plugin in &mut self.installed_plugins {
+            if plugin.removable {
+                let new_path = Self::resolve_library_path(&plugin.manifest, &plugin.path);
+                if new_path != plugin.library_path {
+                    plugin.library_path = new_path;
+                    changed = true;
+                }
             }
         }
-        self.manager
-            .refresh_installed_plugin(&kind, &path, metadata)
+        if changed {
+            self.persist_installed_plugins();
+        }
+        changed
     }
 
-    pub fn rebuild_plugin_by_kind(&mut self, kind_or_name: &str) -> Result<(), String> {
-        let index = self
-            .manager
-            .installed_plugins
-            .iter()
-            .position(|p| {
-                p.manifest.kind == kind_or_name
-                    || p.manifest.name.eq_ignore_ascii_case(kind_or_name)
-            })
-            .ok_or_else(|| "Plugin not installed".to_string())?;
-        let path = self.manager.installed_plugins[index].path.clone();
+    pub fn refresh_installed_plugin(
+        &mut self,
+        kind: &str,
+        path: &Path,
+        metadata: &impl PluginMetadataSource,
+    ) -> Result<(), String> {
+        self.plugin_behaviors.remove(kind);
         if path.as_os_str().is_empty() {
-            return Err("Plugin path is not set".to_string());
+            return Ok(());
         }
-        if !self.manager.installed_plugins[index].removable {
-            return Err("Bundled plugins cannot be rebuilt".to_string());
-        }
-        if !PluginManager::build_plugin(&path) {
-            return Err("Plugin rebuild failed".to_string());
+        let manifest_path = path.join("plugin.toml");
+        let data = std::fs::read_to_string(&manifest_path)
+            .map_err(|err| format!("Failed to read plugin.toml: {err}"))?;
+        let manifest: PluginManifest =
+            toml::from_str(&data).map_err(|err| format!("Failed to parse plugin.toml: {err}"))?;
+        Self::validate_manifest_api_compat(&manifest)?;
+        let library_path = PluginManager::resolve_library_path(&manifest, path);
+        if let Some(ref lib_path) = library_path {
+            let result = metadata
+                .query_plugin_metadata(lib_path.to_str().unwrap(), Duration::from_secs(5))
+                .ok_or_else(|| "Failed to query plugin metadata".to_string())?;
+            let (inputs, outputs, variables, display_schema, ui_schema) = result;
+            let index = self
+                .installed_plugins
+                .iter()
+                .position(|p| p.manifest.kind == kind)
+                .ok_or_else(|| "Plugin not found".to_string())?;
+            self.installed_plugins[index].manifest = manifest;
+            self.installed_plugins[index].path = path.to_path_buf();
+            self.installed_plugins[index].library_path = library_path;
+            self.installed_plugins[index].metadata_inputs = inputs;
+            self.installed_plugins[index].metadata_outputs = outputs;
+            self.installed_plugins[index].metadata_variables = variables;
+            self.installed_plugins[index].display_schema = display_schema;
+            self.installed_plugins[index].ui_schema = ui_schema;
+            self.persist_installed_plugins();
         }
         Ok(())
     }
 
     pub fn remove_plugins_by_kind_from_workspace(
         &mut self,
+        workspace: &mut WorkspaceDefinition,
         kind: &str,
-        workspace: &mut WorkspaceDefinition,
     ) -> Vec<u64> {
-        self.manager
-            .remove_plugins_by_kind_from_workspace(workspace, kind)
-    }
-
-    pub fn add_installed_plugin_to_workspace(
-        &mut self,
-        kind_or_name: &str,
-        workspace: &mut WorkspaceDefinition,
-        metadata: &impl PluginMetadataSource,
-    ) -> Result<u64, String> {
-        let installed = self
-            .manager
-            .installed_plugins
-            .iter()
-            .find(|p| {
-                p.manifest.kind == kind_or_name
-                    || p.manifest.name.eq_ignore_ascii_case(kind_or_name)
-            })
-            .cloned()
-            .ok_or_else(|| "Plugin is not installed".to_string())?;
-
-        let mut config_map = serde_json::Map::new();
-        for (name, value) in &installed.metadata_variables {
-            config_map.insert(name.clone(), Value::from(*value));
-        }
-        if let Some(library_path) = &installed.library_path {
-            if installed.removable && PluginManager::library_is_outdated(library_path) {
-                return Err(
-                    "Plugin library is out of date. Rebuild or reinstall the plugin.".to_string(),
-                );
-            }
-            let lib_path_str = library_path.to_string_lossy();
-            if let Some((_, _, variables, _, _)) =
-                metadata.query_plugin_metadata(lib_path_str.as_ref(), Duration::from_secs(2))
-            {
-                for (name, value) in variables {
-                    config_map.insert(name, Value::from(value));
-                }
-            }
-        }
-        if let Some(schema) = installed.ui_schema.as_ref() {
-            for field in &schema.fields {
-                if config_map.contains_key(&field.key) {
-                    continue;
-                }
-                if let Some(default) = field.default.as_ref() {
-                    config_map.insert(field.key.clone(), default.clone());
-                }
-            }
-        }
-        if is_extendable_inputs(&installed.manifest.kind) {
-            config_map
-                .entry("input_count".to_string())
-                .or_insert_with(|| Value::from(0));
-        }
-        if installed.manifest.kind == "csv_recorder" {
-            config_map
-                .entry("columns".to_string())
-                .or_insert_with(|| Value::Array(Vec::new()));
-            config_map
-                .entry("path".to_string())
-                .or_insert_with(|| Value::from(""));
-            config_map
-                .entry("path_autogen".to_string())
-                .or_insert_with(|| Value::from(true));
-        } else if installed.manifest.kind == "comedi_daq" {
-            config_map
-                .entry("scan_nonce".to_string())
-                .or_insert_with(|| Value::from(0));
-        }
-        if let Some(library_path) = installed.library_path.as_ref() {
-            config_map.insert(
-                "library_path".to_string(),
-                Value::String(library_path.to_string_lossy().to_string()),
-            );
-        }
-
-        let loads_started = metadata
-            .query_plugin_behavior(
-                &installed.manifest.kind,
-                installed
-                    .library_path
-                    .as_ref()
-                    .map(|p| p.to_string_lossy())
-                    .as_deref(),
-                Duration::from_secs(2),
-            )
-            .map(|b| b.loads_started)
-            .unwrap_or(false);
-
-        let id = self.manager.available_plugin_ids.pop().unwrap_or_else(|| {
-            let id = self.manager.next_plugin_id;
-            self.manager.next_plugin_id += 1;
-            id
-        });
-
-        let plugin = PluginDefinition {
-            id,
-            kind: installed.manifest.kind.clone(),
-            config: Value::Object(config_map),
-            priority: 99,
-            running: loads_started,
-        };
-
-        workspace.plugins.push(plugin);
-        Ok(id)
-    }
-
-    pub fn remove_plugin_from_workspace(
-        &mut self,
-        plugin_id: u64,
-        workspace: &mut WorkspaceDefinition,
-    ) -> Result<(), String> {
-        self.manager
-            .remove_plugin_from_workspace(workspace, plugin_id)
-    }
-
-    pub fn sync_ids_from_workspace(&mut self, workspace: &WorkspaceDefinition) {
-        let max_id = workspace.plugins.iter().map(|p| p.id).max();
-        self.manager.sync_next_plugin_id(max_id);
-    }
-
-    pub fn list_installed(&self) -> &[InstalledPlugin] {
-        &self.manager.installed_plugins
-    }
-
-    pub fn refresh_library_paths(&mut self) {
-        self.manager.refresh_library_paths();
+        self.remove_plugins_by_kind(workspace, kind)
     }
 }
 
 pub fn is_extendable_inputs(kind: &str) -> bool {
     matches!(kind, "csv_recorder" | "live_plotter")
-}
-
-pub fn plugin_display_name(
-    installed: &[InstalledPlugin],
-    workspace: &WorkspaceDefinition,
-    plugin_id: u64,
-) -> String {
-    let Some(plugin) = workspace
-        .plugins
-        .iter()
-        .find(|plugin| plugin.id == plugin_id)
-    else {
-        return "plugin".to_string();
-    };
-
-    installed
-        .iter()
-        .find(|p| p.manifest.kind == plugin.kind)
-        .map(|p| p.manifest.name.clone())
-        .unwrap_or_else(|| PluginManager::display_kind(&plugin.kind))
-}
-
-pub fn empty_workspace() -> WorkspaceDefinition {
-    WorkspaceDefinition {
-        name: "cli".to_string(),
-        description: "CLI workspace".to_string(),
-        target_hz: 1000,
-        plugins: Vec::new(),
-        connections: Vec::new(),
-        settings: workspace::WorkspaceSettings::default(),
-    }
-}
-
-impl PluginCatalog {
-    pub fn inject_library_paths_into_workspace(&self, workspace: &mut WorkspaceDefinition) {
-        self.manager.inject_library_paths_into_workspace(workspace);
-    }
 }

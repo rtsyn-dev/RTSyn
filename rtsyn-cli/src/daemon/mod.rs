@@ -1,6 +1,8 @@
+pub mod plugin_handler;
+
 use crate::protocol::RuntimeSettingsOptions;
 use crate::protocol::{
-    ConnectionSummary, DaemonRequest, DaemonResponse, PluginSummary, RuntimePluginState,
+    ConnectionSummary, DaemonRequest, DaemonResponse, RuntimePluginState,
     RuntimePluginSummary, WorkspaceSummary, DEFAULT_SOCKET_PATH,
 };
 use rtsyn_core::connection::{extendable_input_index, next_available_extendable_input_index};
@@ -243,114 +245,53 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
     let mut stream = reader.into_inner();
 
     let response = match request {
-        DaemonRequest::PluginList => {
-            let plugins = state
-                .catalog
-                .list_installed()
-                .iter()
-                .map(|p| PluginSummary {
-                    kind: p.manifest.kind.clone(),
-                    name: p.manifest.name.clone(),
-                    version: p.manifest.version.clone(),
-                    removable: p.removable,
-                    path: if p.path.as_os_str().is_empty() {
-                        None
-                    } else {
-                        let canonical = std::fs::canonicalize(&p.path)
-                            .ok()
-                            .map(|path| path.to_string_lossy().to_string());
-                        Some(canonical.unwrap_or_else(|| p.path.to_string_lossy().to_string()))
-                    },
-                })
-                .collect();
-            DaemonResponse::PluginList { plugins }
-        }
+        DaemonRequest::PluginList => plugin_handler::plugin_list(&state.catalog),
         DaemonRequest::PluginInstall { path } => {
-            let install_path = PathBuf::from(&path);
-            if !install_path.is_absolute() {
-                DaemonResponse::Error {
-                    message: "Plugin install path must be absolute".to_string(),
-                }
-            } else {
-                let resolved = std::fs::canonicalize(&install_path).unwrap_or(install_path);
-                match state.catalog.install_plugin_from_folder(
-                    resolved,
-                    true,
-                    true,
-                    &state.runtime_query,
-                ) {
-                    Ok(()) => DaemonResponse::Ok {
-                        message: "Plugin installed".to_string(),
-                    },
-                    Err(err) => DaemonResponse::Error { message: err },
-                }
-            }
+            plugin_handler::plugin_install(&mut state.catalog, path, &state.runtime_query)
         }
         DaemonRequest::PluginReinstall { name } => {
-            let key = normalize_plugin_key(&name);
-            match state
-                .catalog
-                .reinstall_plugin_by_kind(&key, &state.runtime_query)
-            {
-                Ok(()) => DaemonResponse::Ok {
-                    message: "Plugin reinstalled".to_string(),
-                },
-                Err(err) => DaemonResponse::Error { message: err },
-            }
+            plugin_handler::plugin_reinstall(&mut state.catalog, name, &state.runtime_query)
         }
         DaemonRequest::PluginRebuild { name } => {
-            let key = normalize_plugin_key(&name);
-            match state.catalog.rebuild_plugin_by_kind(&key) {
-                Ok(()) => DaemonResponse::Ok {
-                    message: "Plugin rebuilt".to_string(),
-                },
-                Err(err) => DaemonResponse::Error { message: err },
-            }
+            plugin_handler::plugin_rebuild(&mut state.catalog, name)
         }
         DaemonRequest::PluginUninstall { name } => {
-            let key = normalize_plugin_key(&name);
-            match state.catalog.uninstall_plugin_by_kind(&key) {
-                Ok(plugin) => {
-                    let removed_ids = state.catalog.remove_plugins_by_kind_from_workspace(
-                        &plugin.manifest.kind,
-                        &mut state.workspace_manager.workspace,
-                    );
-                    if !removed_ids.is_empty() {
-                        state.refresh_runtime();
-                    }
-                    DaemonResponse::Ok {
-                        message: "Plugin uninstalled".to_string(),
-                    }
-                }
-                Err(err) => DaemonResponse::Error { message: err },
+            let response = plugin_handler::plugin_uninstall(
+                &mut state.catalog,
+                &mut state.workspace_manager,
+                name,
+                || {},
+            );
+            if matches!(response, DaemonResponse::Ok { .. }) {
+                state.refresh_runtime();
             }
+            response
         }
         DaemonRequest::PluginAdd { name } => {
-            let key = normalize_plugin_key(&name);
-            match state.catalog.add_installed_plugin_to_workspace(
-                &key,
-                &mut state.workspace_manager.workspace,
+            let response = plugin_handler::plugin_add(
+                &mut state.catalog,
+                &mut state.workspace_manager,
+                name,
                 &state.runtime_query,
-            ) {
-                Ok(id) => {
-                    state.refresh_runtime();
-                    DaemonResponse::PluginAdded { id }
-                }
-                Err(err) => DaemonResponse::Error { message: err },
-            }
-        }
-        DaemonRequest::PluginRemove { id } => match state
-            .catalog
-            .remove_plugin_from_workspace(id, &mut state.workspace_manager.workspace)
-        {
-            Ok(()) => {
+                || {},
+            );
+            if matches!(response, DaemonResponse::PluginAdded { .. }) {
                 state.refresh_runtime();
-                DaemonResponse::Ok {
-                    message: "Plugin removed".to_string(),
-                }
             }
-            Err(err) => DaemonResponse::Error { message: err },
-        },
+            response
+        }
+        DaemonRequest::PluginRemove { id } => {
+            let response = plugin_handler::plugin_remove(
+                &mut state.catalog,
+                &mut state.workspace_manager,
+                id,
+                || {},
+            );
+            if matches!(response, DaemonResponse::Ok { .. }) {
+                state.refresh_runtime();
+            }
+            response
+        }
         DaemonRequest::WorkspaceList => {
             state.workspace_manager.scan_workspaces();
             let workspaces = state
@@ -909,128 +850,34 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
             }
         }
         DaemonRequest::RuntimePluginStart { id } => {
-            if let Some(plugin) = state
-                .workspace_manager
-                .workspace
-                .plugins
-                .iter_mut()
-                .find(|p| p.id == id)
-            {
-                plugin.running = true;
-                let _ = state
-                    .runtime_query
-                    .logic_tx
-                    .send(LogicMessage::SetPluginRunning(id, true));
+            let response = plugin_handler::plugin_start(
+                &mut state.workspace_manager,
+                id,
+                &state.runtime_query.logic_tx,
+                || {},
+            );
+            if matches!(response, DaemonResponse::Ok { .. }) {
                 state.refresh_runtime();
-                DaemonResponse::Ok {
-                    message: "Plugin started".to_string(),
-                }
-            } else {
-                DaemonResponse::Error {
-                    message: "Plugin not found in runtime".to_string(),
-                }
             }
+            response
         }
         DaemonRequest::RuntimePluginStop { id } => {
-            if let Some(plugin) = state
-                .workspace_manager
-                .workspace
-                .plugins
-                .iter_mut()
-                .find(|p| p.id == id)
-            {
-                plugin.running = false;
-                let _ = state
-                    .runtime_query
-                    .logic_tx
-                    .send(LogicMessage::SetPluginRunning(id, false));
+            let response = plugin_handler::plugin_stop(
+                &mut state.workspace_manager,
+                id,
+                &state.runtime_query.logic_tx,
+                || {},
+            );
+            if matches!(response, DaemonResponse::Ok { .. }) {
                 state.refresh_runtime();
-                DaemonResponse::Ok {
-                    message: "Plugin stopped".to_string(),
-                }
-            } else {
-                DaemonResponse::Error {
-                    message: "Plugin not found in runtime".to_string(),
-                }
             }
+            response
         }
         DaemonRequest::RuntimePluginRestart { id } => {
-            let exists = state
-                .workspace_manager
-                .workspace
-                .plugins
-                .iter()
-                .any(|p| p.id == id);
-            if !exists {
-                DaemonResponse::Error {
-                    message: "Plugin not found in runtime".to_string(),
-                }
-            } else {
-                let _ = state
-                    .runtime_query
-                    .logic_tx
-                    .send(LogicMessage::RestartPlugin(id));
-                DaemonResponse::Ok {
-                    message: "Plugin restarted".to_string(),
-                }
-            }
+            plugin_handler::plugin_restart(&state.workspace_manager, id, &state.runtime_query.logic_tx)
         }
         DaemonRequest::RuntimeSetVariables { id, json } => {
-            if let Some(plugin) = state
-                .workspace_manager
-                .workspace
-                .plugins
-                .iter_mut()
-                .find(|p| p.id == id)
-            {
-                match serde_json::from_str::<serde_json::Value>(&json) {
-                    Ok(value) => {
-                        if let Some(obj) = value.as_object() {
-                            let map_result = match plugin.config {
-                                serde_json::Value::Object(ref mut map) => Ok(map),
-                                _ => {
-                                    plugin.config =
-                                        serde_json::Value::Object(serde_json::Map::new());
-                                    match plugin.config {
-                                        serde_json::Value::Object(ref mut map) => Ok(map),
-                                        _ => Err("Failed to update plugin config".to_string()),
-                                    }
-                                }
-                            };
-
-                            match map_result {
-                                Ok(map) => {
-                                    for (key, val) in obj {
-                                        map.insert(key.clone(), val.clone());
-                                        let _ = state.runtime_query.logic_tx.send(
-                                            LogicMessage::SetPluginVariable(
-                                                id,
-                                                key.clone(),
-                                                val.clone(),
-                                            ),
-                                        );
-                                    }
-                                    DaemonResponse::Ok {
-                                        message: "Runtime variables updated".to_string(),
-                                    }
-                                }
-                                Err(message) => DaemonResponse::Error { message },
-                            }
-                        } else {
-                            DaemonResponse::Error {
-                                message: "Variables must be a JSON object".to_string(),
-                            }
-                        }
-                    }
-                    Err(err) => DaemonResponse::Error {
-                        message: format!("Invalid JSON: {err}"),
-                    },
-                }
-            } else {
-                DaemonResponse::Error {
-                    message: "Plugin not found in runtime".to_string(),
-                }
-            }
+            plugin_handler::plugin_set(&mut state.workspace_manager, id, json, &state.runtime_query.logic_tx)
         }
     };
 
@@ -1109,18 +956,6 @@ fn build_runtime_state(
             ))
         }
     }
-}
-
-fn normalize_plugin_key(input: &str) -> String {
-    let trimmed = input.trim();
-    if let Some(start) = trimmed.rfind('(') {
-        if let Some(end) = trimmed.rfind(')') {
-            if end > start + 1 {
-                return trimmed[start + 1..end].trim().to_string();
-            }
-        }
-    }
-    trimmed.to_string()
 }
 
 #[cfg(test)]
