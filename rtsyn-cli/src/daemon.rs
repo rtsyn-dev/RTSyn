@@ -13,7 +13,7 @@ use rtsyn_core::plugin::{
 use rtsyn_core::workspace::{
     runtime_settings_options, RuntimeSettingsSaveTarget, WorkspaceManager,
 };
-use rtsyn_runtime::runtime::{spawn_runtime, LogicMessage, LogicState};
+use rtsyn_runtime::{spawn_runtime, LogicMessage, LogicState};
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
@@ -105,7 +105,7 @@ struct DaemonState {
     workspace_manager: WorkspaceManager,
     runtime_query: RuntimeQuery,
     logic_state_rx: mpsc::Receiver<LogicState>,
-    logic_settings: rtsyn_runtime::runtime::LogicSettings,
+    logic_settings: rtsyn_runtime::LogicSettings,
     last_logic_state: Option<LogicState>,
     plotter_history: std::collections::HashMap<u64, Vec<(u64, Vec<f64>)>>,
 }
@@ -120,7 +120,7 @@ impl DaemonState {
         let mut catalog = PluginCatalog::new(install_db_path);
         let workspace_manager = WorkspaceManager::new(workspace_dir);
         catalog.sync_ids_from_workspace(&workspace_manager.workspace);
-        let logic_settings = rtsyn_runtime::runtime::LogicSettings {
+        let logic_settings = rtsyn_runtime::LogicSettings {
             cores: vec![0],
             period_seconds: 0.001,
             time_scale: 1000.0,

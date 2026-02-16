@@ -1,4 +1,5 @@
 use crate::plugin::PluginManager;
+use crate::validation::Validator;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use workspace::{WorkspaceDefinition, WorkspaceSettings};
@@ -130,9 +131,7 @@ impl WorkspaceManager {
         settings.period_value = settings.period_value.max(1.0);
         Self::normalize_frequency_unit(&settings.frequency_unit)?;
         Self::normalize_period_unit(&settings.period_unit)?;
-        if settings.selected_cores.is_empty() {
-            settings.selected_cores = vec![0];
-        }
+        Validator::normalize_cores(&mut settings.selected_cores);
         Ok(settings)
     }
 
@@ -232,16 +231,18 @@ impl WorkspaceManager {
     }
 
     fn normalize_frequency_unit(unit: &str) -> Result<&str, String> {
-        match unit {
-            "hz" | "khz" | "mhz" => Ok(unit),
-            _ => Err("frequency_unit must be 'hz', 'khz', or 'mhz'".to_string()),
+        if Validator::validate_unit(unit, &["hz", "khz", "mhz"]) {
+            Ok(unit)
+        } else {
+            Err("frequency_unit must be 'hz', 'khz', or 'mhz'".to_string())
         }
     }
 
     fn normalize_period_unit(unit: &str) -> Result<&str, String> {
-        match unit {
-            "ns" | "us" | "ms" | "s" => Ok(unit),
-            _ => Err("period_unit must be 'ns', 'us', 'ms', or 's'".to_string()),
+        if Validator::validate_unit(unit, &["ns", "us", "ms", "s"]) {
+            Ok(unit)
+        } else {
+            Err("period_unit must be 'ns', 'us', 'ms', or 's'".to_string())
         }
     }
 
@@ -364,9 +365,7 @@ impl WorkspaceManager {
             settings.selected_cores = cores;
         }
 
-        if settings.selected_cores.is_empty() {
-            settings.selected_cores = vec![0];
-        }
+        Validator::normalize_cores(&mut settings.selected_cores);
 
         if freq_changed && period_changed {
             return Err(
@@ -400,11 +399,8 @@ impl WorkspaceManager {
         let period_seconds =
             Self::period_seconds_from(settings.period_value, &settings.period_unit)?;
         let (time_scale, time_label) = Self::time_scale_and_label(&settings.period_unit)?;
-        let cores = if settings.selected_cores.is_empty() {
-            vec![0]
-        } else {
-            settings.selected_cores.clone()
-        };
+        let mut cores = settings.selected_cores.clone();
+        Validator::normalize_cores(&mut cores);
         Ok(RuntimeSettings {
             cores,
             period_seconds,

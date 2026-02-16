@@ -1,4 +1,4 @@
-use rtsyn_runtime::runtime::{spawn_runtime, LogicMessage, LogicSettings};
+use rtsyn_runtime::{spawn_runtime, LogicMessage, LogicSettings};
 use serde_json::json;
 use std::{
     fs,

@@ -1,6 +1,6 @@
 use crate::GuiApp;
 use rtsyn_core::connection as core_connections;
-use rtsyn_runtime::runtime::LogicMessage;
+use rtsyn_runtime::LogicMessage;
 use serde_json::Value;
 use std::collections::HashSet;
 use workspace::{remove_extendable_input, ConnectionDefinition, ConnectionRuleError};

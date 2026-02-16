@@ -128,7 +128,7 @@ impl GuiApp {
                 let extendable = self.is_extendable_inputs(&to_kind);
                 let auto_extend = self.auto_extend_inputs(&to_kind);
                 if to_ports.is_empty() {
-                    if extendable && !auto_extend {
+                    if extendable && auto_extend.is_empty() {
                         ui.label("Add inputs to this plugin before connecting.");
                         return;
                     }

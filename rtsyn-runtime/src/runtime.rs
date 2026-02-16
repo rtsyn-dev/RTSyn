@@ -1,355 +1,25 @@
 use csv_recorder_plugin::{normalize_path, CsvRecorderedPlugin};
-use libloading::Library;
 use live_plotter_plugin::LivePlotterPlugin;
 use performance_monitor_plugin::PerformanceMonitorPlugin;
-use rtsyn_plugin::ui::DisplaySchema;
-#[cfg(feature = "comedi")]
-use rtsyn_plugin::DeviceDriver;
-use rtsyn_plugin::{
-    Plugin, PluginApi, PluginContext, PluginString, RTSYN_PLUGIN_ABI_VERSION,
-    RTSYN_PLUGIN_ABI_VERSION_SYMBOL, RTSYN_PLUGIN_API_SYMBOL,
-};
-use serde_json::Value;
+use rtsyn_plugin::{Plugin, PluginContext};
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::time::{Duration, Instant};
 use workspace::{order_plugins_for_execution, WorkspaceDefinition};
 
+use crate::connection_cache::{build_connection_cache, input_sum_cached, sanitize_signal, RuntimeConnectionCache};
+use crate::message_handler::{LogicMessage, LogicSettings, LogicState};
+use crate::plugin_manager::{
+    runtime_plugin_loads_started, set_dynamic_config_patch, set_dynamic_config_if_needed, DynamicPluginInstance, RuntimePlugin,
+};
+use crate::plugin_processors::{
+    process_csv_recorder, process_dynamic_plugin, process_live_plotter, process_performance_monitor,
+};
+#[cfg(feature = "comedi")]
+use crate::plugin_processors::process_comedi_daq;
 use crate::rt_thread::{ActiveRtBackend, RuntimeThread};
 
-#[inline]
-fn sanitize_signal(value: f64) -> f64 {
-    if value.is_finite() {
-        value
-    } else {
-        0.0
-    }
-}
 
-#[derive(Debug, Clone)]
-pub struct LogicSettings {
-    pub cores: Vec<usize>,
-    pub period_seconds: f64,
-    pub time_scale: f64,
-    pub time_label: String,
-    pub ui_hz: f64,
-    pub max_integration_steps: usize, // Maximum integration steps per plugin per tick
-}
-
-#[derive(Debug, Clone)]
-pub struct LogicState {
-    pub outputs: HashMap<(u64, String), f64>,
-    pub input_values: HashMap<(u64, String), f64>,
-    pub internal_variable_values: HashMap<(u64, String), serde_json::Value>,
-    pub viewer_values: HashMap<u64, f64>,
-    pub tick: u64,
-    pub plotter_samples: HashMap<u64, Vec<(u64, Vec<f64>)>>,
-}
-
-#[derive(Debug, Clone)]
-pub enum LogicMessage {
-    UpdateSettings(LogicSettings),
-    UpdateWorkspace(WorkspaceDefinition),
-    SetPluginRunning(u64, bool),
-    RestartPlugin(u64),
-    QueryPluginBehavior(
-        String,
-        Option<String>,
-        Sender<Option<rtsyn_plugin::ui::PluginBehavior>>,
-    ),
-    QueryPluginMetadata(
-        String,
-        Sender<
-            Option<(
-                Vec<String>,
-                Vec<String>,
-                Vec<(String, f64)>,
-                Option<rtsyn_plugin::ui::DisplaySchema>,
-                Option<rtsyn_plugin::ui::UISchema>,
-            )>,
-        >,
-    ),
-    GetPluginVariable(u64, String, Sender<Option<serde_json::Value>>),
-    SetPluginVariable(u64, String, serde_json::Value),
-}
-
-enum RuntimePlugin {
-    CsvRecorder(CsvRecorderedPlugin),
-    LivePlotter(LivePlotterPlugin),
-    PerformanceMonitor(PerformanceMonitorPlugin),
-    #[cfg(feature = "comedi")]
-    ComediDaq(comedi_daq_plugin::ComediDaqPlugin),
-    Dynamic(DynamicPluginInstance),
-}
-
-struct DynamicPluginInstance {
-    _lib: Library,
-    api: *const PluginApi,
-    handle: *mut std::ffi::c_void,
-    inputs: Vec<String>,
-    outputs: Vec<String>,
-    input_bytes: Vec<Vec<u8>>,
-    output_bytes: Vec<Vec<u8>>,
-    internal_variables: Vec<String>,
-    internal_variable_bytes: Vec<Vec<u8>>,
-    input_indices: Option<Vec<i32>>,
-    output_indices: Option<Vec<i32>>,
-    last_base_config: Option<Value>,
-    last_period_seconds: Option<f64>,
-    last_max_integration_steps: Option<usize>,
-    last_inputs: Vec<u64>,
-}
-
-#[derive(Default, Clone)]
-struct RuntimeConnectionCache {
-    incoming_by_target_port: HashMap<u64, HashMap<String, Vec<(u64, String)>>>,
-    incoming_ports_by_plugin: HashMap<u64, HashSet<String>>,
-    outgoing_ports_by_plugin: HashMap<u64, HashSet<String>>,
-}
-
-impl DynamicPluginInstance {
-    unsafe fn load(path: &str, id: u64) -> Option<Self> {
-        let lib = Library::new(path).ok()?;
-        let version_symbol: libloading::Symbol<unsafe extern "C" fn() -> u32> = match lib
-            .get(RTSYN_PLUGIN_ABI_VERSION_SYMBOL.as_bytes())
-        {
-            Ok(symbol) => symbol,
-            Err(_) => {
-                eprintln!(
-                        "[RTSyn][ERROR]: Plugin '{}' is incompatible (missing ABI version symbol). Rebuild plugin.",
-                        path
-                    );
-                return None;
-            }
-        };
-        let abi_version = version_symbol();
-        if abi_version != RTSYN_PLUGIN_ABI_VERSION {
-            eprintln!(
-                "[RTSyn][ERROR]: Plugin '{}' ABI version mismatch (plugin={}, runtime={}). Rebuild plugin.",
-                path, abi_version, RTSYN_PLUGIN_ABI_VERSION
-            );
-            return None;
-        }
-        let symbol: libloading::Symbol<unsafe extern "C" fn() -> *const PluginApi> =
-            lib.get(RTSYN_PLUGIN_API_SYMBOL.as_bytes()).ok()?;
-        let api_ptr = symbol();
-        if api_ptr.is_null() {
-            return None;
-        }
-        let api = api_ptr;
-        let handle = ((*api).create)(id);
-        if handle.is_null() {
-            return None;
-        }
-        let inputs = Self::read_ports(unsafe { &*api }, handle, unsafe { (*api).inputs_json });
-        let outputs = Self::read_ports(unsafe { &*api }, handle, unsafe { (*api).outputs_json });
-        let input_bytes: Vec<Vec<u8>> = inputs.iter().map(|v| v.as_bytes().to_vec()).collect();
-        let output_bytes: Vec<Vec<u8>> = outputs.iter().map(|v| v.as_bytes().to_vec()).collect();
-        let input_indices =
-            if ((*api).resolve_input_index).is_some() && ((*api).set_input_by_index).is_some() {
-                let resolver = (*api).resolve_input_index?;
-                Some(
-                    input_bytes
-                        .iter()
-                        .map(|key| resolver(handle, key.as_ptr(), key.len()))
-                        .collect(),
-                )
-            } else {
-                None
-            };
-        let output_indices =
-            if ((*api).resolve_output_index).is_some() && ((*api).get_output_by_index).is_some() {
-                let resolver = (*api).resolve_output_index?;
-                Some(
-                    output_bytes
-                        .iter()
-                        .map(|key| resolver(handle, key.as_ptr(), key.len()))
-                        .collect(),
-                )
-            } else {
-                None
-            };
-        let display_schema = unsafe { (*api).display_schema_json }.and_then(|schema_fn| {
-            let raw = schema_fn(handle);
-            if raw.ptr.is_null() || raw.len == 0 {
-                return None;
-            }
-            let json = unsafe { raw.into_string() };
-            serde_json::from_str::<DisplaySchema>(&json).ok()
-        });
-        let internal_variables = display_schema
-            .as_ref()
-            .map(|schema| schema.variables.clone())
-            .unwrap_or_default();
-        let internal_variable_bytes = internal_variables
-            .iter()
-            .map(|v| v.as_bytes().to_vec())
-            .collect();
-        let last_inputs = vec![f64::NAN.to_bits(); inputs.len()];
-        Some(Self {
-            _lib: lib,
-            api,
-            handle,
-            inputs,
-            outputs,
-            input_bytes,
-            output_bytes,
-            internal_variables,
-            internal_variable_bytes,
-            input_indices,
-            output_indices,
-            last_base_config: None,
-            last_period_seconds: None,
-            last_max_integration_steps: None,
-            last_inputs,
-        })
-    }
-
-    unsafe fn read_ports(
-        _api: &PluginApi,
-        handle: *mut std::ffi::c_void,
-        fetch: extern "C" fn(*mut std::ffi::c_void) -> PluginString,
-    ) -> Vec<String> {
-        let raw = fetch(handle);
-        if raw.ptr.is_null() || raw.len == 0 {
-            return Vec::new();
-        }
-        let json = unsafe { raw.into_string() };
-        serde_json::from_str::<Vec<String>>(&json).unwrap_or_default()
-    }
-}
-
-fn build_connection_cache(ws: &WorkspaceDefinition) -> RuntimeConnectionCache {
-    let mut cache = RuntimeConnectionCache::default();
-    for conn in &ws.connections {
-        cache
-            .incoming_by_target_port
-            .entry(conn.to_plugin)
-            .or_default()
-            .entry(conn.to_port.clone())
-            .or_default()
-            .push((conn.from_plugin, conn.from_port.clone()));
-        cache
-            .incoming_ports_by_plugin
-            .entry(conn.to_plugin)
-            .or_default()
-            .insert(conn.to_port.clone());
-        cache
-            .outgoing_ports_by_plugin
-            .entry(conn.from_plugin)
-            .or_default()
-            .insert(conn.from_port.clone());
-    }
-    cache
-}
-
-fn input_sum_cached(
-    cache: &RuntimeConnectionCache,
-    outputs: &HashMap<(u64, String), f64>,
-    plugin_id: u64,
-    port: &str,
-) -> f64 {
-    let Some(sources) = cache
-        .incoming_by_target_port
-        .get(&plugin_id)
-        .and_then(|ports| ports.get(port))
-    else {
-        return 0.0;
-    };
-    let mut total = 0.0;
-    for (from_plugin, from_port) in sources {
-        if let Some(value) = outputs.get(&(*from_plugin, from_port.clone())) {
-            total += *value;
-        }
-    }
-    sanitize_signal(total)
-}
-
-fn set_dynamic_config_if_needed(
-    plugin_instance: &mut DynamicPluginInstance,
-    plugin_config: &Value,
-    settings: &LogicSettings,
-) {
-    let needs_update = plugin_instance
-        .last_base_config
-        .as_ref()
-        .map(|last| last != plugin_config)
-        .unwrap_or(true)
-        || plugin_instance
-            .last_period_seconds
-            .map(|last| (last - settings.period_seconds).abs() > f64::EPSILON)
-            .unwrap_or(true)
-        || plugin_instance
-            .last_max_integration_steps
-            .map(|last| last != settings.max_integration_steps)
-            .unwrap_or(true);
-    if !needs_update {
-        return;
-    }
-
-    let Some(map) = plugin_config.as_object() else {
-        return;
-    };
-    let mut out = map.clone();
-    out.insert(
-        "period_seconds".to_string(),
-        Value::from(settings.period_seconds),
-    );
-    out.insert(
-        "max_integration_steps".to_string(),
-        Value::from(settings.max_integration_steps as f64),
-    );
-    let json = Value::Object(out).to_string();
-    let api = unsafe { &*plugin_instance.api };
-    (api.set_config_json)(
-        plugin_instance.handle,
-        json.as_bytes().as_ptr(),
-        json.as_bytes().len(),
-    );
-    plugin_instance.last_base_config = Some(plugin_config.clone());
-    plugin_instance.last_period_seconds = Some(settings.period_seconds);
-    plugin_instance.last_max_integration_steps = Some(settings.max_integration_steps);
-}
-
-fn set_dynamic_config_patch(plugin_instance: &mut DynamicPluginInstance, key: &str, value: Value) {
-    let api = unsafe { &*plugin_instance.api };
-    let mut patch = serde_json::Map::new();
-    patch.insert(key.to_string(), value.clone());
-    let json = Value::Object(patch).to_string();
-    (api.set_config_json)(
-        plugin_instance.handle,
-        json.as_bytes().as_ptr(),
-        json.as_bytes().len(),
-    );
-
-    if let Some(Value::Object(ref mut cfg)) = plugin_instance.last_base_config {
-        cfg.insert(key.to_string(), value);
-    }
-}
-
-fn runtime_plugin_loads_started(instance: &RuntimePlugin) -> bool {
-    match instance {
-        RuntimePlugin::CsvRecorder(p) => p.behavior().loads_started,
-        RuntimePlugin::LivePlotter(p) => p.behavior().loads_started,
-        RuntimePlugin::PerformanceMonitor(p) => p.behavior().loads_started,
-        #[cfg(feature = "comedi")]
-        RuntimePlugin::ComediDaq(p) => p.behavior().loads_started,
-        RuntimePlugin::Dynamic(dynamic) => {
-            let api = unsafe { &*dynamic.api };
-            let Some(behavior_json_fn) = api.behavior_json else {
-                return false;
-            };
-            let json_str = behavior_json_fn(dynamic.handle);
-            if json_str.ptr.is_null() || json_str.len == 0 {
-                return false;
-            }
-            let json = unsafe { json_str.into_string() };
-            serde_json::from_str::<rtsyn_plugin::ui::PluginBehavior>(&json)
-                .map(|b| b.loads_started)
-                .unwrap_or(false)
-        }
-    }
-}
 
 pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), String> {
     let (logic_tx, logic_rx) = mpsc::channel::<LogicMessage>();
@@ -380,14 +50,6 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
         let mut viewer_values: HashMap<u64, f64> = HashMap::new();
         let mut plotter_samples: HashMap<u64, Vec<(u64, Vec<f64>)>> = HashMap::new();
         let mut connection_cache = RuntimeConnectionCache::default();
-        let mut runtime = crate::Runtime::new(workspace::WorkspaceDefinition {
-            name: "test".to_string(),
-            description: String::new(),
-            target_hz: 1000,
-            plugins: Vec::new(),
-            connections: Vec::new(),
-            settings: workspace::WorkspaceSettings::default(),
-        });
         let mut last_state = Instant::now();
 
         loop {
@@ -714,6 +376,9 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
             if let Some(ws) = workspace.as_ref() {
                 let plugins = order_plugins_for_execution(&ws.plugins, &ws.connections);
 
+                // Increment tick BEFORE processing plugins so they get the current tick
+                plugin_ctx.tick = plugin_ctx.tick.wrapping_add(1);
+
                 for plugin in plugins {
                     let is_running = plugin_running.get(&plugin.id).copied().unwrap_or(false);
                     let instance = match plugin_instances.get_mut(&plugin.id) {
@@ -726,7 +391,8 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                             set_dynamic_config_if_needed(
                                 plugin_instance,
                                 &plugin.config,
-                                &settings,
+                                settings.period_seconds,
+                                settings.max_integration_steps,
                             );
                             let connected_ports =
                                 connection_cache.incoming_ports_by_plugin.get(&plugin.id);
@@ -1057,7 +723,6 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                         }
                     }
                 }
-                plugin_ctx.tick = plugin_ctx.tick.wrapping_add(1);
                 let ui_interval = if settings.ui_hz > 0.0 {
                     Duration::from_secs_f64(1.0 / settings.ui_hz)
                 } else {
@@ -1092,7 +757,6 @@ pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), S
                     last_state = Instant::now();
                 }
             }
-            let _ = runtime.tick();
             let _ = settings.cores.len();
             ActiveRtBackend::sleep(period_duration, &mut sleep_deadline);
         }
@@ -1129,14 +793,6 @@ pub fn run_runtime_current(
     let mut viewer_values: HashMap<u64, f64> = HashMap::new();
     let mut plotter_samples: HashMap<u64, Vec<(u64, Vec<f64>)>> = HashMap::new();
     let mut connection_cache = RuntimeConnectionCache::default();
-    let mut runtime = crate::Runtime::new(workspace::WorkspaceDefinition {
-        name: "test".to_string(),
-        description: String::new(),
-        target_hz: 1000,
-        plugins: Vec::new(),
-        connections: Vec::new(),
-        settings: workspace::WorkspaceSettings::default(),
-    });
     let mut last_state = Instant::now();
 
     loop {
@@ -1452,6 +1108,9 @@ pub fn run_runtime_current(
         if let Some(ws) = workspace.as_ref() {
             let plugins = order_plugins_for_execution(&ws.plugins, &ws.connections);
 
+            // Increment tick BEFORE processing plugins so they get the current tick
+            plugin_ctx.tick = plugin_ctx.tick.wrapping_add(1);
+
             for plugin in plugins {
                 let is_running = plugin_running.get(&plugin.id).copied().unwrap_or(false);
                 let instance = match plugin_instances.get_mut(&plugin.id) {
@@ -1460,312 +1119,66 @@ pub fn run_runtime_current(
                 };
                 match instance {
                     RuntimePlugin::Dynamic(plugin_instance) => {
-                        let api = unsafe { &*plugin_instance.api };
-                        set_dynamic_config_if_needed(plugin_instance, &plugin.config, &settings);
-                        let connected_ports =
-                            connection_cache.incoming_ports_by_plugin.get(&plugin.id);
-                        for (idx, input_name) in plugin_instance.inputs.iter().enumerate() {
-                            let is_connected = connected_ports
-                                .map(|ports| ports.contains(input_name))
-                                .unwrap_or(false);
-                            let value = if is_connected {
-                                input_sum_cached(&connection_cache, &outputs, plugin.id, input_name)
-                            } else {
-                                0.0
-                            };
-                            input_values.insert((plugin.id, input_name.clone()), value);
-                            let bits = value.to_bits();
-                            if plugin_instance.last_inputs[idx] != bits {
-                                plugin_instance.last_inputs[idx] = bits;
-                                if let (Some(indices), Some(set_fn)) =
-                                    (&plugin_instance.input_indices, api.set_input_by_index)
-                                {
-                                    let idx_value = indices.get(idx).copied().unwrap_or(-1);
-                                    if idx_value >= 0 {
-                                        set_fn(plugin_instance.handle, idx_value as usize, value);
-                                        continue;
-                                    }
-                                }
-                                let bytes = &plugin_instance.input_bytes[idx];
-                                (api.set_input)(
-                                    plugin_instance.handle,
-                                    bytes.as_ptr(),
-                                    bytes.len(),
-                                    value,
-                                );
-                            }
-                        }
-                        if is_running {
-                            (api.process)(
-                                plugin_instance.handle,
-                                plugin_ctx.tick,
-                                plugin_ctx.period_seconds,
-                            );
-                            for (idx, output_name) in plugin_instance.outputs.iter().enumerate() {
-                                let value = if let (Some(indices), Some(get_fn)) =
-                                    (&plugin_instance.output_indices, api.get_output_by_index)
-                                {
-                                    let idx_value = indices.get(idx).copied().unwrap_or(-1);
-                                    if idx_value >= 0 {
-                                        get_fn(plugin_instance.handle, idx_value as usize)
-                                    } else {
-                                        let bytes = &plugin_instance.output_bytes[idx];
-                                        (api.get_output)(
-                                            plugin_instance.handle,
-                                            bytes.as_ptr(),
-                                            bytes.len(),
-                                        )
-                                    }
-                                } else {
-                                    let bytes = &plugin_instance.output_bytes[idx];
-                                    (api.get_output)(
-                                        plugin_instance.handle,
-                                        bytes.as_ptr(),
-                                        bytes.len(),
-                                    )
-                                };
-                                let value = sanitize_signal(value);
-                                outputs.insert((plugin.id, output_name.clone()), value);
-                            }
-                        } else {
-                            for output_name in &plugin_instance.outputs {
-                                outputs.insert((plugin.id, output_name.clone()), 0.0);
-                            }
-                        }
-                        for (idx, var_name) in plugin_instance.internal_variables.iter().enumerate()
-                        {
-                            let bytes = &plugin_instance.internal_variable_bytes[idx];
-                            let value = (api.get_output)(
-                                plugin_instance.handle,
-                                bytes.as_ptr(),
-                                bytes.len(),
-                            );
-                            let value = sanitize_signal(value);
-                            internal_variable_values.insert(
-                                (plugin.id, var_name.clone()),
-                                serde_json::Value::from(value),
-                            );
-                        }
+                        process_dynamic_plugin(
+                            plugin_instance,
+                            &plugin,
+                            &connection_cache,
+                            &mut outputs,
+                            &mut input_values,
+                            &mut internal_variable_values,
+                            is_running,
+                            &settings,
+                            &mut plugin_ctx,
+                        );
                     }
                     RuntimePlugin::CsvRecorder(plugin_instance) => {
-                        let config_input_count = plugin
-                            .config
-                            .get("input_count")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0) as usize;
-                        let separator = plugin
-                            .config
-                            .get("separator")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or(",");
-                        let path = plugin
-                            .config
-                            .get("path")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("");
-                        let include_time = plugin
-                            .config
-                            .get("include_time")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(true);
-                        let mut columns: Vec<String> = plugin
-                            .config
-                            .get("columns")
-                            .and_then(|v| v.as_array())
-                            .map(|arr| {
-                                arr.iter()
-                                    .map(|value| value.as_str().unwrap_or("").to_string())
-                                    .collect()
-                            })
-                            .unwrap_or_default();
-                        let mut input_count = columns.len();
-                        if input_count < config_input_count {
-                            columns.resize(config_input_count, String::new());
-                            input_count = config_input_count;
-                        }
-                        for idx in 0..input_count {
-                            if columns.get(idx).map(|v| v.is_empty()).unwrap_or(true) {
-                                columns[idx] = "empty".to_string();
-                            }
-                        }
-                        let mut inputs = Vec::with_capacity(input_count);
-                        for idx in 0..input_count {
-                            let port = format!("in_{idx}");
-                            let value = if idx == 0 {
-                                input_sum_cached(&connection_cache, &outputs, plugin.id, &port)
-                                    + input_sum_cached(&connection_cache, &outputs, plugin.id, "in")
-                            } else {
-                                input_sum_cached(&connection_cache, &outputs, plugin.id, &port)
-                            };
-                            input_values.insert((plugin.id, port), value);
-                            inputs.push(value);
-                        }
-                        plugin_instance.set_config(
-                            input_count,
-                            separator.to_string(),
-                            columns,
-                            normalize_path(path),
+                        process_csv_recorder(
+                            plugin_instance,
+                            &plugin,
+                            &connection_cache,
+                            &outputs,
+                            &mut input_values,
+                            &mut internal_variable_values,
                             is_running,
-                            include_time,
-                            settings.time_scale,
-                            settings.time_label.clone(),
-                            settings.period_seconds,
+                            &settings,
+                            &mut plugin_ctx,
                         );
-                        internal_variable_values.insert(
-                            (plugin.id, "input_count".to_string()),
-                            serde_json::Value::from(input_count as i64),
-                        );
-                        internal_variable_values.insert(
-                            (plugin.id, "running".to_string()),
-                            serde_json::Value::from(is_running),
-                        );
-                        plugin_instance.set_inputs(inputs);
-                        let _ = plugin_instance.process(&mut plugin_ctx);
                     }
                     #[cfg(feature = "comedi")]
                     RuntimePlugin::ComediDaq(plugin_instance) => {
-                        let device_path = plugin
-                            .config
-                            .get("device_path")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("/dev/comedi0");
-                        let scan_devices = plugin
-                            .config
-                            .get("scan_devices")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false);
-                        let scan_nonce = plugin
-                            .config
-                            .get("scan_nonce")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0);
-
-                        let active_inputs = connection_cache
-                            .incoming_ports_by_plugin
-                            .get(&plugin.id)
-                            .cloned()
-                            .unwrap_or_default();
-                        let active_outputs = connection_cache
-                            .outgoing_ports_by_plugin
-                            .get(&plugin.id)
-                            .cloned()
-                            .unwrap_or_default();
-
-                        plugin_instance.set_active_ports(&active_inputs, &active_outputs);
-                        plugin_instance.set_config(
-                            device_path.to_string(),
-                            scan_devices,
-                            scan_nonce,
+                        process_comedi_daq(
+                            plugin_instance,
+                            &plugin,
+                            &connection_cache,
+                            &mut outputs,
+                            &mut input_values,
+                            &mut plugin_ctx,
                         );
-
-                        let has_active = !active_inputs.is_empty() || !active_outputs.is_empty();
-                        if has_active && !plugin_instance.is_open() {
-                            let _ = plugin_instance.open();
-                        } else if !has_active && plugin_instance.is_open() {
-                            let _ = plugin_instance.close();
-                        }
-
-                        let input_port_len = plugin_instance.input_port_names().len();
-                        for idx in 0..input_port_len {
-                            let port = plugin_instance.input_port_names()[idx].clone();
-                            let value =
-                                input_sum_cached(&connection_cache, &outputs, plugin.id, &port);
-                            input_values.insert((plugin.id, port.clone()), value);
-                            plugin_instance.set_input(&port, value);
-                        }
-
-                        let _ = plugin_instance.process(&mut plugin_ctx);
-
-                        let output_port_len = plugin_instance.output_port_names().len();
-                        for idx in 0..output_port_len {
-                            let port = plugin_instance.output_port_names()[idx].clone();
-                            let value = plugin_instance.get_output(&port);
-                            outputs.insert((plugin.id, port), value);
-                        }
                     }
                     RuntimePlugin::LivePlotter(plugin_instance) => {
-                        let config_input_count = plugin
-                            .config
-                            .get("input_count")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(0) as usize;
-                        let input_count = config_input_count;
-                        plugin_instance.set_config(input_count, is_running);
-                        internal_variable_values.insert(
-                            (plugin.id, "input_count".to_string()),
-                            serde_json::Value::from(input_count as i64),
+                        process_live_plotter(
+                            plugin_instance,
+                            &plugin,
+                            &connection_cache,
+                            &outputs,
+                            &mut input_values,
+                            &mut internal_variable_values,
+                            is_running,
+                            &mut plotter_samples,
+                            &plugin_ctx,
                         );
-                        internal_variable_values.insert(
-                            (plugin.id, "running".to_string()),
-                            serde_json::Value::from(is_running),
-                        );
-                        let mut inputs = Vec::with_capacity(input_count);
-                        for idx in 0..input_count {
-                            let port = format!("in_{idx}");
-                            let value = if idx == 0 {
-                                input_sum_cached(&connection_cache, &outputs, plugin.id, &port)
-                                    + input_sum_cached(&connection_cache, &outputs, plugin.id, "in")
-                            } else {
-                                input_sum_cached(&connection_cache, &outputs, plugin.id, &port)
-                            };
-                            input_values.insert((plugin.id, port), value);
-                            inputs.push(value);
-                        }
-                        plugin_instance.set_inputs(inputs.clone());
-                        if plugin_instance.is_running() {
-                            plotter_samples
-                                .entry(plugin.id)
-                                .or_default()
-                                .push((plugin_ctx.tick, inputs));
-                        }
                     }
                     RuntimePlugin::PerformanceMonitor(plugin_instance) => {
-                        let period_unit = plugin
-                            .config
-                            .get("units")
-                            .and_then(|v| v.as_str())
-                            .or_else(|| plugin.config.get("period_unit").and_then(|v| v.as_str()))
-                            .unwrap_or("us");
-
-                        let latency_us_from_unit = |value: f64, unit: &str| -> f64 {
-                            match unit {
-                                "ns" => value / 1_000.0,
-                                "us" => value,
-                                "ms" => value * 1_000.0,
-                                "s" => value * 1_000_000.0,
-                                _ => value,
-                            }
-                        };
-                        let max_latency_us = plugin
-                            .config
-                            .get("latency")
-                            .and_then(|v| v.as_f64())
-                            .map(|v| latency_us_from_unit(v, period_unit))
-                            .or_else(|| {
-                                plugin.config.get("max_latency_us").and_then(|v| v.as_f64())
-                            })
-                            .unwrap_or(1000.0);
-                        let workspace_period_us = settings.period_seconds * 1_000_000.0;
-                        plugin_instance.set_config(
-                            max_latency_us,
-                            workspace_period_us,
-                            period_unit,
+                        process_performance_monitor(
+                            plugin_instance,
+                            &plugin,
+                            &mut outputs,
+                            &settings,
+                            &mut plugin_ctx,
                         );
-                        let _ = plugin_instance.process(&mut plugin_ctx);
-
-                        for (idx, output_name) in plugin_instance
-                            .outputs()
-                            .iter()
-                            .map(|port| port.id.0.as_str())
-                            .enumerate()
-                        {
-                            let value = plugin_instance.get_output_values()[idx];
-                            outputs.insert((plugin.id, output_name.to_string()), value);
-                        }
                     }
                 }
             }
-            plugin_ctx.tick = plugin_ctx.tick.wrapping_add(1);
             let ui_interval = if settings.ui_hz > 0.0 {
                 Duration::from_secs_f64(1.0 / settings.ui_hz)
             } else {
@@ -1799,7 +1212,6 @@ pub fn run_runtime_current(
                 last_state = Instant::now();
             }
         }
-        let _ = runtime.tick();
         let _ = settings.cores.len();
         ActiveRtBackend::sleep(period_duration, &mut sleep_deadline);
     }

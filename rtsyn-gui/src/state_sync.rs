@@ -1,4 +1,4 @@
-use rtsyn_runtime::runtime::{LogicMessage, LogicState};
+use rtsyn_runtime::{LogicMessage, LogicState};
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::Instant;

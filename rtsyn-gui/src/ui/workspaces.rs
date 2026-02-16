@@ -1594,7 +1594,8 @@ impl GuiApp {
     }
 
     pub(crate) fn render_info_dialog(&mut self, ctx: &egui::Context) {
-        if self.notifications.is_empty() {
+        let notifications = self.notification_handler.get_all_notifications();
+        if notifications.is_empty() {
             return;
         }
 
@@ -1605,7 +1606,7 @@ impl GuiApp {
         let x = screen_rect.max.x - 4.0;
         let total = 2.8;
         let mut idx = 0usize;
-        for notification in &self.notifications {
+        for notification in notifications {
             let age = now.duration_since(notification.created_at).as_secs_f32();
             if age >= total {
                 idx += 1;
@@ -1656,8 +1657,7 @@ impl GuiApp {
             y += 66.0;
             idx += 1;
         }
-        self.notifications
-            .retain(|n| now.duration_since(n.created_at).as_secs_f32() < total);
+        self.notification_handler.cleanup_old_notifications(total);
         ctx.request_repaint_after(Duration::from_millis(16));
     }
 

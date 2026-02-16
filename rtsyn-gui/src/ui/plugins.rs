@@ -342,8 +342,8 @@ impl GuiApp {
         let scroll_max_height = (card_height_cap - CARD_FIXED_HEIGHT).max(72.0);
         for plugin in &mut self.workspace_manager.workspace.plugins {
             let behavior = self
-                .plugin_manager
-                .plugin_behaviors
+                .behavior_manager
+                .cached_behaviors
                 .get(&plugin.kind)
                 .cloned()
                 .unwrap_or_default();

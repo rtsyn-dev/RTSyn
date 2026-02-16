@@ -1,5 +1,5 @@
 use eframe::{egui, egui::RichText};
-use rtsyn_runtime::runtime::{LogicMessage, LogicSettings, LogicState};
+use rtsyn_runtime::{LogicMessage, LogicSettings, LogicState};
 use rtsyn_runtime::spawn_runtime;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -85,9 +85,11 @@ mod workspace_operations;
 // Core modules
 mod daemon_viewer;
 mod file_dialogs;
+mod notification_handler;
 mod notifications;
 mod plotter;
 mod plotter_manager;
+mod plugin_behavior_manager;
 mod state;
 mod state_sync;
 mod ui;
@@ -95,9 +97,10 @@ mod ui_state;
 mod utils;
 
 use file_dialogs::FileDialogManager;
-use notifications::Notification;
+use notification_handler::NotificationHandler;
 use plotter::LivePlotter;
 use plotter_manager::PlotterManager;
+use plugin_behavior_manager::PluginBehaviorManager;
 use rtsyn_core::plotter_view::{live_plotter_config, live_plotter_series_names};
 use rtsyn_core::plugin::{plugin_display_name as core_plugin_display_name, PluginManager};
 use rtsyn_core::workspace::WorkspaceManager;
@@ -298,6 +301,8 @@ struct GuiApp {
     file_dialogs: FileDialogManager,
     plotter_manager: PlotterManager,
     state_sync: StateSync,
+    notification_handler: NotificationHandler,
+    behavior_manager: PluginBehaviorManager,
 
     // UI State Groups
     plotter_preview: ui_state::PlotterPreviewState,
@@ -314,8 +319,6 @@ struct GuiApp {
     csv_path_target_plugin_id: Option<u64>,
     plugin_creator_last_path: Option<PathBuf>,
     new_plugin_draft: NewPluginDraft,
-    notifications: Vec<Notification>,
-    plugin_notifications: HashMap<u64, Vec<Notification>>,
     seen_compatibility_warnings: HashSet<String>,
     plugin_positions: HashMap<u64, egui::Pos2>,
     plugin_rects: HashMap<u64, egui::Rect>,
@@ -333,7 +336,6 @@ struct GuiApp {
     plugin_context_menu: Option<(u64, egui::Pos2, u64)>,
     connection_context_menu: Option<(Vec<ConnectionDefinition>, egui::Pos2, u64)>,
     connection_editor_host: ConnectionEditorHost,
-    active_notification_plugin_id: Option<u64>,
     number_edit_buffers: HashMap<(u64, String), String>,
     window_rects: Vec<egui::Rect>,
     pending_window_focus: Option<WindowFocus>,
@@ -366,6 +368,8 @@ impl GuiApp {
         let file_dialogs = FileDialogManager::new();
         let plotter_manager = PlotterManager::new();
         let state_sync = StateSync::new(logic_tx, logic_state_rx);
+        let notification_handler = NotificationHandler::new();
+        let behavior_manager = PluginBehaviorManager::new();
 
         plugin_manager.refresh_library_paths();
         workspace_manager
@@ -395,6 +399,8 @@ impl GuiApp {
             file_dialogs,
             plotter_manager,
             state_sync,
+            notification_handler,
+            behavior_manager,
             plotter_preview: ui_state::PlotterPreviewState::default(),
             connection_editor: ui_state::ConnectionEditorState::default(),
             workspace_dialog: ui_state::WorkspaceDialogState::default(),
@@ -407,8 +413,6 @@ impl GuiApp {
             csv_path_target_plugin_id: None,
             plugin_creator_last_path: None,
             new_plugin_draft: NewPluginDraft::default(),
-            notifications: Vec::new(),
-            plugin_notifications: HashMap::new(),
             seen_compatibility_warnings: HashSet::new(),
             plugin_positions: HashMap::new(),
             plugin_rects: HashMap::new(),
@@ -426,7 +430,6 @@ impl GuiApp {
             plugin_context_menu: None,
             connection_context_menu: None,
             connection_editor_host: ConnectionEditorHost::Main,
-            active_notification_plugin_id: None,
             number_edit_buffers: HashMap::new(),
             window_rects: Vec::new(),
             pending_window_focus: None,
@@ -483,40 +486,11 @@ impl GuiApp {
     }
 
     fn show_info(&mut self, title: &str, message: &str) {
-        if let Some(plugin_id) = self.active_notification_plugin_id {
-            let notification = Notification {
-                title: title.to_string(),
-                message: message.to_string(),
-                created_at: Instant::now(),
-            };
-            self.plugin_notifications
-                .entry(plugin_id)
-                .or_default()
-                .push(notification);
-        } else {
-            self.push_notification(title, message);
-        }
+        self.notification_handler.show_info(title, message);
     }
 
     fn show_plugin_info(&mut self, plugin_id: u64, title: &str, message: &str) {
-        let notification = Notification {
-            title: title.to_string(),
-            message: message.to_string(),
-            created_at: Instant::now(),
-        };
-        self.plugin_notifications
-            .entry(plugin_id)
-            .or_default()
-            .push(notification);
-    }
-
-    fn push_notification(&mut self, title: &str, message: &str) {
-        let notification = Notification {
-            title: title.to_string(),
-            message: message.to_string(),
-            created_at: Instant::now(),
-        };
-        self.notifications.push(notification);
+        self.notification_handler.show_plugin_info(plugin_id, title, message);
     }
 
     fn show_confirm(
@@ -648,7 +622,7 @@ impl GuiApp {
     }
 
     fn is_extendable_inputs(&self, kind: &str) -> bool {
-        if let Some(cached) = self.plugin_manager.plugin_behaviors.get(kind) {
+        if let Some(cached) = self.behavior_manager.cached_behaviors.get(kind) {
             return matches!(
                 cached.extendable_inputs,
                 rtsyn_plugin::ui::ExtendableInputs::Auto { .. }
@@ -659,8 +633,8 @@ impl GuiApp {
     }
 
     fn plugin_uses_external_window(&self, kind: &str) -> bool {
-        self.plugin_manager
-            .plugin_behaviors
+        self.behavior_manager
+            .cached_behaviors
             .get(kind)
             .map(|b| b.external_window)
             .unwrap_or(false)
@@ -674,14 +648,20 @@ impl GuiApp {
         self.plugin_uses_external_window(kind) && !self.plugin_uses_plotter_viewport(kind)
     }
 
-    fn auto_extend_inputs(&self, kind: &str) -> bool {
-        if let Some(cached) = self.plugin_manager.plugin_behaviors.get(kind) {
-            return matches!(
+    fn auto_extend_inputs(&self, kind: &str) -> Vec<String> {
+        if let Some(cached) = self.behavior_manager.cached_behaviors.get(kind) {
+            if matches!(
                 cached.extendable_inputs,
                 rtsyn_plugin::ui::ExtendableInputs::Auto { .. }
-            );
+            ) {
+                return (1..=10).map(|i| format!("in_{}", i)).collect();
+            }
         }
-        matches!(kind, "csv_recorder" | "live_plotter")
+        if matches!(kind, "csv_recorder" | "live_plotter") {
+            (1..=10).map(|i| format!("in_{}", i)).collect()
+        } else {
+            Vec::new()
+        }
     }
 
     fn ensure_plugin_behavior_cached_with_path(
@@ -689,46 +669,22 @@ impl GuiApp {
         kind: &str,
         library_path: Option<&PathBuf>,
     ) {
-        if self.plugin_manager.plugin_behaviors.contains_key(kind) {
-            return;
-        }
-
-        let (tx, rx) = std::sync::mpsc::channel();
         let path_str = library_path.map(|p| p.to_string_lossy().to_string());
-        let _ = self
-            .state_sync
-            .logic_tx
-            .send(LogicMessage::QueryPluginBehavior(
-                kind.to_string(),
-                path_str,
-                tx,
-            ));
-        if let Ok(Some(behavior)) = rx.recv_timeout(std::time::Duration::from_millis(100)) {
-            self.plugin_manager
-                .plugin_behaviors
-                .insert(kind.to_string(), behavior);
-        }
+        self.behavior_manager.ensure_behavior_cached(
+            kind,
+            path_str.as_deref(),
+            &self.state_sync.logic_tx,
+            &self.plugin_manager,
+        );
     }
 
     fn ensure_plugin_behavior_cached(&mut self, kind: &str) {
-        if self.plugin_manager.plugin_behaviors.contains_key(kind) {
-            return;
-        }
-
-        let (tx, rx) = std::sync::mpsc::channel();
-        let _ = self
-            .state_sync
-            .logic_tx
-            .send(LogicMessage::QueryPluginBehavior(
-                kind.to_string(),
-                None,
-                tx,
-            ));
-        if let Ok(Some(behavior)) = rx.recv_timeout(std::time::Duration::from_millis(100)) {
-            self.plugin_manager
-                .plugin_behaviors
-                .insert(kind.to_string(), behavior);
-        }
+        self.behavior_manager.ensure_behavior_cached(
+            kind,
+            None,
+            &self.state_sync.logic_tx,
+            &self.plugin_manager,
+        );
     }
 
     fn ports_for_plugin(&self, plugin_id: u64, inputs: bool) -> Vec<String> {
@@ -1126,8 +1082,8 @@ impl GuiApp {
         for (plugin_id, kind, library_path) in &plugin_infos {
             self.ensure_plugin_behavior_cached_with_path(kind, library_path.as_ref());
             let loads_started = self
-                .plugin_manager
-                .plugin_behaviors
+                .behavior_manager
+                .cached_behaviors
                 .get(kind)
                 .map(|b| b.loads_started)
                 .unwrap_or(false);

@@ -350,7 +350,7 @@ impl GuiApp {
     }
 
     fn render_plotter_notifications(&mut self, ctx: &egui::Context, plugin_id: u64) {
-        let Some(list) = self.plugin_notifications.get_mut(&plugin_id) else {
+        let Some(list) = self.notification_handler.get_plugin_notifications(plugin_id) else {
             return;
         };
         if list.is_empty() {
@@ -408,7 +408,7 @@ impl GuiApp {
             }
         }
 
-        list.retain(|n| now.duration_since(n.created_at).as_secs_f32() < total);
+        // Cleanup is handled by NotificationHandler
         if !list.is_empty() {
             ctx.request_repaint_after(Duration::from_millis(16));
         }
@@ -432,8 +432,8 @@ impl GuiApp {
         let currently_running = self.workspace_manager.workspace.plugins[plugin_index].running;
         self.ensure_plugin_behavior_cached(&plugin_kind);
         let behavior = self
-            .plugin_manager
-            .plugin_behaviors
+            .behavior_manager
+            .cached_behaviors
             .get(&plugin_kind)
             .cloned()
             .unwrap_or_default();
@@ -488,6 +488,7 @@ impl GuiApp {
         }
 
         let new_running = !currently_running;
+        
         self.workspace_manager.workspace.plugins[plugin_index].running = new_running;
         let _ = self
             .state_sync
@@ -529,9 +530,12 @@ impl GuiApp {
                 plotter
                     .lock()
                     .ok()
-                    .and_then(|plotter| if plotter.open { Some(*id) } else { None })
+                    .and_then(|plotter| {
+                        if plotter.open { Some(*id) } else { None }
+                    })
             })
             .collect();
+        
 
         for plugin_id in plotter_ids {
             let settings_seed = self.build_plotter_preview_state(plugin_id);
@@ -1081,9 +1085,9 @@ impl GuiApp {
                     }
                 });
                 if self.connection_editor_host == ConnectionEditorHost::PluginWindow(plugin_id) {
-                    self.active_notification_plugin_id = Some(plugin_id);
+                    self.notification_handler.set_active_plugin(Some(plugin_id));
                     self.render_connection_editor(ctx);
-                    self.active_notification_plugin_id = None;
+                    self.notification_handler.set_active_plugin(None);
                 }
                 self.render_plotter_notifications(ctx, plugin_id);
             });
@@ -1226,15 +1230,13 @@ impl GuiApp {
                 self.connection_editor.plugin_id = None;
                 self.connection_editor_host = ConnectionEditorHost::Main;
             }
-            if let Some(index) = self
-                .workspace_manager
-                .workspace
-                .plugins
-                .iter()
-                .position(|p| p.id == id)
-            {
-                self.remove_plugin(index);
+            // Just close the plotter window, don't remove the plugin
+            if let Some(plotter) = self.plotter_manager.plotters.get(&id) {
+                if let Ok(mut plotter) = plotter.lock() {
+                    plotter.open = false;
+                }
             }
+            self.recompute_plotter_ui_hz();
         }
 
         for plugin_id in export_saved {
