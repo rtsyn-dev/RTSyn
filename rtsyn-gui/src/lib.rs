@@ -19,34 +19,24 @@ mod workspace_operations;
 
 // Core modules
 mod daemon_viewer;
-mod file_dialogs;
 mod formatting;
-mod notification_handler;
+mod managers;
 mod notifications;
 mod plotter;
-mod plotter_manager;
-mod plugin_behavior_manager;
 mod state;
-mod state_sync;
 mod ui;
-mod ui_state;
 mod utils;
-mod workspace_manager;
 
-use file_dialogs::FileDialogManager;
+use managers::{FileDialogManager, NotificationHandler, PlotterManager, PluginBehaviorManager};
 use helpers::{has_rt_capabilities, spawn_file_dialog_thread, zenity_file_dialog, zenity_file_dialog_with_name};
-use notification_handler::NotificationHandler;
 use plotter::LivePlotter;
-use plotter_manager::PlotterManager;
-use plugin_behavior_manager::PluginBehaviorManager;
 use rtsyn_core::plotter_view::{live_plotter_config, live_plotter_series_names};
 use rtsyn_core::plugin::{plugin_display_name as core_plugin_display_name, PluginManager};
 use rtsyn_core::workspace::WorkspaceManager;
 use state::{
-    ConfirmAction, ConnectionEditorHost, FrequencyUnit, PeriodUnit, TimeUnit, WorkspaceDialogMode,
-    WorkspaceTimingTab,
+    ConfirmAction, ConnectionEditorHost, FrequencyUnit, PeriodUnit, StateSync, TimeUnit,
+    WorkspaceDialogMode, WorkspaceTimingTab,
 };
-use state_sync::StateSync;
 
 const DEDICATED_PLOTTER_VIEW_KINDS: &[&str] = &["live_plotter"];
 
@@ -164,7 +154,7 @@ impl Default for NewPluginDraft {
 }
 
 #[derive(Debug)]
-struct BuildResult {
+pub(crate) struct BuildResult {
     success: bool,
     action: BuildAction,
 }
@@ -327,14 +317,14 @@ struct GuiApp {
     behavior_manager: PluginBehaviorManager,
 
     // UI State Groups
-    plotter_preview: ui_state::PlotterPreviewState,
-    connection_editor: ui_state::ConnectionEditorState,
-    workspace_dialog: ui_state::WorkspaceDialogState,
-    build_dialog: ui_state::BuildDialogState,
-    confirm_dialog: ui_state::ConfirmDialogState,
-    workspace_settings: ui_state::WorkspaceSettingsState,
-    help_state: ui_state::HelpState,
-    windows: ui_state::WindowState,
+    plotter_preview: state::PlotterPreviewState,
+    connection_editor: state::ConnectionEditorState,
+    workspace_dialog: state::WorkspaceDialogState,
+    build_dialog: state::BuildDialogState,
+    confirm_dialog: state::ConfirmDialogState,
+    workspace_settings: state::WorkspaceSettingsState,
+    help_state: state::HelpState,
+    windows: state::WindowState,
 
     // Remaining UI State
     status: String,
@@ -473,14 +463,14 @@ impl GuiApp {
             state_sync,
             notification_handler,
             behavior_manager,
-            plotter_preview: ui_state::PlotterPreviewState::default(),
-            connection_editor: ui_state::ConnectionEditorState::default(),
-            workspace_dialog: ui_state::WorkspaceDialogState::default(),
-            build_dialog: ui_state::BuildDialogState::default(),
-            confirm_dialog: ui_state::ConfirmDialogState::default(),
-            workspace_settings: ui_state::WorkspaceSettingsState::default(),
-            help_state: ui_state::HelpState::default(),
-            windows: ui_state::WindowState::default(),
+            plotter_preview: state::PlotterPreviewState::default(),
+            connection_editor: state::ConnectionEditorState::default(),
+            workspace_dialog: state::WorkspaceDialogState::default(),
+            build_dialog: state::BuildDialogState::default(),
+            confirm_dialog: state::ConfirmDialogState::default(),
+            workspace_settings: state::WorkspaceSettingsState::default(),
+            help_state: state::HelpState::default(),
+            windows: state::WindowState::default(),
             status: String::new(),
             csv_path_target_plugin_id: None,
             plugin_creator_last_path: None,

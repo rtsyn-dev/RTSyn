@@ -134,7 +134,7 @@ pub struct BuildDialogState {
     pub in_progress: bool,
     pub message: String,
     pub title: String,
-    pub rx: Option<Receiver<super::BuildResult>>,
+    pub rx: Option<Receiver<crate::BuildResult>>,
 }
 
 impl Default for BuildDialogState {

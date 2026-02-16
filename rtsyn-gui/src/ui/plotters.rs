@@ -17,7 +17,7 @@
 
 use super::*;
 use crate::utils::truncate_string;
-use crate::ui_state::PlotterPreviewState;
+use crate::state::PlotterPreviewState;
 use std::time::Duration;
 
 impl GuiApp {

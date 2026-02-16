@@ -1,29 +1,29 @@
 use std::path::PathBuf;
 
-pub(crate) use rtsyn_core::plugin::{InstalledPlugin, PluginManifest};
+pub use rtsyn_core::plugin::{InstalledPlugin, PluginManifest};
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum WorkspaceDialogMode {
+pub enum WorkspaceDialogMode {
     New,
     Save,
     Edit,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum ConfirmAction {
+pub enum ConfirmAction {
     RemovePlugin(u64),
     UninstallPlugin(usize),
     DeleteWorkspace(PathBuf),
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum WorkspaceTimingTab {
+pub enum WorkspaceTimingTab {
     Frequency,
     Period,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum HelpTopic {
+pub enum HelpTopic {
     Plugins,
     Workspaces,
     Runtime,
@@ -32,14 +32,14 @@ pub(crate) enum HelpTopic {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum FrequencyUnit {
+pub enum FrequencyUnit {
     Hz,
     KHz,
     MHz,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum PeriodUnit {
+pub enum PeriodUnit {
     Ns,
     Us,
     Ms,
@@ -47,7 +47,7 @@ pub(crate) enum PeriodUnit {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum TimeUnit {
+pub enum TimeUnit {
     Ns,
     Us,
     Ms,
@@ -55,19 +55,19 @@ pub(crate) enum TimeUnit {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ConnectionEditMode {
+pub enum ConnectionEditMode {
     Add,
     Remove,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ConnectionEditTab {
+pub enum ConnectionEditTab {
     Inputs,
     Outputs,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ConnectionEditorHost {
+pub enum ConnectionEditorHost {
     Main,
     PluginWindow(u64),
 }
