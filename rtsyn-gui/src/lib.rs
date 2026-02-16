@@ -268,7 +268,9 @@ pub fn run_gui_with_runtime(
     logic_state_rx: Receiver<LogicState>,
 ) -> Result<(), GuiError> {
     let mut options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([config.width, config.height]),
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([config.width, config.height])
+            .with_maximized(true),
         ..Default::default()
     };
     // NOTE: Vsync generates hangs and lag on occluded windows.

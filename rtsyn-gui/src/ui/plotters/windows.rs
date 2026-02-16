@@ -352,7 +352,8 @@ impl GuiApp {
             let viewport_id = egui::ViewportId::from_hash_of(("plotter", plugin_id));
             let builder = egui::ViewportBuilder::default()
                 .with_title(title.clone())
-                .with_inner_size([900.0, 520.0])
+                .with_min_inner_size([1100.0, 650.0])
+                .with_resizable(true)
                 .with_close_button(false);
 
             let plotter = self
@@ -630,7 +631,7 @@ impl GuiApp {
                             let height_cap = height_limit.min(560.0);
                             let k = (width_cap / 16.0).min(height_cap / 9.0);
                             let fixed_size =
-                                egui::vec2((k * 16.0).max(420.0), (k * 9.0).max(320.0));
+                                egui::vec2((k * 16.0).max(600.0), (k * 9.0).max(480.0));
                             egui::Window::new("Plot Settings")
                                 .resizable(false)
                                 .fixed_size(fixed_size)
@@ -867,10 +868,14 @@ impl GuiApp {
                                             }
                                         });
                                     ui.add_space(2.0);
-                                    if styled_button(ui, "Apply").clicked() {
-                                        ctx.data_mut(|d| d.insert_temp(save_id, true));
-                                        ctx.request_repaint();
-                                    }
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        ui.add_space(4.0);
+                                        if styled_button(ui, "Apply").clicked() {
+                                            ctx.data_mut(|d| d.insert_temp(save_id, true));
+                                            ctx.request_repaint();
+                                        }
+                                    });
+                                    ui.add_space(4.0);
                                 });
                             ctx.data_mut(|d| {
                                 d.insert_temp(state_id, state);
