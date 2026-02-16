@@ -1,7 +1,44 @@
+//! Connection management UI components for the RTSyn GUI application.
+//!
+//! This module provides the user interface for managing audio connections between plugins
+//! in the RTSyn workspace. It includes functionality for:
+//!
+//! - Opening and managing connection editors for adding/removing connections
+//! - Rendering connection management windows with plugin selection and port configuration
+//! - Visual connection display with interactive connection lines between plugins
+//! - Context menus for connection operations
+//! - Support for both fixed and extendable input/output ports
+//!
+//! The connection system supports different connection types (audio, MIDI, etc.) and
+//! provides visual feedback for connection states, including highlighting and tooltips.
+
 use super::*;
 use crate::WindowFocus;
 
 impl GuiApp {
+    /// Opens the connection editor window for a specific plugin.
+    ///
+    /// This function initializes the connection editor state and prepares it for display.
+    /// The editor can be opened in either "Add" or "Remove" mode to manage connections
+    /// for the specified plugin.
+    ///
+    /// # Parameters
+    /// - `plugin_id`: The unique identifier of the plugin to manage connections for
+    /// - `mode`: The editing mode (`ConnectionEditMode::Add` or `ConnectionEditMode::Remove`)
+    ///
+    /// # Side Effects
+    /// - Sets the connection editor host to `Main`
+    /// - Opens the connection editor window
+    /// - Resets editor state (selected indices, ports, tabs)
+    /// - Clears any existing connection highlights
+    /// - Sets pending window focus based on the mode
+    ///
+    /// # Implementation Details
+    /// The function resets all editor state to ensure a clean starting point:
+    /// - Defaults to the "Outputs" tab
+    /// - Clears any previous selections
+    /// - Resets port indices to 0
+    /// - Clears last selected plugin and tab tracking
     pub(crate) fn open_connection_editor(&mut self, plugin_id: u64, mode: ConnectionEditMode) {
         self.connection_editor_host = ConnectionEditorHost::Main;
         self.connection_editor.open = true;
@@ -20,6 +57,24 @@ impl GuiApp {
         });
     }
 
+    /// Opens the connection editor within a plugin window context.
+    ///
+    /// This is a specialized version of `open_connection_editor` that opens the editor
+    /// within the context of a specific plugin window rather than as a standalone window.
+    /// This allows for contextual connection editing when working within plugin interfaces.
+    ///
+    /// # Parameters
+    /// - `host_plugin_id`: The ID of the plugin window that will host the connection editor
+    /// - `plugin_id`: The ID of the plugin to manage connections for
+    /// - `mode`: The editing mode (`ConnectionEditMode::Add` or `ConnectionEditMode::Remove`)
+    ///
+    /// # Side Effects
+    /// - Calls `open_connection_editor` with the specified parameters
+    /// - Sets the connection editor host to `PluginWindow(host_plugin_id)`
+    ///
+    /// # Implementation Details
+    /// This function delegates the main editor setup to `open_connection_editor` and then
+    /// overrides the host setting to embed the editor within the specified plugin window.
     pub(crate) fn open_connection_editor_in_plugin_window(
         &mut self,
         host_plugin_id: u64,
@@ -30,6 +85,37 @@ impl GuiApp {
         self.connection_editor_host = ConnectionEditorHost::PluginWindow(host_plugin_id);
     }
 
+    /// Renders the main connection management window.
+    ///
+    /// This function displays a comprehensive interface for managing all connections in the workspace.
+    /// It provides both a list view of existing connections and controls for adding new connections
+    /// between plugins.
+    ///
+    /// # Parameters
+    /// - `ctx`: The egui context for rendering UI elements
+    ///
+    /// # Window Features
+    /// - **Connection List**: Displays all existing connections with remove buttons
+    /// - **Add Connection Interface**: Dropdown menus for selecting source/target plugins and ports
+    /// - **Connection Type Selection**: Allows choosing between different connection kinds
+    /// - **Validation**: Prevents duplicate connections and invalid configurations
+    ///
+    /// # Side Effects
+    /// - Updates `self.windows.manage_connections_open` based on window state
+    /// - May call `remove_connection_with_input` when connections are removed
+    /// - May call `add_connection` when new connections are created
+    /// - Updates connection editor state for plugin/port selection
+    /// - Manages window focus and positioning
+    ///
+    /// # Implementation Details
+    /// The function handles several complex scenarios:
+    /// - **Plugin Validation**: Ensures at least 2 plugins exist before allowing connections
+    /// - **Port Discovery**: Dynamically discovers available input/output ports for selected plugins
+    /// - **Extendable Inputs**: Special handling for plugins with dynamically extensible input ports
+    /// - **Connection Validation**: Prevents self-connections and duplicate connections
+    /// - **Auto-extension**: Automatically creates new input ports for compatible plugins
+    ///
+    /// The window is fixed-size (420x360) and non-resizable for consistent layout.
     pub(crate) fn render_manage_connections_window(&mut self, ctx: &egui::Context) {
         if !self.windows.manage_connections_open {
             return;
@@ -323,6 +409,43 @@ impl GuiApp {
         self.windows.manage_connections_open = open;
     }
 
+    /// Renders the focused connection editor window for a specific plugin.
+    ///
+    /// This function displays a specialized connection editor that focuses on managing
+    /// connections for a single plugin. It provides separate tabs for inputs and outputs
+    /// and allows detailed connection management with other plugins in the workspace.
+    ///
+    /// # Parameters
+    /// - `ctx`: The egui context for rendering UI elements
+    ///
+    /// # Window Features
+    /// - **Plugin Information**: Displays the current plugin's ID, name, and description
+    /// - **Tabbed Interface**: Separate tabs for managing input and output connections
+    /// - **Plugin List**: Shows available plugins for connection with filtering based on existing connections
+    /// - **Port Selection**: Detailed port selection with validation and conflict detection
+    /// - **Connection Type**: Selection of connection kinds (audio, MIDI, etc.)
+    /// - **Bidirectional Support**: Handles both adding and removing connections
+    ///
+    /// # Side Effects
+    /// - Updates connection editor state based on user interactions
+    /// - May call `add_connection_direct` or `remove_connection_with_input`
+    /// - Updates plugin highlighting for visual feedback
+    /// - Manages window focus and layer ordering
+    /// - Resets editor state when closed
+    ///
+    /// # Implementation Details
+    /// The editor operates in two modes:
+    /// - **Add Mode**: Shows all compatible plugins and allows creating new connections
+    /// - **Remove Mode**: Shows only plugins with existing connections for removal
+    ///
+    /// Key features include:
+    /// - **Smart Port Selection**: Automatically selects appropriate ports based on existing connections
+    /// - **Extendable Input Support**: Special handling for plugins with dynamic input ports
+    /// - **Duplicate Prevention**: Prevents creation of identical connections
+    /// - **Visual Feedback**: Highlights connected plugins and provides connection state information
+    /// - **Context Preservation**: Remembers selections when switching between plugins/tabs
+    ///
+    /// The window is fixed-size (520x360) with a two-column layout for plugin selection and connection details.
     pub(crate) fn render_connection_editor(&mut self, ctx: &egui::Context) {
         if !self.connection_editor.open {
             return;
@@ -830,6 +953,51 @@ impl GuiApp {
         }
     }
 
+    /// Renders the visual connection lines between plugins in the workspace.
+    ///
+    /// This function draws interactive connection lines that visually represent the audio/MIDI
+    /// connections between plugins. The lines are drawn as colored segments with directional
+    /// arrows and provide hover tooltips with connection details.
+    ///
+    /// # Parameters
+    /// - `ctx`: The egui context for rendering
+    /// - `panel_rect`: The rectangle defining the panel area where connections should be drawn
+    ///
+    /// # Visual Features
+    /// - **Colored Lines**: Output segments in green, input segments in orange
+    /// - **Directional Arrows**: Show the direction of signal flow
+    /// - **Bidirectional Support**: Handles connections in both directions between plugin pairs
+    /// - **Selection Highlighting**: Emphasizes connections involving selected plugins
+    /// - **Hover Tooltips**: Display detailed connection information on mouse hover
+    /// - **Right-click Context**: Opens context menus for connection operations
+    ///
+    /// # Side Effects
+    /// - Updates hover state and tooltip display
+    /// - May trigger context menu creation on right-click
+    /// - Performs hit-testing for interactive connection lines
+    ///
+    /// # Implementation Details
+    /// The function implements several sophisticated features:
+    ///
+    /// **Connection Grouping**: Groups multiple connections between the same plugin pair
+    /// to avoid visual clutter and provide cleaner line routing.
+    ///
+    /// **Bidirectional Rendering**: When plugins have connections in both directions,
+    /// the lines are offset to prevent overlap and maintain visual clarity.
+    ///
+    /// **Interactive Hit-Testing**: Uses geometric distance calculations to determine
+    /// which connection line the mouse is hovering over, with a configurable tolerance.
+    ///
+    /// **Visual States**:
+    /// - Normal: Full opacity with standard stroke width
+    /// - Selected: Highlighted when related plugins are selected
+    /// - Dimmed: Reduced opacity when other plugins are selected
+    ///
+    /// **Performance Optimization**: Only renders connections for plugins visible within
+    /// the panel rectangle to improve performance with large workspaces.
+    ///
+    /// **Tooltip Information**: Shows connection index, port names, and connection types
+    /// with appropriate color coding for inputs/outputs.
     pub(crate) fn render_connection_view(&mut self, ctx: &egui::Context, panel_rect: egui::Rect) {
         if !self.connections_view_enabled {
             self.connection_context_menu = None;
@@ -1137,6 +1305,46 @@ impl GuiApp {
         }
     }
 
+    /// Renders the context menu for connection operations.
+    ///
+    /// This function displays a context menu that appears when right-clicking on connection
+    /// lines in the connection view. It provides quick access to connection management
+    /// operations without opening the full connection editor.
+    ///
+    /// # Parameters
+    /// - `ctx`: The egui context for rendering UI elements
+    ///
+    /// # Menu Features
+    /// - **Remove Connection**: Allows quick removal of the clicked connection(s)
+    /// - **Smart Cleanup**: Handles both direct connection removal and extendable input cleanup
+    /// - **Batch Operations**: Can remove multiple connections between the same plugin pair
+    ///
+    /// # Side Effects
+    /// - May remove connections from the workspace
+    /// - May remove extendable input ports when appropriate
+    /// - Updates workspace dirty state when changes are made
+    /// - Calls `enforce_connection_dependent` to maintain consistency
+    /// - Closes the menu after operations or when clicking elsewhere
+    ///
+    /// # Implementation Details
+    /// The context menu handles two types of connection removal:
+    ///
+    /// **Direct Removal**: For standard connections, removes the connection definition
+    /// directly from the workspace connections list.
+    ///
+    /// **Extendable Input Removal**: For plugins with extendable inputs, identifies
+    /// the input port index and removes the entire input port, which automatically
+    /// removes all connections to that port.
+    ///
+    /// **Menu Lifecycle**:
+    /// - Opens when `connection_context_menu` is set with connection data and position
+    /// - Remains open until user clicks an action or clicks outside the menu
+    /// - Automatically closes when confirm dialogs are open to prevent conflicts
+    /// - Tracks the frame when opened to prevent immediate closure from the same click
+    ///
+    /// **Batch Processing**: When multiple connections exist between the same plugin pair,
+    /// the menu operation affects all connections in the group, with special handling
+    /// to sort extendable input indices in reverse order to prevent index shifting issues.
     pub(crate) fn render_connection_context_menu(&mut self, ctx: &egui::Context) {
         if !self.connections_view_enabled {
             self.connection_context_menu = None;

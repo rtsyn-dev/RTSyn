@@ -7,12 +7,44 @@ use plotters::prelude::*;
 use std::path::Path;
 
 impl LivePlotter {
+    /// Renders the plotter with default settings using egui.
+    ///
+    /// This is a convenience method that calls `render_with_settings` with
+    /// standard configuration options.
+    ///
+    /// # Arguments
+    /// * `ui` - The egui UI context for rendering
+    /// * `title` - Plot title to display
+    /// * `time_label` - Label for the time axis
     pub(crate) fn render(&mut self, ui: &mut egui::Ui, title: &str, time_label: &str) {
         self.render_with_settings(
             ui, title, time_label, true, true, true, None, None, None, None, true, None, None, None,
         );
     }
 
+    /// Renders the plotter with comprehensive customization options.
+    ///
+    /// # Arguments
+    /// * `ui` - The egui UI context for rendering
+    /// * `title` - Default plot title
+    /// * `time_label` - Default time axis label
+    /// * `show_axes` - Whether to display axis labels and ticks
+    /// * `show_legend` - Whether to display the series legend
+    /// * `show_grid` - Whether to display the plot grid
+    /// * `custom_title` - Optional override for the plot title
+    /// * `custom_series_names` - Optional custom names for data series
+    /// * `custom_series_transforms` - Optional value transformations per series
+    /// * `custom_colors` - Optional custom colors for data series
+    /// * `dark_theme` - Whether to use dark theme styling
+    /// * `x_axis_name` - Optional custom X-axis label
+    /// * `y_axis_name` - Optional custom Y-axis label
+    /// * `custom_window_ms` - Optional custom time window duration
+    ///
+    /// # Behavior
+    /// - Flushes pending bucketed data before rendering
+    /// - Computes optimal plot bounds automatically
+    /// - Applies series transformations during rendering
+    /// - Handles theme switching and custom styling
     pub(crate) fn render_with_settings(
         &mut self,
         ui: &mut egui::Ui,
@@ -105,6 +137,20 @@ impl LivePlotter {
         }
     }
 
+    /// Exports the plot as a PNG image with default settings.
+    ///
+    /// # Arguments
+    /// * `path` - File path where the PNG will be saved
+    /// * `time_label` - Label for the time axis
+    ///
+    /// # Returns
+    /// `Ok(())` on success, or `Err(String)` with error description on failure
+    ///
+    /// # Default Settings
+    /// - Size: 1200x700 pixels
+    /// - Shows axes, legend, and grid
+    /// - Uses dark theme
+    /// - No custom transformations or colors
     pub(crate) fn export_png(&mut self, path: &Path, time_label: &str) -> Result<(), String> {
         self.export_png_with_settings(
             path,
@@ -125,6 +171,33 @@ impl LivePlotter {
         )
     }
 
+    /// Exports the plot as a PNG image with full customization options.
+    ///
+    /// # Arguments
+    /// * `path` - File path where the PNG will be saved
+    /// * `_time_label` - Time axis label (unused in current implementation)
+    /// * `show_axes` - Whether to display axis labels and ticks
+    /// * `show_legend` - Whether to display the series legend
+    /// * `show_grid` - Whether to display the plot grid
+    /// * `title` - Plot title text
+    /// * `series_names` - Custom names for data series
+    /// * `series_transforms` - Value transformations per series
+    /// * `series_colors` - Custom colors for data series
+    /// * `dark_theme` - Whether to use dark theme styling
+    /// * `x_axis_name` - X-axis label
+    /// * `y_axis_name` - Y-axis label
+    /// * `window_ms` - Time window duration in milliseconds
+    /// * `width` - Image width in pixels
+    /// * `height` - Image height in pixels
+    ///
+    /// # Returns
+    /// `Ok(())` on success, or `Err(String)` with error description on failure
+    ///
+    /// # Behavior
+    /// - Temporarily disables bucketing for higher quality export
+    /// - Uses raw data when available for better resolution
+    /// - Applies custom styling and transformations
+    /// - Handles theme-appropriate colors and fonts
     pub(crate) fn export_png_with_settings(
         &mut self,
         path: &Path,
@@ -313,6 +386,33 @@ impl LivePlotter {
         Ok(())
     }
 
+    /// Exports the plot as an SVG vector image with full customization options.
+    ///
+    /// # Arguments
+    /// * `path` - File path where the SVG will be saved
+    /// * `_time_label` - Time axis label (unused in current implementation)
+    /// * `show_axes` - Whether to display axis labels and ticks
+    /// * `show_legend` - Whether to display the series legend
+    /// * `show_grid` - Whether to display the plot grid
+    /// * `title` - Plot title text
+    /// * `series_names` - Custom names for data series
+    /// * `series_transforms` - Value transformations per series
+    /// * `series_colors` - Custom colors for data series
+    /// * `dark_theme` - Whether to use dark theme styling
+    /// * `x_axis_name` - X-axis label
+    /// * `y_axis_name` - Y-axis label
+    /// * `window_ms` - Time window duration in milliseconds
+    /// * `width` - Image width in pixels
+    /// * `height` - Image height in pixels
+    ///
+    /// # Returns
+    /// `Ok(())` on success, or `Err(String)` with error description on failure
+    ///
+    /// # Advantages of SVG
+    /// - Vector format scales without quality loss
+    /// - Smaller file sizes for simple plots
+    /// - Text remains selectable and searchable
+    /// - Uses thicker lines (3px) for better visibility
     pub(crate) fn export_svg_with_settings(
         &mut self,
         path: &Path,
@@ -461,6 +561,32 @@ impl LivePlotter {
         Ok(())
     }
 
+    /// Exports the plot as a high-quality 4K PNG image with advanced filtering.
+    ///
+    /// # Arguments
+    /// * `path` - File path where the PNG will be saved
+    /// * `_time_label` - Time axis label (unused in current implementation)
+    /// * `show_axes` - Whether to display axis labels and ticks
+    /// * `show_legend` - Whether to display the series legend
+    /// * `show_grid` - Whether to display the plot grid
+    /// * `title` - Plot title text
+    /// * `series_names` - Custom names for data series
+    /// * `series_transforms` - Value transformations per series
+    /// * `series_colors` - Custom colors for data series
+    /// * `dark_theme` - Whether to use dark theme styling
+    /// * `x_axis_name` - X-axis label
+    /// * `y_axis_name` - Y-axis label
+    /// * `window_ms` - Time window duration in milliseconds
+    ///
+    /// # Returns
+    /// `Ok(())` on success, or `Err(String)` with error description on failure
+    ///
+    /// # High-Quality Features
+    /// - Fixed 4K resolution (3840x2160 pixels)
+    /// - Larger fonts and margins for better readability
+    /// - Spike filtering to remove noise artifacts
+    /// - Uses display series data for optimal quality
+    /// - Thicker legend lines for better visibility
     pub(crate) fn export_png_hq_with_settings(
         &mut self,
         path: &Path,

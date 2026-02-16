@@ -4,6 +4,18 @@ use rtsyn_runtime::LogicMessage;
 use std::sync::mpsc;
 
 impl GuiApp {
+    /// Polls the build dialog for completion and handles the build result.
+    /// 
+    /// This function checks if a plugin build operation has completed by polling
+    /// the build dialog's receiver channel. When a build completes, it processes
+    /// the result based on the build action type (Install or Reinstall) and
+    /// updates the UI accordingly.
+    /// 
+    /// # Behavior
+    /// - For successful Install actions: installs the plugin, shows success notification
+    /// - For successful Reinstall actions: refreshes the plugin, shows completion message
+    /// - For failed builds: shows error notification and updates status
+    /// - Automatically closes the build dialog when processing is complete
     pub(crate) fn poll_build_dialog(&mut self) {
         let result = match &self.build_dialog.rx {
             Some(rx) => rx.try_recv().ok(),
@@ -51,6 +63,20 @@ impl GuiApp {
         }
     }
 
+    /// Polls the install dialog for folder selection and initiates plugin installation.
+    /// 
+    /// This function monitors the install dialog's receiver channel for user folder
+    /// selection. When a folder is selected, it extracts the folder name as a label
+    /// and starts the plugin build process with installation parameters.
+    /// 
+    /// # Parameters
+    /// - Sets `removable: true` - allows the plugin to be uninstalled later
+    /// - Sets `persist: true` - saves the plugin installation persistently
+    /// 
+    /// # Behavior
+    /// - On folder selection: starts plugin build with Install action
+    /// - On cancellation: updates status to indicate cancellation
+    /// - Cleans up the receiver channel after processing
     pub(crate) fn poll_install_dialog(&mut self) {
         let result = match &self.file_dialogs.install_dialog_rx {
             Some(rx) => rx.try_recv().ok(),
@@ -79,6 +105,16 @@ impl GuiApp {
         }
     }
 
+    /// Polls the import dialog for workspace file selection and imports the workspace.
+    /// 
+    /// This function monitors the import dialog's receiver channel for user file
+    /// selection. When a workspace file is selected, it initiates the workspace
+    /// import process using the selected path.
+    /// 
+    /// # Behavior
+    /// - On file selection: calls `import_workspace_from_path` with the selected path
+    /// - On cancellation: silently handles the cancellation without status updates
+    /// - Cleans up the receiver channel after processing
     pub(crate) fn poll_import_dialog(&mut self) {
         let result = match &self.file_dialogs.import_dialog_rx {
             Some(rx) => rx.try_recv().ok(),
@@ -92,6 +128,16 @@ impl GuiApp {
         }
     }
 
+    /// Polls the load dialog for workspace file selection and loads the workspace.
+    /// 
+    /// This function monitors the load dialog's receiver channel for user file
+    /// selection. When a workspace file is selected, it updates the workspace
+    /// manager's path and initiates the workspace loading process.
+    /// 
+    /// # Behavior
+    /// - On file selection: updates `workspace_manager.workspace_path` and calls `load_workspace`
+    /// - On cancellation: silently handles the cancellation without status updates
+    /// - Cleans up the receiver channel after processing
     pub(crate) fn poll_load_dialog(&mut self) {
         let result = match &self.file_dialogs.load_dialog_rx {
             Some(rx) => rx.try_recv().ok(),
@@ -106,6 +152,19 @@ impl GuiApp {
         }
     }
 
+    /// Polls the CSV path dialog for file selection and updates plugin configuration.
+    /// 
+    /// This function monitors the CSV path dialog's receiver channel for user file
+    /// selection. When a CSV file is selected, it updates the target plugin's
+    /// configuration with the selected path and sends a variable update message
+    /// to the logic thread.
+    /// 
+    /// # Behavior
+    /// - On file selection: updates plugin config with path and sets `path_autogen: false`
+    /// - Sends `SetPluginVariable` message to logic thread with the new path
+    /// - Marks the workspace as dirty to indicate unsaved changes
+    /// - Requires a valid `csv_path_target_plugin_id` to process the selection
+    /// - Cleans up both the receiver channel and target plugin ID after processing
     pub(crate) fn poll_csv_path_dialog(&mut self) {
         let result = match &self.file_dialogs.csv_path_dialog_rx {
             Some(rx) => rx.try_recv().ok(),
@@ -141,6 +200,19 @@ impl GuiApp {
         }
     }
 
+    /// Polls the plugin creator dialog for directory selection and creates a new plugin scaffold.
+    /// 
+    /// This function monitors the plugin creator dialog's receiver channel for user
+    /// directory selection. When a parent directory is selected, it creates a new
+    /// plugin scaffold using the current plugin draft configuration.
+    /// 
+    /// # Behavior
+    /// - On directory selection: saves the path and calls `create_plugin_from_draft`
+    /// - On success: updates status with the created plugin path and shows info notification
+    /// - On error: updates status with error message and shows error notification
+    /// - On cancellation: updates status to indicate cancellation
+    /// - Stores the last used path in `plugin_creator_last_path` for future reference
+    /// - Cleans up the receiver channel after processing
     pub(crate) fn poll_plugin_creator_dialog(&mut self) {
         let result = match &self.file_dialogs.plugin_creator_dialog_rx {
             Some(rx) => rx.try_recv().ok(),
@@ -166,6 +238,22 @@ impl GuiApp {
         }
     }
 
+    /// Polls the export dialog for file destination and exports the workspace.
+    /// 
+    /// This function monitors the export dialog's receiver channel for user file
+    /// destination selection. When a destination is selected, it copies the
+    /// workspace file to the chosen location.
+    /// 
+    /// # Parameters
+    /// The receiver provides a tuple of `(source, dest)` where:
+    /// - `source`: The current workspace file path to copy from
+    /// - `dest`: The user-selected destination path (optional)
+    /// 
+    /// # Behavior
+    /// - On destination selection: copies the workspace file and shows success notification
+    /// - On cancellation: silently handles the cancellation without status updates
+    /// - Uses `std::fs::copy` for the file operation, ignoring copy errors
+    /// - Cleans up the receiver channel after processing
     pub(crate) fn poll_export_dialog(&mut self) {
         let result = match &self.file_dialogs.export_dialog_rx {
             Some(rx) => rx.try_recv().ok(),
@@ -180,6 +268,26 @@ impl GuiApp {
         }
     }
 
+    /// Polls the plotter screenshot dialog for file destination and exports plotter image.
+    /// 
+    /// This function monitors the plotter screenshot dialog's receiver channel for
+    /// user file destination selection. When a destination is selected, it exports
+    /// the target plotter's current visualization as an image file using the
+    /// configured preview settings.
+    /// 
+    /// # Behavior
+    /// - Retrieves the target plugin ID from `plotter_screenshot_target`
+    /// - Gets plotter preview settings for the target plugin
+    /// - Exports as SVG or PNG based on the `export_svg` setting
+    /// - Uses high-quality rendering if `high_quality` setting is enabled
+    /// - Applies all visualization settings: axes, legend, grid, colors, transforms, etc.
+    /// - Shows error notification if export fails
+    /// - Cleans up both the receiver channel and target plugin ID after processing
+    /// 
+    /// # Export Formats
+    /// - SVG: Vector format using `export_svg_with_settings`
+    /// - PNG (high quality): High-resolution raster using `export_png_hq_with_settings`
+    /// - PNG (standard): Standard resolution using `export_png_with_settings`
     pub(crate) fn poll_plotter_screenshot_dialog(&mut self) {
         let result = match &self.file_dialogs.plotter_screenshot_rx {
             Some(rx) => rx.try_recv().ok(),
@@ -297,6 +405,28 @@ impl GuiApp {
         }
     }
 
+    /// Initiates a plugin build operation with the specified action and label.
+    /// 
+    /// This function starts an asynchronous plugin build process in a separate thread.
+    /// It handles both installation of new plugins and reinstallation of existing ones,
+    /// with special handling for plugins that don't require compilation.
+    /// 
+    /// # Parameters
+    /// - `action`: The build action to perform (Install or Reinstall)
+    /// - `label`: Display label for the build progress dialog
+    /// 
+    /// # Behavior
+    /// - Prevents multiple concurrent builds by checking for existing receiver
+    /// - For empty paths in Reinstall: performs immediate refresh without building
+    /// - For non-Cargo projects: performs immediate installation/refresh without building
+    /// - For Cargo projects: spawns background thread to compile and build
+    /// - Updates build dialog UI with progress information
+    /// - Uses `PluginManager::build_plugin` for the actual compilation process
+    /// 
+    /// # Build Dialog Updates
+    /// - Sets dialog as open and in progress
+    /// - Updates title and message with build information
+    /// - Creates receiver channel for build result communication
     pub(crate) fn start_plugin_build(&mut self, action: BuildAction, label: String) {
         if self.build_dialog.rx.is_some() {
             self.status = "Plugin build already running".to_string();
@@ -345,6 +475,28 @@ impl GuiApp {
         });
     }
 
+    /// Initiates a file dialog for saving a plotter screenshot.
+    /// 
+    /// This function opens a file save dialog for exporting a plotter's visualization
+    /// as an image file. It generates a default filename based on the plotter's title
+    /// and current timestamp, and configures the dialog for the appropriate file format.
+    /// 
+    /// # Parameters
+    /// - `plugin_id`: The ID of the plugin whose plotter should be exported
+    /// 
+    /// # Behavior
+    /// - Prevents multiple concurrent screenshot dialogs
+    /// - Generates default filename from plotter title or uses "live_plotter"
+    /// - Creates timestamp-based filename with format: `{title}-{day}-{hour}-{minute}-{second}`
+    /// - Determines file format (PNG/SVG) from plotter preview settings
+    /// - Uses zenity dialog for RT-capable systems, rfd dialog otherwise
+    /// - Stores the target plugin ID for later processing by `poll_plotter_screenshot_dialog`
+    /// 
+    /// # Filename Generation
+    /// - Sanitizes title by replacing spaces and slashes with underscores
+    /// - Converts title to lowercase for consistency
+    /// - Appends timestamp to ensure unique filenames
+    /// - Uses appropriate file extension (.png or .svg)
     pub(crate) fn request_plotter_screenshot(&mut self, plugin_id: u64) {
         if self.file_dialogs.plotter_screenshot_rx.is_some() {
             return;

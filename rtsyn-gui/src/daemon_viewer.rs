@@ -1,4 +1,5 @@
 use crate::plotter::LivePlotter;
+use crate::ui::kv_row_wrapped;
 use crate::{GuiConfig, GuiError};
 use eframe::egui;
 use rtsyn_cli::client;
@@ -6,6 +7,32 @@ use rtsyn_cli::protocol::{DaemonRequest, DaemonResponse, RuntimePluginState};
 use rtsyn_core::plugin::PluginManager;
 use std::time::{Duration, Instant};
 
+/// Launches a standalone viewer window for monitoring a specific plugin's runtime state.
+///
+/// This function creates and runs an egui-based application window that connects
+/// to a running RTSyn daemon to display real-time plugin data, including variables,
+/// inputs, outputs, and live plotting for supported plugin types.
+///
+/// # Arguments
+/// * `config` - GUI configuration including window dimensions
+/// * `plugin_id` - Unique identifier of the plugin to monitor
+/// * `socket_path` - Path to the daemon's Unix domain socket
+///
+/// # Returns
+/// `Ok(())` on successful window closure, or `Err(GuiError)` if the window
+/// fails to initialize or encounters a fatal error
+///
+/// # Features
+/// - Real-time data visualization for live_plotter plugins
+/// - Plugin state monitoring (variables, inputs, outputs)
+/// - Automatic refresh based on plugin refresh rate
+/// - Font Awesome icon support for enhanced UI
+/// - Keyboard shortcuts (Esc to close)
+///
+/// # Window Behavior
+/// - Creates a native window with the specified dimensions
+/// - Disables VSync for smoother real-time updates
+/// - Automatically handles plugin state changes and reconnection
 pub fn run_daemon_plugin_viewer(
     config: GuiConfig,
     plugin_id: u64,
@@ -40,16 +67,31 @@ pub fn run_daemon_plugin_viewer(
     .map_err(|err| GuiError::Gui(err.to_string()))
 }
 
+/// Represents a snapshot of plugin data retrieved from the daemon.
+///
+/// This structure contains all the information needed to display a plugin's
+/// current state, including metadata, runtime variables, and time-series data.
 struct DaemonPluginView {
+    /// Plugin type identifier (e.g., "live_plotter", "csv_recorder")
     kind: String,
+    /// Current runtime state including variables and I/O values
     state: RuntimePluginState,
+    /// Sampling period in seconds for time-series data
     period_seconds: f64,
+    /// Time scaling factor for display (e.g., 1000.0 for milliseconds)
     time_scale: f64,
+    /// Label for the time axis in plots
     time_label: String,
+    /// Recent data samples as (tick, values) pairs
     samples: Vec<(u64, Vec<f64>)>,
+    /// Display names for data series
     series_names: Vec<String>,
 }
 
+/// Main application state for the daemon plugin viewer.
+///
+/// Manages the connection to the daemon, data fetching, display state,
+/// and the live plotter for visualization.
 struct DaemonPluginViewer {
     plugin_id: u64,
     socket_path: String,
@@ -66,32 +108,21 @@ struct DaemonPluginViewer {
     last_refresh_hz: f64,
 }
 
-fn kv_row_wrapped(
-    ui: &mut egui::Ui,
-    label: &str,
-    label_w: f32,
-    value_ui: impl FnOnce(&mut egui::Ui),
-) {
-    ui.horizontal(|ui| {
-        let label_response = ui.allocate_ui_with_layout(
-            egui::vec2(label_w, 0.0),
-            egui::Layout::top_down(egui::Align::Min),
-            |ui| {
-                ui.add(egui::Label::new(label).wrap(true));
-            },
-        );
-
-        let used_width = label_response.response.rect.width();
-        if used_width < label_w {
-            ui.add_space(label_w - used_width);
-        }
-
-        ui.add_space(8.0);
-        value_ui(ui);
-    });
-}
-
 impl DaemonPluginViewer {
+    /// Creates a new daemon plugin viewer instance.
+    ///
+    /// # Arguments
+    /// * `plugin_id` - Unique identifier of the plugin to monitor
+    /// * `socket_path` - Path to the daemon's Unix domain socket
+    ///
+    /// # Returns
+    /// A new viewer instance with default settings and empty state
+    ///
+    /// # Initial State
+    /// - Sets up timers for data fetching with 1-second offset
+    /// - Initializes empty view and display state
+    /// - Creates a LivePlotter instance for the plugin
+    /// - Sets default refresh rate to 60 Hz
     fn new(plugin_id: u64, socket_path: String) -> Self {
         Self {
             plugin_id,
@@ -110,6 +141,23 @@ impl DaemonPluginViewer {
         }
     }
 
+    /// Fetches the current plugin view data from the daemon.
+    ///
+    /// This method sends a RuntimePluginView request to the daemon and processes
+    /// the response, updating the internal view state and extracting runtime
+    /// information like the plugin's running status.
+    ///
+    /// # Behavior
+    /// - Sends request via Unix domain socket
+    /// - Updates view state on successful response
+    /// - Extracts "running" status from internal variables
+    /// - Sets error state on communication or daemon errors
+    /// - Ignores unexpected response types silently
+    ///
+    /// # Error Handling
+    /// - Network/socket errors are stored in `self.error`
+    /// - Daemon-reported errors are stored in `self.error`
+    /// - Successful responses clear any previous error state
     fn fetch_view(&mut self) {
         match client::send_request_to(
             &self.socket_path,
@@ -151,6 +199,23 @@ impl DaemonPluginViewer {
         }
     }
 
+    /// Creates a unified map of all numeric variables from plugin state.
+    ///
+    /// This utility method combines user variables and internal variables
+    /// into a single lookup map, extracting only numeric values for use
+    /// in configuration and display calculations.
+    ///
+    /// # Arguments
+    /// * `state` - The plugin's runtime state
+    ///
+    /// # Returns
+    /// A HashMap mapping variable names to their numeric values
+    ///
+    /// # Behavior
+    /// - Processes both `variables` and `internal_variables` collections
+    /// - Only includes values that can be converted to f64
+    /// - Internal variables can override user variables with same names
+    /// - Non-numeric values (strings, booleans, etc.) are ignored
     fn variable_map(state: &RuntimePluginState) -> std::collections::HashMap<&str, f64> {
         let mut map = std::collections::HashMap::new();
         for (key, value) in &state.variables {
@@ -166,6 +231,26 @@ impl DaemonPluginViewer {
         map
     }
 
+    /// Extracts plotter configuration parameters from plugin state and samples.
+    ///
+    /// This method analyzes the plugin's runtime state to determine the optimal
+    /// configuration for the live plotter, including input count, refresh rate,
+    /// and time window settings.
+    ///
+    /// # Arguments
+    /// * `state` - The plugin's runtime state containing variables
+    /// * `samples` - Recent data samples for fallback input count detection
+    ///
+    /// # Returns
+    /// A tuple of `(input_count, refresh_hz, window_ms)` configuration values
+    ///
+    /// # Configuration Sources
+    /// - `input_count`: From "input_count" variable or sample array length
+    /// - `refresh_hz`: From "refresh_hz" variable (default: 60.0)
+    /// - `window_ms`: Multiple sources with fallback hierarchy:
+    ///   1. Direct "window_ms" variable
+    ///   2. "timebase_ms_div" × "timebase_divisions"
+    ///   3. "window_multiplier" × "window_value" (default: 10000.0 × 10.0)
     fn plotter_config(
         state: &RuntimePluginState,
         samples: &[(u64, Vec<f64>)],
@@ -192,6 +277,25 @@ impl DaemonPluginViewer {
         (input_count, refresh_hz, window_ms)
     }
 
+    /// Renders a collapsible section displaying key-value pairs with mixed data types.
+    ///
+    /// This method creates a formatted section with an icon, title, and list of
+    /// variables displayed as read-only text fields. It handles various JSON
+    /// value types with appropriate formatting.
+    ///
+    /// # Arguments
+    /// * `ui` - The egui UI context
+    /// * `title` - Section title text
+    /// * `icon` - Unicode icon character for the section header
+    /// * `items` - Array of (name, value) pairs to display
+    ///
+    /// # Behavior
+    /// - Skips rendering if items array is empty
+    /// - Creates collapsible header (default open)
+    /// - Filters out "library_path" entries for cleaner display
+    /// - Formats numbers with appropriate precision
+    /// - Uses disabled text fields for read-only display
+    /// - Applies consistent spacing and layout
     fn render_section_values(
         ui: &mut egui::Ui,
         title: &str,
@@ -240,6 +344,21 @@ impl DaemonPluginViewer {
         });
     }
 
+    /// Renders a collapsible section displaying numeric key-value pairs.
+    ///
+    /// Similar to `render_section_values` but specifically designed for
+    /// numeric data with consistent formatting for integer and floating-point values.
+    ///
+    /// # Arguments
+    /// * `ui` - The egui UI context
+    /// * `title` - Section title text
+    /// * `icon` - Unicode icon character for the section header
+    /// * `items` - Array of (name, value) pairs with numeric values
+    ///
+    /// # Number Formatting
+    /// - Whole numbers: displayed without decimal places
+    /// - Fractional numbers: displayed with up to 4 decimal places
+    /// - Uses epsilon comparison for whole number detection
     fn render_section_numbers(ui: &mut egui::Ui, title: &str, icon: &str, items: &[(String, f64)]) {
         if items.is_empty() {
             return;
@@ -270,6 +389,21 @@ impl DaemonPluginViewer {
         });
     }
 
+    /// Renders a collapsible section displaying input values with high precision.
+    ///
+    /// This method is specifically designed for displaying plugin input values,
+    /// which typically require higher precision than other numeric displays.
+    ///
+    /// # Arguments
+    /// * `ui` - The egui UI context
+    /// * `title` - Section title text
+    /// * `icon` - Unicode icon character for the section header
+    /// * `items` - Array of (name, value) pairs with input values
+    ///
+    /// # Formatting
+    /// - All values displayed with 4 decimal places for consistency
+    /// - Suitable for sensor readings and measurement data
+    /// - Maintains precision for small signal variations
     fn render_section_inputs(ui: &mut egui::Ui, title: &str, icon: &str, items: &[(String, f64)]) {
         if items.is_empty() {
             return;
@@ -296,6 +430,27 @@ impl DaemonPluginViewer {
         });
     }
 
+    /// Renders a comprehensive plugin information card with all state details.
+    ///
+    /// This method creates a styled card displaying the plugin's complete state,
+    /// including identification, status, and all variable categories in an
+    /// organized, scrollable layout.
+    ///
+    /// # Arguments
+    /// * `ui` - The egui UI context
+    /// * `view` - The plugin view data to display
+    ///
+    /// # Card Layout
+    /// - Header: Plugin ID badge, display name, and running status
+    /// - Body: Scrollable sections for different variable types
+    /// - Styling: Rounded corners, background fill, and border
+    /// - Status indicator: Color-coded running/stopped status
+    ///
+    /// # Sections Displayed
+    /// 1. Variables: User-configurable plugin parameters
+    /// 2. Outputs: Plugin output values and results
+    /// 3. Inputs: Current input readings and measurements
+    /// 4. Internal variables: Plugin internal state and diagnostics
     fn render_plugin_card(&self, ui: &mut egui::Ui, view: &DaemonPluginView) {
         let frame = egui::Frame::none()
             .fill(egui::Color32::from_gray(30))
@@ -376,6 +531,36 @@ impl DaemonPluginViewer {
 }
 
 impl eframe::App for DaemonPluginViewer {
+    /// Main update loop for the daemon plugin viewer application.
+    ///
+    /// This method handles the complete application lifecycle including data fetching,
+    /// UI rendering, input processing, and display updates. It's called by the egui
+    /// framework on each frame.
+    ///
+    /// # Arguments
+    /// * `ctx` - The egui context for UI operations and input handling
+    /// * `_frame` - The eframe frame (unused in current implementation)
+    ///
+    /// # Update Cycle
+    /// 1. **Data Fetching**: Retrieves plugin data based on refresh rate
+    /// 2. **Settings Update**: Caches display state periodically
+    /// 3. **Input Handling**: Processes keyboard shortcuts (Esc to exit)
+    /// 4. **Repaint Scheduling**: Requests redraws at appropriate intervals
+    /// 5. **UI Rendering**: Displays plugin data and live plots
+    ///
+    /// # UI Layout
+    /// - Bottom panel: Exit instructions
+    /// - Error display: Shows connection/daemon errors
+    /// - Loading state: "Waiting for runtime data..." message
+    /// - Plugin-specific views:
+    ///   - live_plotter: Side panel + central plot
+    ///   - Other types: Central plugin card only
+    ///
+    /// # Live Plotting Features
+    /// - Automatic plotter configuration from plugin state
+    /// - Series name assignment and data ingestion
+    /// - Tick-based sample processing with reset detection
+    /// - Real-time plot rendering with time-based windowing
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let fetch_interval = if self.last_refresh_hz > 0.0 {
             Duration::from_secs_f64(1.0 / self.last_refresh_hz.max(1.0))

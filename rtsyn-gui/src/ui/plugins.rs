@@ -1,5 +1,17 @@
+//! Plugin management and UI rendering functionality for RTSyn GUI.
+//!
+//! This module provides comprehensive plugin management capabilities including:
+//! - Plugin card rendering and interaction
+//! - Plugin installation, uninstallation, and management windows
+//! - Plugin creation wizard with field configuration
+//! - Plugin configuration dialogs
+//! - Context menus and plugin operations
+//!
+//! The module handles both built-in app plugins (csv_recorder, live_plotter, etc.)
+//! and user-installed plugins with dynamic UI schema support.
+
 use super::*;
-use crate::utils::{format_f64_with_input, normalize_numeric_input, parse_f64_input};
+use crate::utils::{format_f64_with_input, normalize_numeric_input, parse_f64_input, truncate_string};
 use crate::WindowFocus;
 use crate::{
     has_rt_capabilities, spawn_file_dialog_thread, zenity_file_dialog, BuildAction, LivePlotter,
@@ -11,36 +23,31 @@ use rtsyn_cli::plugin_creator::{
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
-fn kv_row_wrapped(
-    ui: &mut egui::Ui,
-    label: &str,
-    label_w: f32,
-    value_ui: impl FnOnce(&mut egui::Ui),
-) {
-    ui.horizontal(|ui| {
-        // Label in fixed-width area
-        let label_response = ui.allocate_ui_with_layout(
-            egui::vec2(label_w, 0.0),
-            egui::Layout::top_down(egui::Align::Min),
-            |ui| {
-                ui.add(egui::Label::new(label).wrap(true));
-            },
-        );
-
-        // Add spacing to reach fixed position
-        let used_width = label_response.response.rect.width();
-        if used_width < label_w {
-            ui.add_space(label_w - used_width);
-        }
-
-        ui.add_space(8.0);
-        value_ui(ui);
-    });
-}
-
 impl GuiApp {
     const NEW_PLUGIN_TYPES: [&'static str; 6] = ["f64", "f32", "i64", "i32", "bool", "string"];
 
+    /// Returns the default value string for a given plugin field type.
+    ///
+    /// This function maps plugin field types to their appropriate default values
+    /// used in the plugin creation wizard. The defaults ensure newly created
+    /// plugin fields have sensible initial values.
+    ///
+    /// # Parameters
+    /// - `ty`: The type name as a string (e.g., "bool", "i64", "string")
+    ///
+    /// # Returns
+    /// A static string slice containing the default value:
+    /// - "false" for boolean types
+    /// - "0" for integer types (i64, i32)
+    /// - "" (empty string) for string, file, and path types
+    /// - "0.0" for all other types (typically floating-point)
+    ///
+    /// # Example
+    /// ```
+    /// assert_eq!(GuiApp::plugin_creator_default_by_type("bool"), "false");
+    /// assert_eq!(GuiApp::plugin_creator_default_by_type("i64"), "0");
+    /// assert_eq!(GuiApp::plugin_creator_default_by_type("f64"), "0.0");
+    /// ```
     fn plugin_creator_default_by_type(ty: &str) -> &'static str {
         match ty.trim().to_ascii_lowercase().as_str() {
             "bool" => "false",
@@ -50,6 +57,23 @@ impl GuiApp {
         }
     }
 
+    /// Opens a file dialog for selecting a plugin installation folder.
+    ///
+    /// This function initiates an asynchronous file dialog to allow users to browse
+    /// and select a folder containing plugins to install. It prevents multiple
+    /// dialogs from being opened simultaneously and provides user feedback.
+    ///
+    /// # Behavior
+    /// - Checks if a dialog is already open and shows a status message if so
+    /// - Creates a new channel for receiving the dialog result
+    /// - Spawns a background thread to handle the file dialog
+    /// - Uses platform-appropriate dialog (zenity for RT systems, rfd otherwise)
+    /// - Updates the application status to inform the user
+    ///
+    /// # Side Effects
+    /// - Sets `file_dialogs.install_dialog_rx` to track the dialog state
+    /// - Updates the application status message
+    /// - Spawns a background thread for dialog handling
     fn open_install_dialog(&mut self) {
         if self.file_dialogs.install_dialog_rx.is_some() {
             self.status = "Plugin dialog already open".to_string();
@@ -70,6 +94,23 @@ impl GuiApp {
         });
     }
 
+    /// Opens a file dialog for selecting the destination folder for a new plugin.
+    ///
+    /// This function launches a folder selection dialog for the plugin creation wizard,
+    /// allowing users to choose where their new plugin should be generated. It maintains
+    /// state to prevent multiple dialogs and remembers the last selected path.
+    ///
+    /// # Behavior
+    /// - Prevents opening multiple dialogs simultaneously
+    /// - Uses the last selected path as the starting directory if available
+    /// - Creates an asynchronous channel for dialog result communication
+    /// - Spawns a background thread with platform-appropriate dialog
+    /// - Updates status to guide the user
+    ///
+    /// # Side Effects
+    /// - Sets `file_dialogs.plugin_creator_dialog_rx` to track dialog state
+    /// - Updates application status message
+    /// - Spawns background thread for dialog handling
     fn open_plugin_creator_folder_dialog(&mut self) {
         if self.file_dialogs.plugin_creator_dialog_rx.is_some() {
             self.status = "Plugin creator dialog already open".to_string();
@@ -95,11 +136,39 @@ impl GuiApp {
         });
     }
 
+    /// Opens the new plugin creation window.
+    ///
+    /// This function activates the plugin creation wizard window and sets up
+    /// the necessary state for window focus management. The window allows users
+    /// to configure and generate new plugin scaffolds.
+    ///
+    /// # Side Effects
+    /// - Sets `windows.new_plugin_open` to true to show the window
+    /// - Queues window focus to ensure the new window receives input focus
+    /// - The window will be rendered in the next UI frame
     pub(crate) fn open_new_plugin_window(&mut self) {
         self.windows.new_plugin_open = true;
         self.pending_window_focus = Some(WindowFocus::NewPlugin);
     }
 
+    /// Converts plugin field drafts to a specification string.
+    ///
+    /// This function transforms a collection of plugin field drafts (from the creation wizard)
+    /// into a formatted specification string that can be used by the plugin creation system.
+    /// Each field is converted to "name:type" format, with empty names filtered out.
+    ///
+    /// # Parameters
+    /// - `entries`: Slice of PluginFieldDraft objects containing field definitions
+    ///
+    /// # Returns
+    /// A string with each field on a separate line in "name:type" format.
+    /// Empty or whitespace-only names are excluded from the output.
+    ///
+    /// # Example
+    /// ```
+    /// // Input: [PluginFieldDraft{name: "freq", type_name: "f64"}, PluginFieldDraft{name: "enabled", type_name: "bool"}]
+    /// // Output: "freq:f64\nenabled:bool"
+    /// ```
     fn plugin_creator_draft_to_spec(entries: &[PluginFieldDraft]) -> String {
         entries
             .iter()
@@ -115,6 +184,27 @@ impl GuiApp {
             .join("\n")
     }
 
+    /// Parses a plugin specification string into name-type pairs.
+    ///
+    /// This function takes a multi-line specification string where each line contains
+    /// a field definition in "name:type" format and converts it into a vector of
+    /// (name, type) tuples. It handles malformed lines gracefully and filters out
+    /// empty entries.
+    ///
+    /// # Parameters
+    /// - `spec`: Multi-line string with field specifications
+    ///
+    /// # Returns
+    /// Vector of (String, String) tuples representing (field_name, field_type).
+    /// Lines without names or empty lines are filtered out.
+    /// Missing types default to "f64".
+    ///
+    /// # Example
+    /// ```
+    /// let spec = "frequency:f64\nenabled:bool\ncount";
+    /// let result = GuiApp::plugin_creator_parse_spec(spec);
+    /// // Returns: [("frequency", "f64"), ("enabled", "bool"), ("count", "f64")]
+    /// ```
     fn plugin_creator_parse_spec(spec: &str) -> Vec<(String, String)> {
         spec.lines()
             .map(str::trim)
@@ -129,6 +219,29 @@ impl GuiApp {
             .collect()
     }
 
+    /// Creates a new plugin from the current draft configuration.
+    ///
+    /// This function takes the plugin creation wizard's current draft state and
+    /// generates a complete plugin scaffold in the specified parent directory.
+    /// It validates the draft, converts field specifications, and delegates to
+    /// the lower-level creation function.
+    ///
+    /// # Parameters
+    /// - `parent`: The directory path where the plugin should be created
+    ///
+    /// # Returns
+    /// - `Ok(PathBuf)`: Path to the created plugin directory on success
+    /// - `Err(String)`: Error message if creation fails or validation fails
+    ///
+    /// # Validation
+    /// - Ensures plugin name is not empty
+    /// - Converts all field drafts to specification strings
+    /// - Validates field configurations
+    ///
+    /// # Side Effects
+    /// - Creates plugin directory structure and files
+    /// - Generates source code scaffolding
+    /// - Creates manifest and configuration files
     pub(crate) fn create_plugin_from_draft(&self, parent: &Path) -> Result<PathBuf, String> {
         let name = self.new_plugin_draft.name.trim();
         if name.is_empty() {
@@ -159,6 +272,38 @@ impl GuiApp {
         )
     }
 
+    /// Creates a plugin from detailed specifications and configuration.
+    ///
+    /// This is the core plugin creation function that takes all the necessary parameters
+    /// and generates a complete plugin scaffold. It handles validation, specification parsing,
+    /// and delegates to the plugin creation system.
+    ///
+    /// # Parameters
+    /// - `name`: Plugin name (must not be empty)
+    /// - `language`: Programming language ("rust", "c", "cpp")
+    /// - `main`: Main description/characteristics text
+    /// - `autostart`: Whether plugin should start automatically
+    /// - `supports_start_stop`: Whether plugin supports start/stop controls
+    /// - `supports_restart`: Whether plugin supports restart functionality
+    /// - `supports_apply`: Whether plugin supports apply/modify operations
+    /// - `external_window`: Whether plugin opens in external window
+    /// - `starts_expanded`: Whether plugin UI starts in expanded state
+    /// - `required_input_ports_csv`: Comma-separated list of required input ports
+    /// - `required_output_ports_csv`: Comma-separated list of required output ports
+    /// - `vars_spec`: Variable specifications in "name:type=default" format
+    /// - `inputs_spec`: Input port specifications
+    /// - `outputs_spec`: Output port specifications
+    /// - `internals_spec`: Internal variable specifications
+    /// - `parent`: Parent directory for plugin creation
+    ///
+    /// # Returns
+    /// - `Ok(PathBuf)`: Path to created plugin on success
+    /// - `Err(String)`: Detailed error message on failure
+    ///
+    /// # Validation
+    /// - Plugin name must not be empty
+    /// - Language must be valid (rust/c/cpp)
+    /// - All specifications must parse correctly
     fn create_plugin_from_specs(
         &self,
         name: &str,
@@ -254,6 +399,18 @@ impl GuiApp {
         create_plugin(&req)
     }
 
+    /// Opens the plugin management window.
+    ///
+    /// This function activates the plugin management interface where users can
+    /// install, uninstall, and manage plugins. It refreshes the plugin detection
+    /// and sets up the window state for proper focus management.
+    ///
+    /// # Side Effects
+    /// - Sets `windows.manage_plugins_open` to true
+    /// - Triggers plugin detection scan to refresh available plugins
+    /// - Resets selected plugin index
+    /// - Queues window focus for the management window
+    /// - Window will be rendered in the next UI frame
     pub(crate) fn open_manage_plugins(&mut self) {
         self.windows.manage_plugins_open = true;
         self.scan_detected_plugins();
@@ -261,6 +418,18 @@ impl GuiApp {
         self.pending_window_focus = Some(WindowFocus::ManagePlugins);
     }
 
+    /// Opens the plugin installation window.
+    ///
+    /// This function activates the plugin installation interface where users can
+    /// browse and install available plugins. It refreshes plugin detection to
+    /// show the most current available plugins and prepares the window state.
+    ///
+    /// # Side Effects
+    /// - Sets `windows.install_plugins_open` to true
+    /// - Triggers plugin detection scan to refresh available plugins
+    /// - Resets selected plugin index to clear previous selections
+    /// - Queues window focus for the installation window
+    /// - Window will be rendered in the next UI frame
     pub(crate) fn open_install_plugins(&mut self) {
         self.windows.install_plugins_open = true;
         self.scan_detected_plugins();
@@ -268,18 +437,81 @@ impl GuiApp {
         self.pending_window_focus = Some(WindowFocus::InstallPlugins);
     }
 
+    /// Opens the plugin uninstallation window.
+    ///
+    /// This function activates the plugin uninstallation interface where users can
+    /// remove installed plugins from the system. It prepares the window state
+    /// and clears any previous selections.
+    ///
+    /// # Side Effects
+    /// - Sets `windows.uninstall_plugins_open` to true
+    /// - Resets selected plugin index to clear previous selections
+    /// - Queues window focus for the uninstallation window
+    /// - Window will be rendered in the next UI frame
     pub(crate) fn open_uninstall_plugins(&mut self) {
         self.windows.uninstall_plugins_open = true;
         self.windows.uninstall_selected_index = None;
         self.pending_window_focus = Some(WindowFocus::UninstallPlugins);
     }
 
+    /// Opens the plugin addition window.
+    ///
+    /// This function activates the plugin addition interface where users can
+    /// browse installed plugins and add them to the current workspace. It
+    /// prepares the window state for plugin selection and addition.
+    ///
+    /// # Side Effects
+    /// - Sets `windows.plugins_open` to true
+    /// - Resets selected plugin index to clear previous selections
+    /// - Queues window focus for the plugin addition window
+    /// - Window will be rendered in the next UI frame
     pub(crate) fn open_plugins(&mut self) {
         self.windows.plugins_open = true;
         self.windows.plugin_selected_index = None;
         self.pending_window_focus = Some(WindowFocus::Plugins);
     }
 
+    /// Renders interactive plugin cards in the main workspace panel.
+    ///
+    /// This is the core function for rendering plugin instances as interactive cards
+    /// in the workspace. Each card displays plugin information, controls, and real-time
+    /// data, allowing users to configure, start/stop, and monitor plugins.
+    ///
+    /// # Parameters
+    /// - `ctx`: The egui context for rendering and input handling
+    /// - `panel_rect`: The rectangular area available for rendering plugin cards
+    ///
+    /// # Card Layout
+    /// Each plugin card contains:
+    /// - Header with plugin ID badge, name, and close button
+    /// - Collapsible sections for variables, inputs, outputs, and internal variables
+    /// - Control buttons (Start/Stop, Restart, Modify) based on plugin capabilities
+    /// - Real-time value displays and configuration controls
+    ///
+    /// # Interaction Features
+    /// - Drag and drop positioning with boundary constraints
+    /// - Double-click to select/deselect plugins
+    /// - Right-click context menus for advanced operations
+    /// - Connection highlighting for visual feedback
+    /// - Real-time data updates and control synchronization
+    ///
+    /// # Plugin Types Handled
+    /// - Standard plugins with UI schemas
+    /// - App plugins (csv_recorder, live_plotter, etc.) with special handling
+    /// - External window plugins (excluded from card rendering)
+    /// - Value viewer plugins with special display logic
+    ///
+    /// # Side Effects
+    /// - Updates plugin positions and rectangles for interaction tracking
+    /// - Modifies plugin configurations and states
+    /// - Triggers workspace updates and plugin operations
+    /// - Manages connection states and validation
+    /// - Updates plotter configurations and external windows
+    ///
+    /// # Performance Considerations
+    /// - Uses efficient scrolling for large plugin configurations
+    /// - Implements card height capping to prevent UI overflow
+    /// - Optimizes rendering for plugins with many variables
     pub(crate) fn render_plugin_cards(&mut self, ctx: &egui::Context, panel_rect: egui::Rect) {
         const CARD_WIDTH: f32 = 280.0;
         const CARD_FIXED_HEIGHT: f32 = 132.0;
@@ -1598,6 +1830,34 @@ impl GuiApp {
         }
     }
 
+    /// Renders a plugin preview panel showing plugin information and capabilities.
+    ///
+    /// This function creates a detailed preview of a plugin's characteristics, including
+    /// its name, description, input/output ports, and variables. It's used in plugin
+    /// management windows to help users understand plugin functionality before installation
+    /// or addition to workspace.
+    ///
+    /// # Parameters
+    /// - `ui`: The egui UI context for rendering
+    /// - `manifest`: Plugin manifest containing metadata and configuration
+    /// - `inputs_override`: Optional override for input port names (used for dynamic plugins)
+    /// - `plugin_kind`: The plugin type identifier
+    /// - `_plugin_config`: Plugin configuration (currently unused)
+    /// - `_plugin_running`: Plugin running state (currently unused)
+    /// - `installed_plugins`: List of all installed plugins for schema lookup
+    ///
+    /// # Preview Content
+    /// - Plugin name and version information
+    /// - Normalized description text with proper formatting
+    /// - Input and output port listings
+    /// - Special handling for extendable plugins (csv_recorder, live_plotter)
+    /// - Variable listings with default values
+    ///
+    /// # Special Features
+    /// - Handles incremental input ports for extendable plugins
+    /// - Normalizes description text for better readability
+    /// - Displays port information in a structured grid layout
+    /// - Shows variable metadata when available
     fn render_plugin_preview(
         ui: &mut egui::Ui,
         manifest: &PluginManifest,
@@ -1696,6 +1956,23 @@ impl GuiApp {
             });
     }
 
+    /// Renders a scrollable action panel for plugin preview windows.
+    ///
+    /// This function creates a standardized scrollable panel used in plugin management
+    /// windows to display plugin previews and action buttons. It ensures consistent
+    /// sizing and scrolling behavior across different plugin management interfaces.
+    ///
+    /// # Parameters
+    /// - `ui`: The egui UI context for rendering
+    /// - `full_h`: The full height available for the panel
+    /// - `right_w`: The width of the right panel area
+    /// - `body`: Closure that renders the panel content
+    ///
+    /// # Layout Features
+    /// - Vertical scrolling with auto-shrink disabled for consistent sizing
+    /// - Fixed width to prevent layout drift during content changes
+    /// - Minimum and maximum height constraints for proper scrolling
+    /// - Stable width baseline for consistent button centering
     fn render_preview_action_panel(
         ui: &mut egui::Ui,
         full_h: f32,
@@ -1714,6 +1991,25 @@ impl GuiApp {
             });
     }
 
+    /// Generates input port names for live plotter plugins based on current configuration.
+    ///
+    /// This function creates dynamic input port names for live plotter plugins, which
+    /// can have a variable number of input ports based on their configuration. It
+    /// looks up the current input count and generates appropriately named ports.
+    ///
+    /// # Returns
+    /// - `Some(Vec<String>)`: Vector of input port names (e.g., ["in_0", "in_1", ...])
+    /// - `None`: If no live plotter plugin is found in the workspace
+    ///
+    /// # Port Naming
+    /// Ports are named with the pattern "in_{index}" where index starts from 0.
+    /// The number of ports is determined by the "input_count" configuration value,
+    /// defaulting to 1 if not specified.
+    ///
+    /// # Usage
+    /// This is primarily used in plugin preview windows to show the correct
+    /// number of input ports for live plotter plugins before they are added
+    /// to the workspace.
     fn live_plotter_inputs_override(&self) -> Option<Vec<String>> {
         let plugin = self
             .workspace_manager
@@ -1729,6 +2025,31 @@ impl GuiApp {
         Some((0..count).map(|idx| format!("in_{idx}")).collect())
     }
 
+    /// Normalizes plugin description text for better readability in previews.
+    ///
+    /// This function processes plugin description text to improve its presentation
+    /// in preview panels. It handles spaced letters (like "R T S y n") by joining
+    /// them when they form sequences, while preserving normal word spacing.
+    ///
+    /// # Parameters
+    /// - `description`: The raw description text to normalize
+    ///
+    /// # Returns
+    /// A normalized string with improved spacing and formatting
+    ///
+    /// # Processing Rules
+    /// - Splits text into whitespace-separated tokens
+    /// - Identifies sequences of single alphanumeric characters
+    /// - Joins sequences of 3+ single characters into single words
+    /// - Preserves sequences of 1-2 characters as separate tokens
+    /// - Maintains normal word spacing for multi-character tokens
+    ///
+    /// # Example
+    /// ```
+    /// let input = "R T S y n real time synthesizer";
+    /// let output = GuiApp::normalize_preview_description(input);
+    /// // Returns: "RTSyn real time synthesizer"
+    /// ```
     fn normalize_preview_description(description: &str) -> String {
         let tokens: Vec<&str> = description.split_whitespace().collect();
         if tokens.is_empty() {
@@ -1766,22 +2087,46 @@ impl GuiApp {
         rebuilt.join(" ")
     }
 
-    fn truncate_plugin_list_name(name: &str, max_chars: usize) -> String {
-        let mut chars = name.chars();
-        let mut out = String::new();
-        for _ in 0..max_chars {
-            if let Some(ch) = chars.next() {
-                out.push(ch);
-            } else {
-                return out;
-            }
-        }
-        if chars.next().is_some() {
-            out.push_str("...");
-        }
-        out
-    }
-
+    /// Truncates plugin names for display in list views with ellipsis.
+    ///
+    /// This function ensures plugin names fit within constrained list layouts
+    /// by truncating them to a specified character limit and adding ellipsis
+    /// when truncation occurs.
+    ///
+    /// # Parameters
+    /// - `name`: The plugin name to potentially truncate
+    /// - `max_chars`: Maximum number of characters before truncation
+    ///
+    /// Renders the plugin addition window for adding installed plugins to workspace.
+    ///
+    /// This function creates a modal window that allows users to browse through
+    /// installed plugins and add them to the current workspace. It provides a
+    /// two-panel interface with a searchable plugin list and detailed preview.
+    ///
+    /// # Window Layout
+    /// - Left panel: Searchable list of installed plugins
+    /// - Right panel: Plugin preview with add button
+    /// - Fixed window size for consistent user experience
+    /// - Proper focus management and window layering
+    ///
+    /// # Features
+    /// - Real-time search filtering of plugin names
+    /// - Plugin selection with visual feedback
+    /// - Detailed plugin preview including ports and variables
+    /// - One-click addition to workspace
+    /// - Special handling for live plotter input overrides
+    ///
+    /// # Interaction
+    /// - Click to select plugins from the list
+    /// - Search box filters plugins by name (case-insensitive)
+    /// - "Add to runtime" button adds selected plugin to workspace
+    /// - Window can be closed via title bar or ESC key
+    ///
+    /// # Side Effects
+    /// - Updates plugin selection state
+    /// - Adds plugins to workspace when requested
+    /// - Manages window focus and layering
+    /// - Updates window rectangle tracking for interaction
     pub(crate) fn render_plugins_window(&mut self, ctx: &egui::Context) {
         if !self.windows.plugins_open {
             return;
@@ -1853,7 +2198,7 @@ impl GuiApp {
                                                     continue;
                                                 }
                                                 let display_label =
-                                                    Self::truncate_plugin_list_name(&label, 44);
+                                                    truncate_string(&label, 44);
                                                 let response = ui
                                                     .allocate_ui_with_layout(
                                                         egui::vec2(ui.available_width(), 22.0),
@@ -1935,6 +2280,38 @@ impl GuiApp {
         self.windows.plugins_open = window_open;
     }
 
+    /// Renders a configurable section for plugin field definitions in the creation wizard.
+    ///
+    /// This function creates an interactive section where users can define plugin fields
+    /// (variables, inputs, outputs, etc.) with name, type, and optionally default values.
+    /// It provides add/remove functionality and type selection for each field.
+    ///
+    /// # Parameters
+    /// - `ui`: The egui UI context for rendering
+    /// - `id_key`: Unique identifier for UI element disambiguation
+    /// - `title`: Section title displayed to the user
+    /// - `add_label`: Text for the "add new field" button
+    /// - `fields`: Mutable reference to the field collection
+    /// - `show_default_value`: Whether to show default value input fields
+    ///
+    /// # Returns
+    /// `true` if any changes were made to the field collection, `false` otherwise
+    ///
+    /// # Field Configuration
+    /// Each field can be configured with:
+    /// - Name: User-defined identifier for the field
+    /// - Type: Selected from predefined types (f64, f32, i64, i32, bool, string)
+    /// - Default value: Optional default value (when `show_default_value` is true)
+    ///
+    /// # Interaction Features
+    /// - Add button to create new fields
+    /// - Remove button for each field
+    /// - Type dropdown with automatic default value updates
+    /// - Input validation and type-appropriate defaults
+    ///
+    /// # UI Styling
+    /// Uses custom styling for input fields with darker background colors
+    /// to distinguish from the main UI theme.
     fn render_new_plugin_fields_section(
         ui: &mut egui::Ui,
         id_key: &str,
@@ -2030,6 +2407,40 @@ impl GuiApp {
         changed
     }
 
+    /// Renders the new plugin creation wizard window.
+    ///
+    /// This function creates a comprehensive plugin creation interface using an external
+    /// viewport. The wizard guides users through all aspects of plugin creation including
+    /// naming, language selection, field definitions, and behavioral configuration.
+    ///
+    /// # Window Structure
+    /// The wizard is organized into 5 main sections:
+    /// 1. Name and Language - Basic plugin identification and target language
+    /// 2. Main Characteristics - Description and purpose of the plugin
+    /// 3. Field Definitions - Variables, inputs, outputs, and internal variables
+    /// 4. Options - Behavioral flags and requirements
+    /// 5. Creation - Final creation with folder selection
+    ///
+    /// # Field Types Supported
+    /// - Variables: Runtime configurable parameters with default values
+    /// - Inputs: Data input ports for receiving values
+    /// - Outputs: Data output ports for sending computed values
+    /// - Internal Variables: Plugin-internal state variables
+    ///
+    /// # Configuration Options
+    /// - Autostart: Plugin loads in started state
+    /// - Start/Stop controls: Enable runtime control buttons
+    /// - Restart support: Enable reset/restart functionality
+    /// - Apply support: Enable modify/apply operations
+    /// - External window: Plugin opens in separate window
+    /// - Starts expanded: UI sections start in expanded state
+    /// - Required ports: Ports that must be connected before starting
+    ///
+    /// # Side Effects
+    /// - Updates plugin draft configuration
+    /// - Triggers folder selection dialogs
+    /// - Marks workspace as dirty when changes are made
+    /// - Creates plugin files when creation is completed
     pub(crate) fn render_new_plugin_window(&mut self, ctx: &egui::Context) {
         if !self.windows.new_plugin_open {
             return;
@@ -2291,10 +2702,63 @@ impl GuiApp {
         });
     }
 
+    /// Checks if a path belongs to the app_plugins directory.
+    ///
+    /// This function determines whether a given path is part of the built-in
+    /// app_plugins directory structure. This is used to distinguish between
+    /// built-in plugins and user-installed plugins for management purposes.
+    ///
+    /// # Parameters
+    /// - `path`: The filesystem path to check
+    ///
+    /// # Returns
+    /// `true` if the path contains an "app_plugins" component, `false` otherwise
+    ///
+    /// # Usage
+    /// This is primarily used in plugin management windows to:
+    /// - Filter out built-in plugins from installation lists
+    /// - Prevent uninstallation of core app plugins
+    /// - Apply different management rules to built-in vs user plugins
     fn is_app_plugins_path(path: &std::path::Path) -> bool {
         path.components().any(|c| c.as_os_str() == "app_plugins")
     }
 
+    /// Renders the comprehensive plugin management window.
+    ///
+    /// This function creates the main plugin management interface where users can
+    /// install, reinstall, and uninstall plugins. It provides a two-panel layout
+    /// with plugin browsing, preview, and management actions.
+    ///
+    /// # Window Layout
+    /// - Left panel: Searchable list of detected plugins with management controls
+    /// - Right panel: Plugin preview with install/reinstall/uninstall buttons
+    /// - Footer: Browse and rescan functionality
+    /// - Fixed window size for consistent experience
+    ///
+    /// # Management Actions
+    /// - Install: Add new plugins to the system
+    /// - Reinstall: Rebuild and reinstall existing plugins
+    /// - Uninstall: Remove plugins from the system (with confirmation)
+    /// - Browse: Open file dialog to scan additional plugin directories
+    /// - Rescan: Refresh the list of available plugins
+    ///
+    /// # Plugin States
+    /// - Not installed: Shows install button
+    /// - Installed (removable): Shows reinstall and uninstall buttons
+    /// - Installed (non-removable): Limited actions available
+    ///
+    /// # Features
+    /// - Real-time search filtering
+    /// - Plugin installation status tracking
+    /// - Build process integration with progress feedback
+    /// - Confirmation dialogs for destructive actions
+    /// - Automatic plugin detection refresh
+    ///
+    /// # Side Effects
+    /// - Triggers plugin builds and installations
+    /// - Updates plugin detection state
+    /// - Shows confirmation dialogs for uninstallation
+    /// - Manages build dialog state and progress
     pub(crate) fn render_manage_plugins_window(&mut self, ctx: &egui::Context) {
         if !self.windows.manage_plugins_open {
             return;
@@ -2591,6 +3055,41 @@ impl GuiApp {
         self.windows.manage_plugins_open = window_open;
     }
 
+    /// Renders the plugin installation window for adding new plugins.
+    ///
+    /// This function creates a focused interface for plugin installation, allowing
+    /// users to browse available plugins and install them. It filters out built-in
+    /// app plugins and focuses on user-installable plugins.
+    ///
+    /// # Window Layout
+    /// - Left panel: Searchable list of installable plugins with browse/rescan controls
+    /// - Right panel: Plugin preview with install/reinstall actions
+    /// - Excludes built-in app_plugins from the installation list
+    /// - Fixed window size for consistent user experience
+    ///
+    /// # Installation Features
+    /// - Install new plugins that aren't currently installed
+    /// - Reinstall existing plugins (if removable)
+    /// - Browse additional directories for plugins
+    /// - Rescan default plugin directories
+    /// - Real-time search filtering
+    ///
+    /// # Plugin Filtering
+    /// - Excludes plugins from app_plugins directory (built-ins)
+    /// - Shows installation status for each plugin
+    /// - Filters by search terms in plugin names
+    ///
+    /// # Actions Available
+    /// - Install: For plugins not currently installed
+    /// - Reinstall: For installed removable plugins
+    /// - Browse: Open file dialog for additional plugin directories
+    /// - Rescan: Refresh available plugin list
+    ///
+    /// # Side Effects
+    /// - Initiates plugin build and installation processes
+    /// - Updates plugin detection and installation state
+    /// - Manages build dialog progress and feedback
+    /// - Triggers file dialogs for directory browsing
     pub(crate) fn render_install_plugins_window(&mut self, ctx: &egui::Context) {
         if !self.windows.install_plugins_open {
             return;
@@ -2870,6 +3369,42 @@ impl GuiApp {
         self.windows.install_plugins_open = window_open;
     }
 
+    /// Renders the plugin uninstallation window for removing installed plugins.
+    ///
+    /// This function creates a focused interface for plugin removal, showing only
+    /// plugins that can be safely uninstalled. It excludes built-in app plugins
+    /// and non-removable plugins to prevent system instability.
+    ///
+    /// # Window Layout
+    /// - Left panel: Searchable list of removable installed plugins
+    /// - Right panel: Plugin preview with uninstall action
+    /// - Simplified interface focused on removal operations
+    /// - Fixed window size for consistent experience
+    ///
+    /// # Plugin Filtering
+    /// Only shows plugins that meet all criteria:
+    /// - Currently installed in the system
+    /// - Marked as removable (not system-critical)
+    /// - Not located in app_plugins directory (not built-in)
+    /// - Match current search filter
+    ///
+    /// # Safety Features
+    /// - Excludes built-in plugins to prevent system damage
+    /// - Only shows removable plugins to avoid dependency issues
+    /// - Requires confirmation before actual uninstallation
+    /// - Provides plugin preview to confirm selection
+    ///
+    /// # User Interaction
+    /// - Search filtering by plugin name
+    /// - Click to select plugins for preview
+    /// - Uninstall button triggers confirmation dialog
+    /// - Preview shows plugin details before removal
+    ///
+    /// # Side Effects
+    /// - Shows confirmation dialogs for uninstallation
+    /// - Updates plugin selection state
+    /// - Manages window focus and layering
+    /// - Triggers actual plugin removal after confirmation
     pub(crate) fn render_uninstall_plugins_window(&mut self, ctx: &egui::Context) {
         if !self.windows.uninstall_plugins_open {
             return;
@@ -3063,6 +3598,37 @@ impl GuiApp {
         self.windows.uninstall_plugins_open = window_open;
     }
 
+    /// Renders the right-click context menu for plugin cards.
+    ///
+    /// This function displays a context menu when users right-click on plugin cards,
+    /// providing quick access to common plugin operations. The menu appears at the
+    /// click position and handles proper focus and dismissal behavior.
+    ///
+    /// # Menu Options
+    /// - Add connections: Opens connection editor in add mode
+    /// - Remove connections: Opens connection editor in remove mode  
+    /// - Plugin config: Opens plugin configuration window
+    /// - Duplicate plugin: Creates a copy of the plugin
+    ///
+    /// # Interaction Behavior
+    /// - Appears at the right-click position
+    /// - Dismisses when clicking outside the menu
+    /// - Dismisses when selecting a menu option
+    /// - Prevents multiple menus from being open simultaneously
+    /// - Uses foreground layer for proper z-ordering
+    ///
+    /// # Menu State Management
+    /// - Tracks the plugin ID, position, and frame when opened
+    /// - Prevents immediate dismissal on the opening frame
+    /// - Handles both primary and secondary click dismissal
+    /// - Clears menu state when closed
+    ///
+    /// # Side Effects
+    /// - Opens connection editor with appropriate mode
+    /// - Opens plugin configuration window
+    /// - Triggers plugin duplication
+    /// - Updates window focus state
+    /// - Manages menu visibility state
     pub(crate) fn render_plugin_context_menu(&mut self, ctx: &egui::Context) {
         let Some((plugin_id, pos, opened_frame)) = self.plugin_context_menu else {
             return;
@@ -3153,6 +3719,28 @@ impl GuiApp {
         }
     }
 
+    /// Determines the appropriate window size for plugin configuration dialogs.
+    ///
+    /// This function returns optimal window dimensions based on the plugin type,
+    /// ensuring that configuration windows are appropriately sized for their
+    /// content and provide a good user experience.
+    ///
+    /// # Parameters
+    /// - `plugin_kind`: The plugin type identifier string
+    ///
+    /// # Returns
+    /// An `egui::Vec2` containing the width and height in pixels
+    ///
+    /// # Size Mapping
+    /// - csv_recorder: 520x360 (larger for file path and column configuration)
+    /// - live_plotter: 420x240 (medium for plotting parameters)
+    /// - Default: 320x180 (compact for basic plugins)
+    ///
+    /// # Design Rationale
+    /// Different plugin types have varying configuration complexity:
+    /// - CSV recorder needs space for file paths and column management
+    /// - Live plotter requires room for plotting parameters and settings
+    /// - Most plugins have minimal configuration needs
     fn plugin_config_window_size(plugin_kind: &str) -> egui::Vec2 {
         match plugin_kind {
             "csv_recorder" => egui::vec2(520.0, 360.0),
@@ -3161,6 +3749,37 @@ impl GuiApp {
         }
     }
 
+    /// Renders the contents of a plugin configuration dialog.
+    ///
+    /// This function creates the UI content for plugin configuration windows,
+    /// displaying plugin information and editable configuration parameters.
+    /// It provides a consistent interface for configuring plugin-specific settings.
+    ///
+    /// # Parameters
+    /// - `ui`: The egui UI context for rendering
+    /// - `plugin_id`: Unique identifier of the plugin being configured
+    /// - `name_by_kind`: Mapping from plugin kinds to display names
+    ///
+    /// # Configuration Elements
+    /// - Plugin identification: ID badge and display name
+    /// - Priority setting: Execution priority with drag value control
+    /// - Plugin-specific parameters (extensible for future features)
+    ///
+    /// # Priority Configuration
+    /// - Allows setting plugin execution priority (0-99 range)
+    /// - Higher priority plugins execute first in the processing chain
+    /// - Uses drag value control for intuitive adjustment
+    /// - Automatically clamps values to valid range
+    ///
+    /// # Error Handling
+    /// - Gracefully handles missing plugins with error message
+    /// - Validates plugin existence before configuration
+    /// - Provides user feedback for invalid states
+    ///
+    /// # Side Effects
+    /// - Updates plugin configuration in workspace
+    /// - Marks workspace as dirty when changes are made
+    /// - Triggers workspace synchronization for priority changes
     fn render_plugin_config_contents(
         &mut self,
         ui: &mut egui::Ui,
@@ -3223,6 +3842,40 @@ impl GuiApp {
         }
     }
 
+    /// Renders plugin configuration windows with support for both modal and external viewports.
+    ///
+    /// This function manages the rendering of plugin configuration interfaces, supporting
+    /// both traditional modal windows and external viewport windows for plugins that
+    /// require dedicated configuration spaces.
+    ///
+    /// # Dual Window Support
+    /// - External viewports: For plugins requiring dedicated configuration windows
+    /// - Modal windows: For standard plugin configuration within the main interface
+    /// - Automatic detection based on plugin type and configuration
+    ///
+    /// # External Viewport Handling
+    /// - Creates separate viewports for plugins using external configuration
+    /// - Each viewport has a unique ID based on plugin ID
+    /// - Viewports are titled with plugin name and ID
+    /// - Handles viewport lifecycle and close behavior
+    ///
+    /// # Modal Window Features
+    /// - Fixed size based on plugin type requirements
+    /// - Proper focus management and window layering
+    /// - Centered positioning for optimal user experience
+    /// - Close button and ESC key support
+    ///
+    /// # Window State Management
+    /// - Tracks which plugins should use external viewports
+    /// - Manages window open/close state
+    /// - Handles window focus transitions
+    /// - Cleans up state when windows are closed
+    ///
+    /// # Side Effects
+    /// - Creates and manages external viewports
+    /// - Updates window state and focus tracking
+    /// - Renders plugin configuration content
+    /// - Manages window rectangle tracking for interactions
     pub(crate) fn render_plugin_config_window(&mut self, ctx: &egui::Context) {
         let name_by_kind: HashMap<String, String> = self
             .plugin_manager

@@ -6,6 +6,18 @@ use std::collections::HashSet;
 use workspace::{remove_extendable_input, ConnectionDefinition, ConnectionRuleError};
 
 impl GuiApp {
+    /// Adds a connection between plugins using data from the connection editor.
+    ///
+    /// # Side Effects
+    /// - Validates plugins are different (no self-connections)
+    /// - Validates at least two plugins exist in workspace
+    /// - Retrieves plugin IDs from workspace using editor indices
+    /// - Validates connection fields are not empty
+    /// - Adds connection using core connection logic
+    /// - Shows error notifications for validation failures
+    /// - Updates status message on success
+    /// - Enforces connection dependencies
+    /// - Marks workspace as dirty
     pub(crate) fn add_connection(&mut self) {
         if self.connection_editor.from_idx == self.connection_editor.to_idx {
             self.show_info("Connections", "Cannot connect a plugin to itself");
@@ -74,6 +86,22 @@ impl GuiApp {
         self.mark_workspace_dirty();
     }
 
+    /// Adds a connection directly between specified plugins.
+    ///
+    /// # Parameters
+    /// - `from_plugin`: Source plugin ID
+    /// - `from_port`: Source port name
+    /// - `to_plugin`: Target plugin ID  
+    /// - `to_port`: Target port name
+    /// - `kind`: Connection type/kind
+    ///
+    /// # Side Effects
+    /// - Validates plugins are different (no self-connections)
+    /// - Validates connection fields are not empty
+    /// - Adds connection using core connection logic
+    /// - Shows error notifications for validation failures
+    /// - Marks workspace as dirty
+    /// - Enforces connection dependencies
     pub(crate) fn add_connection_direct(
         &mut self,
         from_plugin: u64,
@@ -113,6 +141,21 @@ impl GuiApp {
         self.enforce_connection_dependent();
     }
 
+    /// Removes a connection and handles extendable input reindexing.
+    ///
+    /// # Parameters
+    /// - `connection`: Connection definition to remove
+    ///
+    /// # Side Effects
+    /// - Checks if target port is an extendable input
+    /// - For extendable inputs on supported plugins:
+    ///   - Removes matching connections from workspace
+    ///   - Reindexes remaining extendable inputs
+    ///   - Recomputes plotter UI refresh rate if needed
+    /// - For regular connections:
+    ///   - Removes matching connections from workspace
+    /// - Marks workspace as dirty
+    /// - Enforces connection dependencies
     pub(crate) fn remove_connection_with_input(&mut self, connection: ConnectionDefinition) {
         if Self::extendable_input_index(&connection.to_port).is_some() {
             let target_kind = self
@@ -160,6 +203,16 @@ impl GuiApp {
         self.enforce_connection_dependent();
     }
 
+    /// Enforces connection dependencies by stopping plugins without inputs.
+    ///
+    /// Stops specific plugin types (csv_recorder, live_plotter, comedi_daq) that
+    /// are running but have no incoming connections, as they require input data.
+    ///
+    /// # Side Effects
+    /// - Identifies plugins with incoming connections
+    /// - Stops running plugins of specific types without incoming connections
+    /// - Sends stop messages to runtime logic thread
+    /// - Updates plugin running state in workspace
     pub(crate) fn enforce_connection_dependent(&mut self) {
         let mut stopped = Vec::new();
 
@@ -193,10 +246,24 @@ impl GuiApp {
         }
     }
 
+    /// Extracts the numeric index from an extendable input port name.
+    ///
+    /// # Parameters
+    /// - `port`: Port name (e.g., "in_0", "in_1")
+    ///
+    /// # Returns
+    /// Optional index if port follows extendable input naming pattern
     pub(crate) fn extendable_input_index(port: &str) -> Option<usize> {
         core_connections::extendable_input_index(port)
     }
 
+    /// Finds the next available index for extendable inputs on a plugin.
+    ///
+    /// # Parameters
+    /// - `plugin_id`: Target plugin ID
+    ///
+    /// # Returns
+    /// Next available index for creating new extendable input
     pub(crate) fn next_available_extendable_input_index(&self, plugin_id: u64) -> usize {
         core_connections::next_available_extendable_input_index(
             &self.workspace_manager.workspace,
@@ -204,6 +271,19 @@ impl GuiApp {
         )
     }
 
+    /// Gets display names for extendable input ports on a plugin.
+    ///
+    /// # Parameters
+    /// - `plugin_id`: Target plugin ID
+    /// - `include_placeholder`: Whether to include a placeholder for the next available input
+    ///
+    /// # Returns
+    /// Vector of port names sorted by index, optionally with placeholder
+    ///
+    /// # Side Effects
+    /// - Collects existing extendable input connections
+    /// - Sorts and deduplicates by index
+    /// - Adds placeholder port name if requested and appropriate
     pub(crate) fn extendable_input_display_ports(
         &self,
         plugin_id: u64,
@@ -236,6 +316,21 @@ impl GuiApp {
         list
     }
 
+    /// Removes an extendable input at a specific index and reindexes remaining inputs.
+    ///
+    /// # Parameters
+    /// - `plugin_id`: Target plugin ID
+    /// - `remove_idx`: Index of the extendable input to remove
+    ///
+    /// # Side Effects
+    /// - Validates plugin exists and supports extendable inputs
+    /// - Calculates current input count from connections and config
+    /// - Removes connections to the specified input index
+    /// - Updates plugin configuration with new input count
+    /// - For CSV recorder plugins: updates column configuration
+    /// - Marks workspace as dirty
+    /// - Enforces connection dependencies
+    /// - Recomputes plotter UI refresh rate if needed
     pub(crate) fn remove_extendable_input_at(&mut self, plugin_id: u64, remove_idx: usize) {
         let plugin_index = match self
             .workspace_manager
@@ -338,6 +433,18 @@ impl GuiApp {
         }
     }
 
+    /// Reindexes extendable inputs to eliminate gaps in numbering.
+    ///
+    /// # Parameters
+    /// - `plugin_id`: Target plugin ID
+    ///
+    /// # Side Effects
+    /// - Validates plugin supports extendable inputs
+    /// - Collects all extendable input connections for the plugin
+    /// - Sorts connections by port index
+    /// - Renumbers port names to eliminate gaps (in_0, in_1, in_2, etc.)
+    /// - Updates plugin configuration with correct input count
+    /// - For CSV recorder plugins: adjusts column configuration to match input count
     pub(crate) fn reindex_extendable_inputs(&mut self, plugin_id: u64) {
         let kind = match self
             .workspace_manager
@@ -425,6 +532,14 @@ impl GuiApp {
         }
     }
 
+    /// Synchronizes the extendable input count configuration with actual connections.
+    ///
+    /// # Parameters
+    /// - `plugin_id`: Target plugin ID
+    ///
+    /// # Side Effects
+    /// Delegates to core connection logic to update plugin configuration
+    /// based on the number of extendable input connections
     pub(crate) fn sync_extendable_input_count(&mut self, plugin_id: u64) {
         core_connections::sync_extendable_input_count(
             &mut self.workspace_manager.workspace,

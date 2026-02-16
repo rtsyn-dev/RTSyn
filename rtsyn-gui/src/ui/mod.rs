@@ -16,10 +16,9 @@ use workspace::{prune_extendable_inputs_plugin_connections, ConnectionDefinition
 mod connections;
 mod plotters;
 mod plugins;
+mod widgets;
 mod workspaces;
 
-pub const BUTTON_SIZE: egui::Vec2 = egui::vec2(100.0, 26.0);
+pub use widgets::{kv_row_wrapped, styled_button};
 
-pub fn styled_button(ui: &mut egui::Ui, label: impl Into<egui::WidgetText>) -> egui::Response {
-    ui.add_sized(BUTTON_SIZE, egui::Button::new(label).min_size(BUTTON_SIZE))
-}
+pub const BUTTON_SIZE: egui::Vec2 = egui::vec2(100.0, 26.0);

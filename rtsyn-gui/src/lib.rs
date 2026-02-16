@@ -3,88 +3,24 @@ use rtsyn_runtime::{LogicMessage, LogicSettings, LogicState};
 use rtsyn_runtime::spawn_runtime;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::process::{self, Command};
+use std::process;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use workspace::WorkspaceDefinition;
-
-// Helper to check if running with RT capabilities
-fn has_rt_capabilities() -> bool {
-    #[cfg(unix)]
-    unsafe {
-        let policy = libc::sched_getscheduler(0);
-        policy == libc::SCHED_FIFO || policy == libc::SCHED_RR
-    }
-    #[cfg(not(unix))]
-    false
-}
-
-// External file dialog using zenity
-fn zenity_file_dialog(mode: &str, filter: Option<&str>) -> Option<PathBuf> {
-    zenity_file_dialog_with_name(mode, filter, None)
-}
-
-fn zenity_file_dialog_with_name(
-    mode: &str,
-    filter: Option<&str>,
-    filename: Option<&str>,
-) -> Option<PathBuf> {
-    let mut cmd = Command::new("zenity");
-    cmd.arg("--file-selection");
-
-    match mode {
-        "save" => {
-            cmd.arg("--save");
-        }
-        "folder" => {
-            cmd.arg("--directory");
-        }
-        _ => {} // open file is default
-    }
-
-    if let Some(f) = filter {
-        cmd.arg("--file-filter").arg(f);
-    }
-
-    if let Some(name) = filename {
-        cmd.arg("--filename").arg(name);
-    }
-
-    cmd.output().ok().and_then(|output| {
-        if output.status.success() {
-            let path_string = String::from_utf8_lossy(&output.stdout);
-            let path_str = path_string.trim();
-            if !path_str.is_empty() {
-                Some(PathBuf::from(path_str))
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    })
-}
-
-// Helper function to spawn file dialogs that work with RT
-fn spawn_file_dialog_thread<F, T>(f: F) -> std::thread::JoinHandle<T>
-where
-    F: FnOnce() -> T + Send + 'static,
-    T: Send + 'static,
-{
-    std::thread::spawn(f)
-}
 use workspace::{input_sum, input_sum_any, ConnectionDefinition, WorkspaceSettings};
 
 // Operation modules
 mod connection_operations;
 mod dialog_polling;
+mod helpers;
 mod plugin_operations;
 mod workspace_operations;
 
 // Core modules
 mod daemon_viewer;
 mod file_dialogs;
+mod formatting;
 mod notification_handler;
 mod notifications;
 mod plotter;
@@ -95,8 +31,10 @@ mod state_sync;
 mod ui;
 mod ui_state;
 mod utils;
+mod workspace_manager;
 
 use file_dialogs::FileDialogManager;
+use helpers::{has_rt_capabilities, spawn_file_dialog_thread, zenity_file_dialog, zenity_file_dialog_with_name};
 use notification_handler::NotificationHandler;
 use plotter::LivePlotter;
 use plotter_manager::PlotterManager;
@@ -241,6 +179,48 @@ pub(crate) struct WorkspaceSettingsDraft {
     max_integration_steps: usize,
 }
 
+/// Initializes and runs the RTSyn GUI application with automatic runtime spawning.
+/// 
+/// This is the main entry point for the RTSyn GUI application. It handles two
+/// execution modes: daemon plugin viewer mode and normal application mode.
+/// In normal mode, it spawns the logic runtime and initializes the GUI.
+/// 
+/// # Parameters
+/// 
+/// * `config` - GUI configuration specifying window title, dimensions, and other settings
+/// 
+/// # Returns
+/// 
+/// * `Ok(())` - GUI application completed successfully
+/// * `Err(GuiError)` - GUI initialization or runtime error occurred
+/// 
+/// # Execution Modes
+/// 
+/// ## Daemon Plugin Viewer Mode
+/// Activated when environment variables are set:
+/// - `RTSYN_DAEMON_VIEW_PLUGIN_ID` - Plugin ID to view
+/// - `RTSYN_DAEMON_SOCKET` - Socket path (defaults to "/tmp/rtsyn-daemon.sock")
+/// 
+/// In this mode, the GUI connects to an existing daemon process to view a specific
+/// plugin's interface rather than running a full application instance.
+/// 
+/// ## Normal Application Mode
+/// 1. Spawns the logic runtime using `spawn_runtime()`
+/// 2. Creates communication channels between GUI and runtime
+/// 3. Delegates to `run_gui_with_runtime()` for GUI initialization
+/// 
+/// # Error Handling
+/// 
+/// - Runtime spawn failures cause immediate process termination with error message
+/// - GUI initialization errors are propagated as `GuiError::Gui`
+/// - Environment variable parsing errors fall back to normal mode
+/// 
+/// # Side Effects
+/// 
+/// - May spawn background runtime threads
+/// - Creates GUI window and event loop
+/// - In daemon mode, establishes socket connection to existing daemon
+/// - On runtime failure, prints error and calls `process::exit(1)`
 pub fn run_gui(config: GuiConfig) -> Result<(), GuiError> {
     if let Ok(id_str) = std::env::var("RTSYN_DAEMON_VIEW_PLUGIN_ID") {
         if let Ok(plugin_id) = id_str.parse::<u64>() {
@@ -259,6 +239,48 @@ pub fn run_gui(config: GuiConfig) -> Result<(), GuiError> {
     run_gui_with_runtime(config, logic_tx, logic_state_rx)
 }
 
+/// Runs the RTSyn GUI application with pre-existing runtime communication channels.
+/// 
+/// This function initializes and runs the eframe-based GUI application using provided
+/// communication channels to an already-running logic runtime. It configures the
+/// GUI framework, sets up fonts, and creates the main application instance.
+/// 
+/// # Parameters
+/// 
+/// * `config` - GUI configuration containing window title, dimensions, and display settings
+/// * `logic_tx` - Sender channel for sending messages to the logic runtime
+/// * `logic_state_rx` - Receiver channel for receiving state updates from the logic runtime
+/// 
+/// # Returns
+/// 
+/// * `Ok(())` - GUI application completed successfully (user closed window)
+/// * `Err(GuiError::Gui)` - eframe initialization or runtime error occurred
+/// 
+/// # GUI Framework Setup
+/// 
+/// 1. **Window Configuration**: Creates native window with specified dimensions
+/// 2. **VSync Disabled**: Prevents hangs and lag on occluded windows
+/// 3. **Font Setup**: Loads FontAwesome icons for UI elements
+/// 4. **Application Creation**: Instantiates `GuiApp` with runtime channels
+/// 
+/// # Font Configuration
+/// 
+/// Embeds and configures FontAwesome solid icons (fa-solid-900.ttf) for use in
+/// buttons and UI elements. The font is added to the proportional font family
+/// to enable icon rendering alongside text.
+/// 
+/// # Application Lifecycle
+/// 
+/// - Creates eframe native options with custom viewport settings
+/// - Disables VSync to prevent performance issues with window occlusion
+/// - Sets up font definitions including embedded FontAwesome icons
+/// - Instantiates GuiApp with runtime communication channels
+/// - Runs the event loop until application termination
+/// 
+/// # Error Propagation
+/// 
+/// eframe errors are wrapped in `GuiError::Gui` and propagated to the caller.
+/// The error message includes the original eframe error description.
 pub fn run_gui_with_runtime(
     config: GuiConfig,
     logic_tx: Sender<LogicMessage>,
@@ -352,6 +374,56 @@ struct GuiApp {
 }
 
 impl GuiApp {
+    /// Creates a new GuiApp instance with runtime communication channels.
+    /// 
+    /// This constructor initializes all application state, managers, and UI components
+    /// required for the RTSyn GUI. It establishes communication with the logic runtime,
+    /// sets up plugin and workspace management, and configures initial application state.
+    /// 
+    /// # Parameters
+    /// 
+    /// * `logic_tx` - Sender channel for communicating with the logic runtime
+    /// * `logic_state_rx` - Receiver channel for runtime state updates
+    /// 
+    /// # Returns
+    /// 
+    /// A fully initialized `GuiApp` instance ready for use with eframe.
+    /// 
+    /// # Initialization Process
+    /// 
+    /// ## Manager Setup
+    /// 1. **PluginManager**: Manages installed plugins and library paths
+    /// 2. **WorkspaceManager**: Handles workspace loading/saving and current workspace state
+    /// 3. **FileDialogManager**: Manages asynchronous file dialog operations
+    /// 4. **PlotterManager**: Coordinates live plotting windows and data
+    /// 5. **StateSync**: Synchronizes state between GUI and logic runtime
+    /// 6. **NotificationHandler**: Manages user notifications and messages
+    /// 7. **PluginBehaviorManager**: Caches plugin behavior and capabilities
+    /// 
+    /// ## State Initialization
+    /// - Detects available CPU cores for runtime configuration
+    /// - Initializes UI state groups for different dialog and window types
+    /// - Sets up default timing parameters (1000 Hz frequency, 1ms period)
+    /// - Configures core selection (defaults to core 0 if available)
+    /// - Initializes empty collections for plugin positions, connections, etc.
+    /// 
+    /// ## Plugin Library Integration
+    /// - Refreshes plugin library paths from installed plugins
+    /// - Updates workspace plugins with current library paths
+    /// - Ensures plugin configurations include library_path entries
+    /// 
+    /// ## Post-Initialization Tasks
+    /// - Processes and displays plugin compatibility warnings
+    /// - Refreshes installed plugin metadata cache
+    /// - Applies current workspace settings to runtime
+    /// - Synchronizes plugin ID generation with existing workspace
+    /// 
+    /// # Side Effects
+    /// 
+    /// - Modifies plugin configurations to include library paths
+    /// - Displays compatibility warnings as notifications
+    /// - Sends initial settings to logic runtime
+    /// - May trigger plugin behavior caching for installed plugins
     fn new_with_runtime(
         logic_tx: Sender<LogicMessage>,
         logic_state_rx: Receiver<LogicState>,
@@ -453,12 +525,74 @@ impl GuiApp {
         app
     }
 
+    /// Calculates the center position for a window of given size within the available screen area.
+    /// 
+    /// This utility function computes the top-left corner position needed to center a window
+    /// of specified dimensions within the current egui context's available rectangle.
+    /// 
+    /// # Parameters
+    /// 
+    /// * `ctx` - egui context providing screen dimensions and available area
+    /// * `size` - Desired window size as Vec2 (width, height)
+    /// 
+    /// # Returns
+    /// 
+    /// * `egui::Pos2` - Top-left corner position to center the window
+    /// 
+    /// # Calculation
+    /// 
+    /// 1. Gets the available rectangle from the egui context
+    /// 2. Finds the center point of the available area
+    /// 3. Subtracts half the window size to get the top-left corner
+    /// 
+    /// # Usage
+    /// 
+    /// Typically used when opening modal dialogs or popup windows to ensure
+    /// they appear centered on screen regardless of the main window size.
+    /// 
+    /// ```rust
+    /// let window_size = egui::vec2(400.0, 300.0);
+    /// let center_pos = GuiApp::center_window(ctx, window_size);
+    /// egui::Window::new("Dialog")
+    ///     .default_pos(center_pos)
+    ///     .show(ctx, |ui| { /* window content */ });
+    /// ```
     fn center_window(ctx: &egui::Context, size: egui::Vec2) -> egui::Pos2 {
         let rect = ctx.available_rect();
         let center = rect.center();
         center - size * 0.5
     }
 
+    /// Synchronizes the plugin manager's next ID counter with the current workspace.
+    /// 
+    /// This method ensures that newly created plugins receive unique IDs by updating
+    /// the plugin manager's internal counter to be higher than any existing plugin ID
+    /// in the current workspace.
+    /// 
+    /// # Purpose
+    /// 
+    /// Prevents ID collisions when:
+    /// - Loading workspaces with existing plugins
+    /// - Adding new plugins to workspaces with gaps in ID sequences
+    /// - Ensuring consistent ID generation across application sessions
+    /// 
+    /// # Implementation
+    /// 
+    /// 1. Finds the maximum plugin ID currently used in the workspace
+    /// 2. Updates the plugin manager's next_id counter accordingly
+    /// 3. Ensures future plugin creation uses non-conflicting IDs
+    /// 
+    /// # Side Effects
+    /// 
+    /// - Modifies the plugin manager's internal ID generation state
+    /// - May skip ID numbers to avoid conflicts with existing plugins
+    /// 
+    /// # Usage Context
+    /// 
+    /// Called during:
+    /// - Workspace loading operations
+    /// - Application initialization
+    /// - Plugin management operations that might affect ID sequences
     fn sync_next_plugin_id(&mut self) {
         let max_id = self
             .workspace_manager
@@ -470,10 +604,83 @@ impl GuiApp {
         self.plugin_manager.sync_next_plugin_id(max_id);
     }
 
+    /// Marks the current workspace as modified and needing to be saved.
+    /// 
+    /// This method sets the workspace dirty flag, indicating that changes have been made
+    /// to the workspace configuration that should be persisted to disk. The dirty flag
+    /// is used to trigger automatic saving and to warn users about unsaved changes.
+    /// 
+    /// # Purpose
+    /// 
+    /// - Tracks workspace modifications for save operations
+    /// - Enables automatic workspace synchronization with runtime
+    /// - Provides user feedback about unsaved changes
+    /// 
+    /// # Triggers Automatic Actions
+    /// 
+    /// When the workspace is marked dirty:
+    /// 1. The main update loop detects the dirty flag
+    /// 2. Workspace changes are sent to the logic runtime
+    /// 3. The dirty flag is cleared after successful synchronization
+    /// 
+    /// # Usage Context
+    /// 
+    /// Called whenever workspace state changes:
+    /// - Adding/removing plugins
+    /// - Modifying plugin configurations
+    /// - Changing connections between plugins
+    /// - Updating workspace settings
+    /// - Modifying plugin positions or properties
+    /// 
+    /// # Side Effects
+    /// 
+    /// - Sets `workspace_manager.workspace_dirty = true`
+    /// - Triggers workspace synchronization in next update cycle
     fn mark_workspace_dirty(&mut self) {
         self.workspace_manager.mark_dirty();
     }
 
+    /// Sends a restart command to the logic runtime for the specified plugin.
+    /// 
+    /// This method requests that the logic runtime restart a specific plugin,
+    /// which involves stopping the plugin's execution, cleaning up its state,
+    /// and then starting it again with its current configuration.
+    /// 
+    /// # Parameters
+    /// 
+    /// * `plugin_id` - Unique identifier of the plugin to restart
+    /// 
+    /// # Runtime Communication
+    /// 
+    /// Sends a `LogicMessage::RestartPlugin(plugin_id)` message to the logic runtime
+    /// via the `logic_tx` channel. The runtime handles the actual restart process
+    /// asynchronously.
+    /// 
+    /// # Error Handling
+    /// 
+    /// Channel send errors are silently ignored using `let _ = ...` pattern.
+    /// This prevents GUI crashes if the runtime has terminated or the channel
+    /// is disconnected.
+    /// 
+    /// # Plugin Restart Process (Runtime Side)
+    /// 
+    /// 1. **Stop Phase**: Gracefully stops the plugin's execution
+    /// 2. **Cleanup Phase**: Releases plugin resources and clears state
+    /// 3. **Reload Phase**: Reloads plugin library and configuration
+    /// 4. **Start Phase**: Initializes and starts the plugin with current config
+    /// 
+    /// # Usage Context
+    /// 
+    /// Called when:
+    /// - User clicks restart button in plugin UI
+    /// - Plugin configuration changes require restart
+    /// - Plugin encounters errors and needs recovery
+    /// - Plugin library is updated and needs reloading
+    /// 
+    /// # Asynchronous Operation
+    /// 
+    /// The restart operation is asynchronous - this method returns immediately
+    /// while the actual restart happens in the background runtime.
     fn restart_plugin(&mut self, plugin_id: u64) {
         let _ = self
             .state_sync
@@ -481,18 +688,181 @@ impl GuiApp {
             .send(LogicMessage::RestartPlugin(plugin_id));
     }
 
+    /// Converts a plugin kind identifier to a human-readable display name.
+    /// 
+    /// This method transforms internal plugin type identifiers (typically snake_case)
+    /// into user-friendly display names suitable for UI presentation.
+    /// 
+    /// # Parameters
+    /// 
+    /// * `kind` - Internal plugin kind identifier (e.g., "live_plotter", "csv_recorder")
+    /// 
+    /// # Returns
+    /// 
+    /// * `String` - Human-readable display name for the plugin kind
+    /// 
+    /// # Examples
+    /// 
+    /// ```rust
+    /// assert_eq!(GuiApp::display_kind("live_plotter"), "Live Plotter");
+    /// assert_eq!(GuiApp::display_kind("csv_recorder"), "CSV Recorder");
+    /// assert_eq!(GuiApp::display_kind("pid_controller"), "PID Controller");
+    /// ```
+    /// 
+    /// # Implementation
+    /// 
+    /// Delegates to `PluginManager::display_kind()` which handles the actual
+    /// transformation logic, typically:
+    /// - Converting snake_case to Title Case
+    /// - Expanding abbreviations (csv -> CSV)
+    /// - Adding proper spacing and capitalization
+    /// 
+    /// # Usage Context
+    /// 
+    /// Used throughout the UI for:
+    /// - Plugin selection dialogs
+    /// - Plugin card titles
+    /// - Menu items and tooltips
+    /// - Error messages and notifications
     fn display_kind(kind: &str) -> String {
         PluginManager::display_kind(kind)
     }
 
+    /// Displays a general information notification to the user.
+    /// 
+    /// This method creates and displays a non-modal information dialog with the
+    /// specified title and message. The notification appears as an overlay that
+    /// the user can dismiss.
+    /// 
+    /// # Parameters
+    /// 
+    /// * `title` - Title text displayed in the notification header
+    /// * `message` - Main message content to display to the user
+    /// 
+    /// # Notification Behavior
+    /// 
+    /// - **Non-blocking**: Does not prevent user interaction with the main UI
+    /// - **Dismissible**: User can close the notification manually
+    /// - **Overlay**: Appears on top of the main application window
+    /// - **General scope**: Not associated with any specific plugin
+    /// 
+    /// # Usage Context
+    /// 
+    /// Appropriate for:
+    /// - Workspace operation results (save/load success/failure)
+    /// - Plugin installation/uninstallation status
+    /// - General application status updates
+    /// - Compatibility warnings
+    /// - File operation results
+    /// 
+    /// # Implementation
+    /// 
+    /// Delegates to `NotificationHandler::show_info()` which manages the
+    /// notification queue and display logic.
+    /// 
+    /// # Example Usage
+    /// 
+    /// ```rust
+    /// self.show_info("Workspace", "Workspace saved successfully");
+    /// self.show_info("Plugin Error", "Failed to load plugin library");
+    /// self.show_info("Export Complete", "UML diagram exported to file");
+    /// ```
     fn show_info(&mut self, title: &str, message: &str) {
         self.notification_handler.show_info(title, message);
     }
 
+    /// Displays a plugin-specific information notification to the user.
+    /// 
+    /// This method creates and displays an information notification that is
+    /// associated with a specific plugin. The notification includes context
+    /// about which plugin generated the message.
+    /// 
+    /// # Parameters
+    /// 
+    /// * `plugin_id` - Unique identifier of the plugin associated with this notification
+    /// * `title` - Title text displayed in the notification header
+    /// * `message` - Main message content to display to the user
+    /// 
+    /// # Plugin Context
+    /// 
+    /// The notification system uses the plugin_id to:
+    /// - Associate the message with a specific plugin instance
+    /// - Potentially group related notifications
+    /// - Provide context for debugging and troubleshooting
+    /// - Enable plugin-specific notification filtering or handling
+    /// 
+    /// # Usage Context
+    /// 
+    /// Appropriate for:
+    /// - Plugin-specific error messages
+    /// - Plugin state change notifications
+    /// - Plugin configuration validation results
+    /// - Plugin execution status updates
+    /// - Plugin-generated warnings or alerts
+    /// 
+    /// # Implementation
+    /// 
+    /// Delegates to `NotificationHandler::show_plugin_info()` which handles
+    /// plugin-specific notification logic and may include additional context
+    /// such as plugin name or type in the display.
+    /// 
+    /// # Example Usage
+    /// 
+    /// ```rust
+    /// self.show_plugin_info(plugin_id, "Configuration", "Invalid parameter value");
+    /// self.show_plugin_info(plugin_id, "Status", "Plugin started successfully");
+    /// self.show_plugin_info(plugin_id, "Warning", "Input signal out of range");
+    /// ```
     fn show_plugin_info(&mut self, plugin_id: u64, title: &str, message: &str) {
         self.notification_handler.show_plugin_info(plugin_id, title, message);
     }
 
+    /// Displays a confirmation dialog requiring user action before proceeding.
+    /// 
+    /// This method creates a modal confirmation dialog that blocks user interaction
+    /// with the main UI until the user either confirms or cancels the action.
+    /// The dialog presents a clear choice between proceeding with a potentially
+    /// destructive or significant operation and canceling it.
+    /// 
+    /// # Parameters
+    /// 
+    /// * `title` - Title text displayed in the dialog header
+    /// * `message` - Detailed message explaining what will happen if confirmed
+    /// * `action_label` - Text for the confirmation button (e.g., "Delete", "Remove")
+    /// * `action` - The specific action to perform if user confirms
+    /// 
+    /// # Dialog Behavior
+    /// 
+    /// - **Modal**: Blocks interaction with main UI until dismissed
+    /// - **Two choices**: User can confirm (perform action) or cancel
+    /// - **Persistent**: Remains open until user makes a choice
+    /// - **Action-specific**: Button text reflects the specific operation
+    /// 
+    /// # Confirmation Actions
+    /// 
+    /// The `action` parameter specifies what happens when confirmed:
+    /// - `ConfirmAction::RemovePlugin(id)` - Remove plugin from workspace
+    /// - `ConfirmAction::UninstallPlugin(index)` - Uninstall plugin from system
+    /// - `ConfirmAction::DeleteWorkspace(path)` - Delete workspace file
+    /// 
+    /// # Usage Context
+    /// 
+    /// Used for potentially destructive operations:
+    /// - Deleting workspaces or plugins
+    /// - Uninstalling plugins
+    /// - Removing connections
+    /// - Clearing data or resetting state
+    /// 
+    /// # Example Usage
+    /// 
+    /// ```rust
+    /// self.show_confirm(
+    ///     "Delete Plugin",
+    ///     "This will permanently remove the plugin from the workspace.",
+    ///     "Delete",
+    ///     ConfirmAction::RemovePlugin(plugin_id)
+    /// );
+    /// ```
     fn show_confirm(
         &mut self,
         title: &str,
@@ -507,6 +877,56 @@ impl GuiApp {
         self.confirm_dialog.open = true;
     }
 
+    /// Executes the confirmed action after user approval in a confirmation dialog.
+    /// 
+    /// This method is called when the user clicks the confirmation button in a
+    /// confirmation dialog. It performs the actual operation that was being
+    /// confirmed, handling different types of actions appropriately.
+    /// 
+    /// # Parameters
+    /// 
+    /// * `action` - The specific action to perform, as confirmed by the user
+    /// 
+    /// # Supported Actions
+    /// 
+    /// ## RemovePlugin(plugin_id)
+    /// - Finds the plugin in the current workspace by ID
+    /// - Removes it from the workspace plugin list
+    /// - Updates workspace state and marks as dirty
+    /// 
+    /// ## UninstallPlugin(index)
+    /// - Removes the plugin from the system installation
+    /// - Deletes plugin files and metadata
+    /// - Updates the installed plugins database
+    /// 
+    /// ## DeleteWorkspace(path)
+    /// - Loads workspace metadata to get the display name
+    /// - Deletes the workspace file from disk
+    /// - Clears current workspace if it was the deleted one
+    /// - Refreshes the workspace list
+    /// - Shows success/failure notification
+    /// 
+    /// # Error Handling
+    /// 
+    /// - Plugin removal: Silently handles missing plugins
+    /// - Workspace deletion: Shows error notifications for failures
+    /// - Workspace name extraction: Falls back to filename if loading fails
+    /// 
+    /// # Side Effects
+    /// 
+    /// - May modify workspace state and trigger saves
+    /// - May clear plotters and reset UI state
+    /// - May delete files from disk
+    /// - Shows notifications to inform user of results
+    /// - Refreshes relevant UI lists and displays
+    /// 
+    /// # Post-Action Cleanup
+    /// 
+    /// After workspace deletion:
+    /// - Clears plotter windows if no workspace is loaded
+    /// - Reapplies workspace settings
+    /// - Clears plugin position cache
+    /// - Rescans available workspaces
     fn perform_confirm_action(&mut self, action: ConfirmAction) {
         match action {
             ConfirmAction::RemovePlugin(plugin_id) => {
@@ -550,6 +970,63 @@ impl GuiApp {
         }
     }
 
+    /// Polls and processes state updates from the logic runtime.
+    /// 
+    /// This method is called every frame to receive and process state updates from
+    /// the logic runtime. It handles real-time data flow, plotter updates, and
+    /// maintains synchronized state between the GUI and runtime components.
+    /// 
+    /// # Runtime Communication Flow
+    /// 
+    /// 1. **Non-blocking Poll**: Uses `try_recv()` to avoid blocking the GUI thread
+    /// 2. **State Merging**: Combines multiple state updates received since last poll
+    /// 3. **Sample Aggregation**: Merges plotter samples from multiple updates
+    /// 4. **Latest State**: Keeps only the most recent state for current values
+    /// 
+    /// # Data Processing
+    /// 
+    /// ## Plotter Sample Merging
+    /// - Collects samples from all received state updates
+    /// - Groups samples by plugin ID
+    /// - Preserves chronological order for accurate plotting
+    /// 
+    /// ## State Update Handling
+    /// - Extracts output values, input values, and internal variables
+    /// - Updates plotter displays with new sample data
+    /// - Applies output refresh rate limiting for performance
+    /// 
+    /// # Performance Optimization
+    /// 
+    /// ## Output Refresh Rate Limiting
+    /// - Limits GUI updates based on `output_refresh_hz` setting
+    /// - Prevents excessive UI updates that could impact performance
+    /// - Maintains smooth real-time display without overwhelming the GUI
+    /// 
+    /// ## Running Plugin Filtering
+    /// - Filters displayed values to only include running plugins
+    /// - Reduces UI clutter and improves performance
+    /// - Ensures stopped plugins don't show stale data
+    /// 
+    /// # State Synchronization
+    /// 
+    /// Updates the following synchronized state:
+    /// - `computed_outputs`: Current output values from running plugins
+    /// - `input_values`: Current input values for running plugins  
+    /// - `internal_variable_values`: Internal plugin state variables
+    /// - `viewer_values`: Values for plugin viewer displays
+    /// - `last_output_update`: Timestamp for rate limiting
+    /// 
+    /// # Plotter Integration
+    /// 
+    /// - Calls `update_plotters()` with merged sample data
+    /// - Handles real-time plotting updates
+    /// - Manages plotter refresh rates and display optimization
+    /// 
+    /// # Thread Safety
+    /// 
+    /// This method is designed to be called from the main GUI thread and uses
+    /// non-blocking channel operations to avoid interfering with real-time
+    /// runtime operations.
     fn poll_logic_state(&mut self) {
         let mut latest: Option<LogicState> = None;
         let mut merged_samples: HashMap<u64, Vec<(u64, Vec<f64>)>> = HashMap::new();
@@ -606,6 +1083,52 @@ impl GuiApp {
         }
     }
 
+    /// Retrieves the available input or output ports for a specific plugin kind.
+    /// 
+    /// This method looks up the port definitions for a given plugin type from
+    /// the installed plugin metadata. It provides the list of available ports
+    /// that can be used for connections to/from plugins of this type.
+    /// 
+    /// # Parameters
+    /// 
+    /// * `kind` - Plugin type identifier (e.g., "live_plotter", "pid_controller")
+    /// * `inputs` - If true, returns input ports; if false, returns output ports
+    /// 
+    /// # Returns
+    /// 
+    /// * `Vec<String>` - List of available port names for the specified plugin kind
+    /// * Empty vector if plugin kind is not found or has no ports of the requested type
+    /// 
+    /// # Port Discovery Process
+    /// 
+    /// 1. Searches installed plugins for matching plugin kind
+    /// 2. Retrieves cached metadata for input or output ports
+    /// 3. Returns the appropriate port list based on the `inputs` parameter
+    /// 
+    /// # Metadata Source
+    /// 
+    /// Port information comes from:
+    /// - Plugin manifest files
+    /// - Cached plugin behavior analysis
+    /// - Runtime plugin introspection
+    /// 
+    /// # Usage Context
+    /// 
+    /// Used for:
+    /// - Connection editor port selection
+    /// - Validation of connection endpoints
+    /// - UI generation for plugin configuration
+    /// - Automatic connection suggestions
+    /// 
+    /// # Example Usage
+    /// 
+    /// ```rust
+    /// let inputs = self.ports_for_kind("pid_controller", true);
+    /// // Returns: ["setpoint", "process_variable", "enable"]
+    /// 
+    /// let outputs = self.ports_for_kind("pid_controller", false);  
+    /// // Returns: ["control_output", "error"]
+    /// ```
     fn ports_for_kind(&self, kind: &str, inputs: bool) -> Vec<String> {
         self.plugin_manager
             .installed_plugins
@@ -722,6 +1245,51 @@ impl GuiApp {
         self.ports_for_kind(&plugin.kind, inputs)
     }
 
+    /// Generates a default CSV file path with timestamp for data recording.
+    /// 
+    /// This method creates a default file path for CSV data recording that includes
+    /// a timestamp to ensure unique filenames and organized data storage.
+    /// 
+    /// # Returns
+    /// 
+    /// * `String` - Complete file path for CSV recording with timestamp
+    /// 
+    /// # Path Generation Strategy
+    /// 
+    /// ## Base Directory
+    /// - Uses `$HOME/rtsyn-recorded` if HOME environment variable is available
+    /// - Falls back to `./rtsyn-recorded` in current directory
+    /// 
+    /// ## Timestamp Format
+    /// - Uses Unix timestamp converted to day-hour-minute-second format
+    /// - Format: `{day}-{hour:02}-{minute:02}-{second:02}.csv`
+    /// - Day counter starts from Unix epoch (days since 1970-01-01)
+    /// - Hours, minutes, seconds are zero-padded to 2 digits
+    /// 
+    /// # Example Output
+    /// 
+    /// ```
+    /// /home/user/rtsyn-recorded/19724-14-30-45.csv
+    /// ```
+    /// 
+    /// This represents:
+    /// - Day 19724 since Unix epoch
+    /// - 14:30:45 (2:30:45 PM)
+    /// 
+    /// # Usage Context
+    /// 
+    /// Used as default filename for:
+    /// - CSV recorder plugin configuration
+    /// - Data export operations
+    /// - Automatic recording session naming
+    /// - File dialog default suggestions
+    /// 
+    /// # Benefits
+    /// 
+    /// - **Unique filenames**: Timestamp prevents overwrites
+    /// - **Chronological ordering**: Files sort naturally by creation time
+    /// - **Organized storage**: Dedicated directory for recorded data
+    /// - **Cross-platform**: Works on Unix-like systems and Windows
     fn default_csv_path() -> String {
         let base = std::env::var("HOME")
             .map(|home| PathBuf::from(home).join("rtsyn-recorded"))
@@ -778,6 +1346,79 @@ impl GuiApp {
         values
     }
 
+    /// Updates all live plotter instances with new sample data and manages plotter lifecycle.
+    /// 
+    /// This method processes real-time data for all live plotter plugins, updating their
+    /// displays with new samples and managing their configuration. It also handles
+    /// plotter lifecycle management and UI refresh rate optimization.
+    /// 
+    /// # Parameters
+    /// 
+    /// * `tick` - Current runtime tick counter for timestamp calculation
+    /// * `outputs` - Current output values from all plugins
+    /// * `samples` - New sample data grouped by plugin ID with tick timestamps
+    /// 
+    /// # Plotter Processing Pipeline
+    /// 
+    /// ## 1. Plugin Discovery
+    /// - Identifies all "live_plotter" plugins in the workspace
+    /// - Tracks active plotter IDs for lifecycle management
+    /// 
+    /// ## 2. Configuration Update
+    /// - Extracts plotter configuration (input count, refresh rate, window size)
+    /// - Applies preview settings overrides if available
+    /// - Updates series names based on connection topology
+    /// 
+    /// ## 3. Data Processing
+    /// - Calculates input values for each plotter based on connections
+    /// - Processes sample data with intelligent decimation for performance
+    /// - Updates plotter displays with new data points
+    /// 
+    /// # Sample Decimation Strategy
+    /// 
+    /// To maintain performance with high-frequency data:
+    /// 
+    /// ## Budget-Based Selection
+    /// - Open plotters: 8192 sample budget for detailed display
+    /// - Closed plotters: 1024 sample budget for background processing
+    /// 
+    /// ## Extrema Preservation
+    /// - Preserves minimum and maximum values in each chunk
+    /// - Prevents loss of important signal features (spikes, peaks)
+    /// - Maintains visual accuracy while reducing data volume
+    /// 
+    /// ## Chronological Ordering
+    /// - Maintains sample order for accurate time-series display
+    /// - Removes duplicates while preserving temporal relationships
+    /// 
+    /// # Plotter State Management
+    /// 
+    /// ## Window Size Configuration
+    /// - Sets effective window size before configuration updates
+    /// - Handles preview settings overrides
+    /// - Ensures minimum window size for stability
+    /// 
+    /// ## Refresh Rate Tracking
+    /// - Tracks maximum refresh rate across all open plotters
+    /// - Updates UI refresh rate to match fastest plotter
+    /// - Optimizes performance by avoiding unnecessary updates
+    /// 
+    /// # Lifecycle Management
+    /// 
+    /// ## Plotter Creation
+    /// - Creates new plotter instances for new live_plotter plugins
+    /// - Initializes with appropriate plugin ID and default settings
+    /// 
+    /// ## Plotter Cleanup
+    /// - Removes plotters for plugins that no longer exist
+    /// - Prevents memory leaks and stale references
+    /// 
+    /// # Performance Considerations
+    /// 
+    /// - Only processes samples for running plugins
+    /// - Applies different processing levels based on plotter visibility
+    /// - Uses intelligent decimation to handle high-frequency data
+    /// - Updates UI refresh rate based on actual plotter requirements
     fn update_plotters(
         &mut self,
         tick: u64,
@@ -981,6 +1622,66 @@ impl GuiApp {
         }
     }
 
+    /// Sends updated runtime settings to the logic runtime and updates local state.
+    /// 
+    /// This method computes the current runtime configuration from GUI settings
+    /// and transmits it to the logic runtime. It handles timing configuration,
+    /// CPU core assignment, and UI refresh rate coordination.
+    /// 
+    /// # Configuration Computation
+    /// 
+    /// ## Timing Settings
+    /// - Computes period in seconds from current frequency/period settings
+    /// - Determines time scale and label based on selected units
+    /// - Calculates appropriate time scaling for display purposes
+    /// 
+    /// ## CPU Core Selection
+    /// - Converts boolean core selection array to list of enabled core indices
+    /// - Ensures at least one core is selected for runtime execution
+    /// - Provides core affinity configuration for real-time performance
+    /// 
+    /// ## Integration Limits
+    /// - Sets maximum integration steps for real-time performance
+    /// - Prevents runaway calculations that could impact timing
+    /// 
+    /// # State Synchronization
+    /// 
+    /// Updates local state to match sent settings:
+    /// - `logic_period_seconds`: Period duration for timing calculations
+    /// - `logic_time_scale`: Scale factor for time display
+    /// - `logic_time_label`: Unit label for time axis displays
+    /// 
+    /// # Runtime Communication
+    /// 
+    /// Sends `LogicMessage::UpdateSettings` containing:
+    /// - `cores`: List of CPU core indices to use
+    /// - `period_seconds`: Execution period in seconds
+    /// - `time_scale`: Time scaling factor for displays
+    /// - `time_label`: Time unit label string
+    /// - `ui_hz`: UI refresh rate for plotter updates
+    /// - `max_integration_steps`: Safety limit for numerical integration
+    /// 
+    /// # Error Handling
+    /// 
+    /// Channel send errors are silently ignored to prevent GUI crashes
+    /// if the runtime has terminated or become disconnected.
+    /// 
+    /// # Usage Context
+    /// 
+    /// Called when:
+    /// - User changes timing settings in workspace settings dialog
+    /// - CPU core selection is modified
+    /// - Plotter refresh rates change and require UI rate updates
+    /// - Application initialization requires initial settings
+    /// - Workspace loading applies saved timing configuration
+    /// 
+    /// # Real-Time Considerations
+    /// 
+    /// The settings directly affect real-time performance:
+    /// - Period determines execution frequency and timing precision
+    /// - Core selection affects CPU affinity and scheduling
+    /// - Integration limits prevent timing violations
+    /// - UI refresh rate balances responsiveness with performance
     fn send_logic_settings(&mut self) {
         let period_seconds = self.compute_period_seconds();
         let (_unit, time_scale, time_label) = Self::time_settings_from_selection(
@@ -1037,6 +1738,71 @@ impl GuiApp {
         }
     }
 
+    /// Applies workspace timing and core settings to the GUI and runtime.
+    /// 
+    /// This method loads the current workspace settings and applies them to both
+    /// the GUI state and the logic runtime. It handles timing configuration,
+    /// CPU core selection, and ensures consistent settings across the application.
+    /// 
+    /// # Settings Application Process
+    /// 
+    /// ## 1. Timing Configuration
+    /// - Sets workspace timing tab to Frequency mode by default
+    /// - Applies frequency value and unit from workspace settings
+    /// - Applies period value and unit from workspace settings
+    /// - Converts string units to enum types for internal use
+    /// 
+    /// ## 2. CPU Core Selection
+    /// - Maps workspace core indices to boolean selection array
+    /// - Ensures at least one core is selected (defaults to core 0)
+    /// - Handles cases where workspace specifies unavailable cores
+    /// 
+    /// ## 3. Runtime Synchronization
+    /// - Sends updated settings to logic runtime via `send_logic_settings()`
+    /// - Ensures runtime uses current timing and core configuration
+    /// 
+    /// # Unit Conversion
+    /// 
+    /// ## Frequency Units
+    /// - "hz" → `FrequencyUnit::Hz`
+    /// - "khz" → `FrequencyUnit::KHz`  
+    /// - "mhz" → `FrequencyUnit::MHz`
+    /// - Default: Hz for unrecognized values
+    /// 
+    /// ## Period Units
+    /// - "ns" → `PeriodUnit::Ns`
+    /// - "us" → `PeriodUnit::Us`
+    /// - "ms" → `PeriodUnit::Ms`
+    /// - "s" → `PeriodUnit::S`
+    /// - Default: Ms for unrecognized values
+    /// 
+    /// # Core Selection Logic
+    /// 
+    /// - Creates boolean array matching available CPU cores
+    /// - Sets true for cores specified in workspace settings
+    /// - Ensures at least core 0 is selected if no cores are specified
+    /// - Handles gracefully if workspace specifies more cores than available
+    /// 
+    /// # Usage Context
+    /// 
+    /// Called during:
+    /// - Application initialization
+    /// - Workspace loading operations
+    /// - Settings dialog application
+    /// - Workspace switching
+    /// 
+    /// # Side Effects
+    /// 
+    /// - Updates GUI timing display values
+    /// - Modifies core selection checkboxes
+    /// - Sends settings to logic runtime
+    /// - May trigger runtime reconfiguration
+    /// 
+    /// # Error Handling
+    /// 
+    /// - Gracefully handles invalid unit strings with sensible defaults
+    /// - Ensures at least one core is always selected
+    /// - Handles mismatched core counts between workspace and system
     fn apply_workspace_settings(&mut self) {
         let settings = self.workspace_manager.workspace.settings.clone();
         self.workspace_settings.tab = WorkspaceTimingTab::Frequency;
@@ -1128,6 +1894,88 @@ impl GuiApp {
 }
 
 impl eframe::App for GuiApp {
+    /// Main GUI update loop called by eframe for each frame.
+    /// 
+    /// This method implements the core GUI update cycle, handling user input,
+    /// processing runtime state updates, managing UI components, and rendering
+    /// the complete application interface.
+    /// 
+    /// # Parameters
+    /// 
+    /// * `ctx` - egui context providing input handling and rendering capabilities
+    /// * `_frame` - eframe frame reference (unused in current implementation)
+    /// 
+    /// # Update Cycle Overview
+    /// 
+    /// ## 1. Style Configuration
+    /// - Disables selectable labels to prevent unwanted text selection
+    /// - Configures UI interaction behavior
+    /// 
+    /// ## 2. Dialog Polling
+    /// - Polls all asynchronous file dialogs for completion
+    /// - Handles build, install, import, load, export operations
+    /// - Processes CSV path selection and plugin creation dialogs
+    /// - Updates plotter screenshot operations
+    /// 
+    /// ## 3. Runtime State Processing
+    /// - Polls logic runtime for state updates via `poll_logic_state()`
+    /// - Updates plotter displays with new data
+    /// - Synchronizes GUI state with runtime state
+    /// 
+    /// ## 4. Refresh Rate Management
+    /// - Calculates optimal refresh rate based on active plotters
+    /// - Requests appropriate repaint timing from egui
+    /// - Balances responsiveness with performance
+    /// 
+    /// ## 5. Workspace Synchronization
+    /// - Sends workspace updates to runtime when dirty flag is set
+    /// - Ensures runtime has current workspace configuration
+    /// - Clears dirty flag after successful synchronization
+    /// 
+    /// ## 6. Input Handling
+    /// - Processes Escape key for dialog dismissal
+    /// - Handles global keyboard shortcuts
+    /// - Manages dialog state transitions
+    /// 
+    /// ## 7. UI Rendering
+    /// - Renders top menu bar with workspace, plugin, and runtime menus
+    /// - Displays main central panel with plugin cards and connections
+    /// - Shows all active dialogs and windows
+    /// - Handles context menus and popup interactions
+    /// 
+    /// # Refresh Rate Strategy
+    /// 
+    /// ## Active Plotter Mode
+    /// - Uses maximum refresh rate from open plotters (minimum 1 Hz)
+    /// - Ensures smooth real-time data visualization
+    /// 
+    /// ## Idle Mode
+    /// - Uses 250ms refresh interval when window is not focused
+    /// - Reduces CPU usage when application is in background
+    /// 
+    /// # Dialog Management
+    /// 
+    /// Renders all possible dialogs and windows:
+    /// - Workspace management dialogs
+    /// - Plugin installation and configuration windows
+    /// - Connection editor and management interfaces
+    /// - Plotter preview and configuration dialogs
+    /// - Help and information displays
+    /// - Confirmation and notification overlays
+    /// 
+    /// # State Management
+    /// 
+    /// - Maintains window rectangle tracking for layout management
+    /// - Handles pending window focus requests
+    /// - Manages plugin selection and context menu state
+    /// - Coordinates between different UI components
+    /// 
+    /// # Performance Considerations
+    /// 
+    /// - Non-blocking runtime communication prevents GUI freezing
+    /// - Adaptive refresh rates optimize CPU usage
+    /// - Efficient dialog polling minimizes overhead
+    /// - Smart repaint requests reduce unnecessary rendering
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.style_mut(|style| {
             style.interaction.selectable_labels = false;

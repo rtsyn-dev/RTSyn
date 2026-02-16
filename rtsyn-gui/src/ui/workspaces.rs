@@ -1,3 +1,16 @@
+//! Workspace management and UI rendering functionality for RTSyn GUI.
+//!
+//! This module provides comprehensive workspace management capabilities including:
+//! - Workspace creation, loading, saving, and deletion
+//! - UML diagram generation and rendering with PlantUML integration
+//! - Runtime settings configuration and persistence
+//! - File dialog management for workspace operations
+//! - Help system and documentation display
+//! - Modal dialogs for user confirmation and information display
+//!
+//! The module handles both the UI rendering and the underlying workspace operations,
+//! integrating with the RTSyn core workspace system and runtime engine.
+
 use super::*;
 use crate::WindowFocus;
 use image::ImageEncoder;
@@ -10,6 +23,22 @@ use std::hash::{Hash, Hasher};
 use std::io::Read;
 
 impl GuiApp {
+    /// Requests UML diagram rendering from PlantUML web service.
+    ///
+    /// This function encodes the provided UML text using PlantUML deflate encoding
+    /// and sends a request to the PlantUML web service to render the diagram.
+    ///
+    /// # Parameters
+    /// - `uml`: The UML diagram text to be rendered
+    /// - `as_svg`: If true, requests SVG format; otherwise requests PNG format
+    ///
+    /// # Returns
+    /// - `Ok(Vec<u8>)`: The rendered diagram as bytes
+    /// - `Err(String)`: Error message if encoding, network request, or reading fails
+    ///
+    /// # Side Effects
+    /// - Makes HTTP request to PlantUML web service
+    /// - May block for up to 10 seconds waiting for response
     fn request_uml_render(&mut self, uml: &str, as_svg: bool) -> Result<Vec<u8>, String> {
         let encoded = plantuml_encoding::encode_plantuml_deflate(uml)
             .map_err(|err| format!("Failed to encode UML: {err:?}"))?;
@@ -27,6 +56,24 @@ impl GuiApp {
         Ok(bytes)
     }
 
+    /// Resizes a PNG image to the specified dimensions.
+    ///
+    /// This function decodes a PNG image from bytes, resizes it using Lanczos3 filtering
+    /// for high quality scaling, and re-encodes it as PNG with RGBA8 format.
+    ///
+    /// # Parameters
+    /// - `bytes`: The original PNG image data as bytes
+    /// - `width`: Target width in pixels
+    /// - `height`: Target height in pixels
+    ///
+    /// # Returns
+    /// - `Ok(Vec<u8>)`: The resized PNG image as bytes
+    /// - `Err(String)`: Error message if decoding, resizing, or encoding fails
+    ///
+    /// # Implementation Details
+    /// - Uses Lanczos3 filter for high-quality resampling
+    /// - Converts to RGBA8 format for consistent output
+    /// - Preserves alpha channel information
     fn resize_png(bytes: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
         let image = image::load_from_memory_with_format(bytes, image::ImageFormat::Png)
             .map_err(|err| format!("Failed to decode PNG: {err}"))?;
@@ -45,6 +92,27 @@ impl GuiApp {
         Ok(output)
     }
 
+    /// Starts asynchronous UML preview rendering in a background thread.
+    ///
+    /// This function initiates the rendering of a UML diagram preview by spawning
+    /// a background thread that handles the network request to PlantUML. It uses
+    /// content hashing to avoid redundant renders of the same UML content.
+    ///
+    /// # Parameters
+    /// - `uml`: The UML diagram text to render
+    ///
+    /// # Side Effects
+    /// - Sets `uml_preview_loading` to true
+    /// - Updates `uml_preview_hash` with content hash
+    /// - Clears any existing preview error and texture
+    /// - Spawns background thread for network operation
+    /// - Sets up channel receiver for async result handling
+    ///
+    /// # Implementation Details
+    /// - Uses DefaultHasher to generate content hash for caching
+    /// - Skips rendering if hash matches current preview and not loading
+    /// - Spawns thread to avoid blocking UI during network request
+    /// - Uses 10-second timeout for PlantUML service requests
     fn start_uml_preview_render(&mut self, uml: &str) {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         uml.hash(&mut hasher);
@@ -82,6 +150,27 @@ impl GuiApp {
         });
     }
 
+    /// Polls for completion of asynchronous UML preview rendering.
+    ///
+    /// This function checks if the background UML rendering thread has completed
+    /// and processes the result by either creating a texture for display or
+    /// setting an error message.
+    ///
+    /// # Parameters
+    /// - `ctx`: egui context for texture creation and UI updates
+    ///
+    /// # Side Effects
+    /// - Updates `uml_preview_loading` state
+    /// - Creates `uml_preview_texture` on successful render
+    /// - Sets `uml_preview_error` on render failure
+    /// - Clears receiver channel when processing completes
+    ///
+    /// # Implementation Details
+    /// - Uses try_recv() for non-blocking channel polling
+    /// - Validates hash to ensure result matches current request
+    /// - Converts PNG bytes to egui ColorImage and texture
+    /// - Uses LINEAR texture filtering for smooth scaling
+    /// - Handles both network and image decoding errors gracefully
     fn poll_uml_preview_render(&mut self, ctx: &egui::Context) {
         let Some(rx) = &self.uml_preview_rx else {
             return;
@@ -125,6 +214,22 @@ impl GuiApp {
         self.uml_preview_error = None;
     }
 
+    /// Opens a file dialog for loading workspace files.
+    ///
+    /// This function initiates an asynchronous file dialog for selecting workspace
+    /// files to load. It prevents multiple dialogs from being opened simultaneously
+    /// and uses platform-appropriate dialog implementations.
+    ///
+    /// # Side Effects
+    /// - Shows info message if dialog is already open
+    /// - Sets up channel receiver for dialog result
+    /// - Spawns background thread for file dialog operation
+    ///
+    /// # Implementation Details
+    /// - Uses zenity on systems with RT capabilities for better integration
+    /// - Falls back to rfd (Rust File Dialog) on other platforms
+    /// - Filters for JSON files (*.json) as workspace format
+    /// - Prevents concurrent dialog instances through state checking
     fn open_load_dialog(&mut self) {
         if self.file_dialogs.load_dialog_rx.is_some() {
             self.show_info("Workspace", "Load dialog already open.");
@@ -142,6 +247,21 @@ impl GuiApp {
         });
     }
 
+    /// Opens a file dialog for importing workspace files.
+    ///
+    /// This function initiates an asynchronous file dialog for selecting workspace
+    /// files to import. Similar to load dialog but used for different workflow contexts.
+    ///
+    /// # Side Effects
+    /// - Shows info message if dialog is already open
+    /// - Sets up channel receiver for dialog result
+    /// - Spawns background thread for file dialog operation
+    ///
+    /// # Implementation Details
+    /// - Uses zenity on systems with RT capabilities for better integration
+    /// - Falls back to rfd (Rust File Dialog) on other platforms
+    /// - Filters for JSON files (*.json) as workspace format
+    /// - Prevents concurrent dialog instances through state checking
     fn open_import_dialog(&mut self) {
         if self.file_dialogs.import_dialog_rx.is_some() {
             self.show_info("Workspace", "Import dialog already open.");
@@ -159,6 +279,27 @@ impl GuiApp {
         });
     }
 
+    /// Opens the workspace dialog in the specified mode.
+    ///
+    /// This function initializes and displays the workspace dialog for creating,
+    /// saving, or editing workspace metadata. It prepares the dialog state based
+    /// on the requested mode and sets up window focus handling.
+    ///
+    /// # Parameters
+    /// - `mode`: The dialog mode (New, Save, or Edit) determining dialog behavior
+    ///
+    /// # Side Effects
+    /// - Sets dialog mode and opens the dialog window
+    /// - Initializes input fields based on mode:
+    ///   - New: Clears name and description inputs
+    ///   - Save: Populates with current workspace data
+    ///   - Edit: Preserves existing dialog state
+    /// - Sets pending window focus for proper UI layering
+    ///
+    /// # Implementation Details
+    /// - New mode: Starts with empty fields for creating new workspace
+    /// - Save mode: Pre-fills with current workspace name and description
+    /// - Edit mode: Maintains existing dialog state for editing operations
     pub(crate) fn open_workspace_dialog(&mut self, mode: WorkspaceDialogMode) {
         self.workspace_dialog.mode = mode;
         match mode {
@@ -179,6 +320,22 @@ impl GuiApp {
         self.pending_window_focus = Some(WindowFocus::WorkspaceDialog);
     }
 
+    /// Opens the manage workspaces window.
+    ///
+    /// This function opens the workspace management interface that allows users
+    /// to view, load, edit, export, and delete existing workspaces. It initializes
+    /// the window state and triggers a workspace scan.
+    ///
+    /// # Side Effects
+    /// - Opens the manage workspaces window
+    /// - Clears any previously selected workspace
+    /// - Initiates workspace directory scanning
+    /// - Sets pending window focus for proper UI layering
+    ///
+    /// # Implementation Details
+    /// - Resets selection state to ensure clean interface
+    /// - Calls scan_workspaces() to refresh available workspace list
+    /// - Sets up window focus handling for modal behavior
     pub(crate) fn open_manage_workspaces(&mut self) {
         self.windows.manage_workspace_open = true;
         self.windows.manage_workspace_selected_index = None;
@@ -186,6 +343,22 @@ impl GuiApp {
         self.pending_window_focus = Some(WindowFocus::ManageWorkspaces);
     }
 
+    /// Opens the load workspaces window.
+    ///
+    /// This function opens the workspace loading interface that allows users
+    /// to browse and select workspaces for loading. It provides a simplified
+    /// interface focused on workspace selection and loading.
+    ///
+    /// # Side Effects
+    /// - Opens the load workspaces window
+    /// - Clears any previously selected workspace
+    /// - Initiates workspace directory scanning
+    /// - Sets pending window focus for proper UI layering
+    ///
+    /// # Implementation Details
+    /// - Resets selection state to ensure clean interface
+    /// - Calls scan_workspaces() to refresh available workspace list
+    /// - Sets up window focus handling for modal behavior
     pub(crate) fn open_load_workspaces(&mut self) {
         self.windows.load_workspace_open = true;
         self.windows.load_workspace_selected_index = None;
@@ -193,6 +366,29 @@ impl GuiApp {
         self.pending_window_focus = Some(WindowFocus::LoadWorkspaces);
     }
 
+    /// Renders the workspace dialog window for creating, saving, or editing workspaces.
+    ///
+    /// This function displays a modal dialog that allows users to input workspace
+    /// name and description. The dialog behavior changes based on the current mode
+    /// (New, Save, or Edit) and handles user interactions for workspace operations.
+    ///
+    /// # Parameters
+    /// - `ctx`: egui context for rendering UI elements and handling interactions
+    ///
+    /// # Side Effects
+    /// - Renders modal dialog window with input fields
+    /// - Updates workspace dialog state based on user input
+    /// - Handles dialog actions (Cancel, Save) and closes dialog appropriately
+    /// - Updates window focus and layering for proper modal behavior
+    /// - May trigger workspace creation, saving, or metadata updates
+    ///
+    /// # Implementation Details
+    /// - Creates fixed-size dialog window (420x260) centered on screen
+    /// - Provides text input fields for workspace name and description
+    /// - Applies custom styling for consistent visual appearance
+    /// - Handles window focus management and layer ordering
+    /// - Processes user actions through action variable and match statements
+    /// - Integrates with workspace manager for actual operations
     pub(crate) fn render_workspace_dialog(&mut self, ctx: &egui::Context) {
         if !self.workspace_dialog.open {
             return;
@@ -281,6 +477,32 @@ impl GuiApp {
         }
     }
 
+    /// Renders the manage workspaces window for comprehensive workspace management.
+    ///
+    /// This function displays a two-panel interface for managing existing workspaces.
+    /// The left panel shows a searchable list of workspaces, while the right panel
+    /// displays detailed information about the selected workspace and provides
+    /// management actions (Load, Edit, Export, Delete).
+    ///
+    /// # Parameters
+    /// - `ctx`: egui context for rendering UI elements and handling interactions
+    ///
+    /// # Side Effects
+    /// - Renders fixed-size window (520x520) with two-panel layout
+    /// - Updates workspace selection state based on user clicks
+    /// - Handles workspace management actions (load, edit, export, delete)
+    /// - Opens file dialogs for import operations
+    /// - May trigger confirmation dialogs for destructive operations
+    /// - Updates window focus and layering for proper modal behavior
+    ///
+    /// # Implementation Details
+    /// - Left panel: Search field and scrollable workspace list with filtering
+    /// - Right panel: Detailed workspace information and action buttons
+    /// - Search functionality filters workspaces by name (case-insensitive)
+    /// - Displays workspace metadata including plugin count and types
+    /// - Provides browse functionality for importing external workspace files
+    /// - Handles window focus management and prevents interaction conflicts
+    /// - Integrates with confirmation system for delete operations
     pub(crate) fn render_manage_workspaces_window(&mut self, ctx: &egui::Context) {
         if !self.windows.manage_workspace_open {
             return;
@@ -566,6 +788,30 @@ impl GuiApp {
         }
     }
 
+    /// Renders the load workspaces window for workspace selection and loading.
+    ///
+    /// This function displays a simplified two-panel interface focused on workspace
+    /// loading. The left panel shows a searchable list of workspaces, while the
+    /// right panel displays information about the selected workspace with a load action.
+    ///
+    /// # Parameters
+    /// - `ctx`: egui context for rendering UI elements and handling interactions
+    ///
+    /// # Side Effects
+    /// - Renders fixed-size window (520x520) with two-panel layout
+    /// - Updates workspace selection state based on user clicks
+    /// - Handles workspace loading action and closes window on successful load
+    /// - Opens file dialogs for browsing external workspace files
+    /// - Updates window focus and layering for proper modal behavior
+    ///
+    /// # Implementation Details
+    /// - Left panel: Search field and scrollable workspace list with filtering
+    /// - Right panel: Workspace information display and load button
+    /// - Search functionality filters workspaces by name (case-insensitive)
+    /// - Displays workspace metadata including plugin count and types
+    /// - Provides browse functionality for loading external workspace files
+    /// - Automatically closes window after successful workspace loading
+    /// - Handles window focus management and prevents interaction conflicts
     pub(crate) fn render_load_workspaces_window(&mut self, ctx: &egui::Context) {
         if !self.windows.load_workspace_open {
             return;
@@ -811,6 +1057,33 @@ impl GuiApp {
         }
     }
 
+    /// Renders the workspace runtime settings configuration window.
+    ///
+    /// This function displays a comprehensive interface for configuring runtime
+    /// settings including CPU core selection, timing parameters (frequency/period),
+    /// and integration step limits. It provides real-time validation and
+    /// bidirectional conversion between frequency and period values.
+    ///
+    /// # Parameters
+    /// - `ctx`: egui context for rendering UI elements and handling interactions
+    ///
+    /// # Side Effects
+    /// - Renders fixed-size window (420x240) with settings controls
+    /// - Updates runtime settings draft state during user interaction
+    /// - Applies settings to runtime engine when Apply button is clicked
+    /// - Saves settings to workspace or defaults when Save button is clicked
+    /// - Restores default settings when factory reset is requested
+    /// - Shows informational messages about operation results
+    /// - Updates logic engine settings through message passing
+    ///
+    /// # Implementation Details
+    /// - Core selection: Multi-checkbox interface with automatic fallback to core 0
+    /// - Timing controls: Synchronized frequency/period inputs with unit conversion
+    /// - Integration steps: Drag value with enforced min/max constraints
+    /// - Draft system: Maintains temporary state until apply/save operations
+    /// - Validation: Enforces minimum values and automatic unit conversions
+    /// - Persistence: Supports both workspace-specific and global default settings
+    /// - Real-time updates: Immediately applies changes to runtime engine
     pub(crate) fn render_workspace_settings_window(&mut self, ctx: &egui::Context) {
         if !self.workspace_settings.open {
             return;
@@ -1168,6 +1441,29 @@ impl GuiApp {
         }
     }
 
+    /// Renders the help documentation window with topic-based information.
+    ///
+    /// This function displays a tabbed help interface providing documentation
+    /// about different aspects of RTSyn including plugins, workspaces, runtime,
+    /// the RTSyn system itself, and CLI usage. Users can switch between topics
+    /// to access relevant information.
+    ///
+    /// # Parameters
+    /// - `ctx`: egui context for rendering UI elements and handling interactions
+    ///
+    /// # Side Effects
+    /// - Renders fixed-size window (620x360) with tabbed interface
+    /// - Updates help topic selection based on user clicks
+    /// - Maintains help window open/closed state
+    /// - Updates window focus and layering for proper modal behavior
+    ///
+    /// # Implementation Details
+    /// - Topic tabs: Plugins, Workspaces, Runtime, RTSyn, CLI
+    /// - Content areas: Topic-specific documentation with formatted text
+    /// - Styling: Uses rich text formatting for headings and code examples
+    /// - Navigation: Simple tab-based interface for topic switching
+    /// - Code formatting: Monospace styling for CLI commands and examples
+    /// - Window management: Handles focus and layer ordering appropriately
     pub(crate) fn render_help_window(&mut self, ctx: &egui::Context) {
         if !self.help_state.open {
             return;
@@ -1276,6 +1572,35 @@ impl GuiApp {
         self.help_state.open = open;
     }
 
+    /// Renders the UML diagram editor and preview window in a separate viewport.
+    ///
+    /// This function creates a dedicated viewport window for editing and previewing
+    /// UML diagrams of the current workspace. It provides a two-panel interface
+    /// with a text editor for UML source code and a live preview panel showing
+    /// the rendered diagram from PlantUML service.
+    ///
+    /// # Parameters
+    /// - `ctx`: egui context for rendering UI elements and handling interactions
+    ///
+    /// # Side Effects
+    /// - Creates separate viewport window (820x500) for UML editing
+    /// - Polls for asynchronous UML preview rendering completion
+    /// - Initializes UML text buffer with current workspace diagram
+    /// - Starts preview rendering if not already in progress
+    /// - Handles clipboard paste operations for UML text input
+    /// - Manages zoom functionality for preview panel
+    /// - Provides export functionality with format and resolution options
+    /// - Shows export dialog for saving rendered diagrams
+    ///
+    /// # Implementation Details
+    /// - Viewport: Uses immediate viewport for separate window management
+    /// - Two-panel layout: Text editor (left) and preview (right)
+    /// - Text editing: Monospace font with paste support and change detection
+    /// - Preview: Async rendering with loading states and error handling
+    /// - Zoom: Mouse wheel zoom with configurable limits (0.2x to 6.0x)
+    /// - Export: Supports both SVG and PNG formats with custom resolutions
+    /// - File dialogs: Platform-appropriate save dialogs with suggested names
+    /// - Error handling: Graceful handling of network and rendering failures
     pub(crate) fn render_uml_diagram_window(&mut self, ctx: &egui::Context) {
         if !self.windows.uml_diagram_open {
             return;
@@ -1550,6 +1875,27 @@ impl GuiApp {
         });
     }
 
+    /// Renders the confirmation dialog for destructive operations.
+    ///
+    /// This function displays a modal confirmation dialog that blocks user
+    /// interaction with the main interface until the user confirms or cancels
+    /// a potentially destructive operation (like deleting a workspace).
+    ///
+    /// # Parameters
+    /// - `ctx`: egui context for rendering UI elements and handling interactions
+    ///
+    /// # Side Effects
+    /// - Renders modal overlay blocking main interface interaction
+    /// - Displays confirmation dialog with title, message, and action buttons
+    /// - Executes confirmed actions through the action system
+    /// - Closes dialog and clears action state after user response
+    ///
+    /// # Implementation Details
+    /// - Modal overlay: Semi-transparent background blocking main UI
+    /// - Centered dialog: Positioned at screen center with window frame styling
+    /// - Action buttons: Cancel and custom action label (e.g., "Delete")
+    /// - Action execution: Delegates to perform_confirm_action() for processing
+    /// - State management: Clears dialog state after action completion
     pub(crate) fn render_confirm_remove_dialog(&mut self, ctx: &egui::Context) {
         if !self.confirm_dialog.open {
             return;
@@ -1593,6 +1939,27 @@ impl GuiApp {
             });
     }
 
+    /// Renders toast-style information notifications.
+    ///
+    /// This function displays temporary notification messages as toast popups
+    /// that slide in from the right side of the screen. Notifications automatically
+    /// fade out after a specified duration and support multiple concurrent messages.
+    ///
+    /// # Parameters
+    /// - `ctx`: egui context for rendering UI elements and handling interactions
+    ///
+    /// # Side Effects
+    /// - Renders animated toast notifications with slide and fade effects
+    /// - Requests continuous repaints for smooth animations
+    /// - Cleans up expired notifications from the notification handler
+    ///
+    /// # Implementation Details
+    /// - Animation: Smooth slide-in/slide-out with easing functions
+    /// - Positioning: Right-aligned with vertical stacking for multiple toasts
+    /// - Timing: 2.8 second total duration with configurable fade periods
+    /// - Styling: Semi-transparent background with customizable opacity
+    /// - Cleanup: Automatic removal of expired notifications
+    /// - Performance: 60fps animation updates with 16ms repaint intervals
     pub(crate) fn render_info_dialog(&mut self, ctx: &egui::Context) {
         let notifications = self.notification_handler.get_all_notifications();
         if notifications.is_empty() {
@@ -1661,6 +2028,27 @@ impl GuiApp {
         ctx.request_repaint_after(Duration::from_millis(16));
     }
 
+    /// Renders the build progress dialog for plugin compilation operations.
+    ///
+    /// This function displays a modal dialog showing the progress of plugin
+    /// build operations. It can show either a progress indicator during active
+    /// builds or completion messages with an OK button.
+    ///
+    /// # Parameters
+    /// - `ctx`: egui context for rendering UI elements and handling interactions
+    ///
+    /// # Side Effects
+    /// - Renders modal overlay blocking main interface during builds
+    /// - Displays build progress with spinner animation during active builds
+    /// - Shows completion message with dismissal button when build finishes
+    /// - Closes dialog when user acknowledges completion
+    ///
+    /// # Implementation Details
+    /// - Modal overlay: Semi-transparent background blocking main UI
+    /// - Progress state: Shows spinner and message during active builds
+    /// - Completion state: Shows final message with OK button for dismissal
+    /// - Centered dialog: Positioned at screen center with window frame styling
+    /// - State management: Handles both in-progress and completed build states
     pub(crate) fn render_build_dialog(&mut self, ctx: &egui::Context) {
         if !self.build_dialog.open {
             return;

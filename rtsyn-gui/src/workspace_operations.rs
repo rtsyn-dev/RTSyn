@@ -6,6 +6,21 @@ use std::sync::mpsc;
 use workspace::WorkspaceDefinition;
 
 impl GuiApp {
+    /// Loads a workspace from the configured workspace path.
+    ///
+    /// # Side Effects
+    /// - Validates workspace path is not empty
+    /// - Loads workspace definition from file
+    /// - Refreshes and injects plugin library paths
+    /// - Applies load-on-startup settings
+    /// - Synchronizes plugin running states with runtime
+    /// - Opens plotter viewports for running plugins
+    /// - Enforces connection dependencies
+    /// - Applies workspace-specific settings
+    /// - Synchronizes next plugin ID counter
+    /// - Clears available plugin IDs cache
+    /// - Marks workspace as dirty
+    /// - Shows success/error notifications
     pub(crate) fn load_workspace(&mut self) {
         if self.workspace_manager.workspace_path.as_os_str().is_empty() {
             self.show_info("Workspace", "Workspace path is required");
@@ -40,14 +55,37 @@ impl GuiApp {
         }
     }
 
+    /// Scans the workspace directory for available workspace files.
+    ///
+    /// # Side Effects
+    /// Updates the workspace manager's list of available workspaces
     pub(crate) fn scan_workspaces(&mut self) {
         self.workspace_manager.scan_workspaces();
     }
 
+    /// Constructs the file path for a workspace with the given name.
+    ///
+    /// # Parameters
+    /// - `name`: Name of the workspace
+    ///
+    /// # Returns
+    /// PathBuf containing the full path to the workspace file
     pub(crate) fn workspace_file_path(&self, name: &str) -> PathBuf {
         self.workspace_manager.workspace_file_path(name)
     }
 
+    /// Creates a new workspace using data from the workspace dialog.
+    ///
+    /// # Returns
+    /// - `true` if workspace was created successfully
+    /// - `false` if creation failed or name was empty
+    ///
+    /// # Side Effects
+    /// - Validates workspace name is not empty
+    /// - Creates new workspace with name and description from dialog
+    /// - Resets plugin ID counter and cache
+    /// - Shows success/error notifications
+    /// - Rescans available workspaces
     pub(crate) fn create_workspace_from_dialog(&mut self) -> bool {
         let name = self.workspace_dialog.name_input.trim();
         if name.is_empty() {
@@ -70,6 +108,17 @@ impl GuiApp {
         true
     }
 
+    /// Saves the current workspace with a new name using dialog data.
+    ///
+    /// # Returns
+    /// - `true` if workspace was saved successfully
+    /// - `false` if save failed or name was empty
+    ///
+    /// # Side Effects
+    /// - Validates workspace name is not empty
+    /// - Saves current workspace with new name and description from dialog
+    /// - Shows success/error notifications
+    /// - Rescans available workspaces
     pub(crate) fn save_workspace_as(&mut self) -> bool {
         let name = self.workspace_dialog.name_input.trim();
         if name.is_empty() {
@@ -90,6 +139,14 @@ impl GuiApp {
         true
     }
 
+    /// Saves the current workspace, overwriting the existing file.
+    ///
+    /// # Side Effects
+    /// - Opens save dialog if no current workspace path exists
+    /// - Updates workspace settings from current GUI state
+    /// - Overwrites existing workspace file
+    /// - Shows success/error notifications
+    /// - Rescans available workspaces
     pub(crate) fn save_workspace_overwrite_current(&mut self) {
         if self.workspace_manager.workspace_path.as_os_str().is_empty() {
             self.open_workspace_dialog(WorkspaceDialogMode::Save);
@@ -108,6 +165,23 @@ impl GuiApp {
         self.scan_workspaces();
     }
 
+    /// Updates metadata (name and description) for an existing workspace.
+    ///
+    /// # Parameters
+    /// - `path`: Path to the existing workspace file
+    ///
+    /// # Returns
+    /// - `true` if metadata was updated successfully
+    /// - `false` if update failed or name was empty
+    ///
+    /// # Side Effects
+    /// - Validates workspace name is not empty
+    /// - Loads existing workspace data
+    /// - Updates name and description from dialog
+    /// - Saves to new path if name changed
+    /// - Removes old file if path changed
+    /// - Shows success notifications
+    /// - Rescans available workspaces
     pub(crate) fn update_workspace_metadata(&mut self, path: &Path) -> bool {
         let name = self.workspace_dialog.name_input.trim();
         if name.is_empty() {
@@ -132,6 +206,16 @@ impl GuiApp {
         updated
     }
 
+    /// Initiates export dialog for a workspace file.
+    ///
+    /// # Parameters
+    /// - `source`: Path to the workspace file to export
+    ///
+    /// # Side Effects
+    /// - Checks if export dialog is already open
+    /// - Loads workspace name for default filename
+    /// - Spawns file dialog thread for destination selection
+    /// - Sets up channel for receiving dialog result
     pub(crate) fn export_workspace_path(&mut self, source: &Path) {
         if self.file_dialogs.export_dialog_rx.is_some() {
             self.show_info("Workspace", "Dialog already open");
@@ -163,6 +247,15 @@ impl GuiApp {
         });
     }
 
+    /// Imports a workspace from an external file path.
+    ///
+    /// # Parameters
+    /// - `path`: Path to the workspace file to import
+    ///
+    /// # Side Effects
+    /// - Imports workspace into the workspace directory
+    /// - Shows success/error notifications
+    /// - Rescans available workspaces on success
     pub(crate) fn import_workspace_from_path(&mut self, path: &Path) {
         match self.workspace_manager.import_workspace(path) {
             Ok(()) => {

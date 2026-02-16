@@ -5,11 +5,33 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::Duration;
 
+/// GUI implementation of plugin metadata source that communicates with the runtime logic thread.
+///
+/// This struct provides a bridge between the plugin manager and the runtime system,
+/// allowing the GUI to query plugin metadata and behavior information through
+/// message passing to the logic thread.
 struct GuiMetadataSource<'a> {
+    /// Channel sender for communicating with the runtime logic thread
     logic_tx: &'a mpsc::Sender<LogicMessage>,
 }
 
 impl PluginMetadataSource for GuiMetadataSource<'_> {
+    /// Queries plugin metadata from the runtime logic thread.
+    ///
+    /// # Parameters
+    /// - `library_path`: Path to the plugin library file
+    /// - `timeout`: Maximum time to wait for response
+    ///
+    /// # Returns
+    /// Optional tuple containing:
+    /// - Input port names
+    /// - Output port names  
+    /// - Variable definitions (name, default value)
+    /// - Display schema for UI rendering
+    /// - UI schema for configuration
+    ///
+    /// # Side Effects
+    /// Sends message to logic thread and blocks waiting for response
     fn query_plugin_metadata(
         &self,
         library_path: &str,
@@ -29,6 +51,18 @@ impl PluginMetadataSource for GuiMetadataSource<'_> {
         rx.recv_timeout(timeout).ok().flatten()
     }
 
+    /// Queries plugin behavior information from the runtime.
+    ///
+    /// # Parameters
+    /// - `kind`: Plugin type identifier
+    /// - `library_path`: Optional path to plugin library
+    /// - `timeout`: Maximum time to wait for response
+    ///
+    /// # Returns
+    /// Optional plugin behavior configuration
+    ///
+    /// # Side Effects
+    /// Sends message to logic thread and blocks waiting for response
     fn query_plugin_behavior(
         &self,
         kind: &str,
@@ -46,6 +80,12 @@ impl PluginMetadataSource for GuiMetadataSource<'_> {
 }
 
 impl GuiApp {
+    /// Drains plugin compatibility warnings and shows them as notifications.
+    ///
+    /// # Side Effects
+    /// - Retrieves warnings from plugin manager
+    /// - Adds new warnings to seen warnings set
+    /// - Shows info notifications for unseen warnings
     fn drain_plugin_compatibility_warnings_to_notifications(&mut self) {
         for warning in self.plugin_manager.take_compatibility_warnings() {
             if self.seen_compatibility_warnings.insert(warning.clone()) {
@@ -54,12 +94,30 @@ impl GuiApp {
         }
     }
 
+    /// Scans for detected plugins in standard directories.
+    ///
+    /// # Side Effects
+    /// - Scans "plugins" and "app_plugins" directories
+    /// - Updates plugin manager's detected plugins list
+    /// - Shows compatibility warnings as notifications
     pub(crate) fn scan_detected_plugins(&mut self) {
         self.plugin_manager
             .scan_detected_plugins_in(&["plugins", "app_plugins"]);
         self.drain_plugin_compatibility_warnings_to_notifications();
     }
 
+    /// Adds an installed plugin to the current workspace.
+    ///
+    /// # Parameters
+    /// - `installed_index`: Index of the plugin in the installed plugins list
+    ///
+    /// # Side Effects
+    /// - Validates plugin exists at given index
+    /// - Caches plugin behavior information
+    /// - Adds plugin to workspace using metadata source
+    /// - Opens plotter viewport if plugin uses plotting
+    /// - Updates status message
+    /// - Marks workspace as dirty
     pub(crate) fn add_installed_plugin(&mut self, installed_index: usize) {
         let installed = match self.plugin_manager.installed_plugins.get(installed_index) {
             Some(plugin) => plugin.clone(),
@@ -104,6 +162,17 @@ impl GuiApp {
         self.mark_workspace_dirty();
     }
 
+    /// Creates a duplicate of an existing plugin in the workspace.
+    ///
+    /// # Parameters
+    /// - `plugin_id`: Unique identifier of the plugin to duplicate
+    ///
+    /// # Side Effects
+    /// - Creates new plugin instance with unique ID
+    /// - Caches behavior information for duplicated plugin
+    /// - Updates status message
+    /// - Marks workspace as dirty
+    /// - Shows error notification if plugin ID is invalid
     pub(crate) fn duplicate_plugin(&mut self, plugin_id: u64) {
         let new_id = match self
             .plugin_manager
@@ -129,6 +198,21 @@ impl GuiApp {
         self.mark_workspace_dirty();
     }
 
+    /// Removes a plugin from the workspace by index.
+    ///
+    /// # Parameters
+    /// - `plugin_index`: Index of the plugin in the workspace plugins list
+    ///
+    /// # Side Effects
+    /// - Validates plugin index bounds
+    /// - Clears selection if removed plugin was selected
+    /// - Closes configuration window if open for removed plugin
+    /// - Removes associated plotter data
+    /// - Updates extendable input counts for remaining plugins
+    /// - Recomputes plotter UI refresh rate
+    /// - Enforces connection dependencies
+    /// - Updates status message
+    /// - Marks workspace as dirty
     pub(crate) fn remove_plugin(&mut self, plugin_index: usize) {
         if plugin_index >= self.workspace_manager.workspace.plugins.len() {
             self.status = "Invalid plugin selection".to_string();
@@ -172,6 +256,17 @@ impl GuiApp {
         self.mark_workspace_dirty();
     }
 
+    /// Uninstalls a plugin and removes all instances from workspace.
+    ///
+    /// # Parameters
+    /// - `installed_index`: Index of the plugin in the installed plugins list
+    ///
+    /// # Side Effects
+    /// - Uninstalls plugin from system
+    /// - Removes all workspace instances of the plugin type
+    /// - Clears UI state for removed plugins (selection, config windows, plotters)
+    /// - Rescans for detected plugins
+    /// - Shows success/error notifications
     pub(crate) fn uninstall_plugin(&mut self, installed_index: usize) {
         let plugin = match self
             .plugin_manager
@@ -205,6 +300,18 @@ impl GuiApp {
         self.show_info("Plugin", "Plugin uninstalled");
     }
 
+    /// Installs a plugin from a folder path.
+    ///
+    /// # Parameters
+    /// - `folder`: Path to the plugin folder
+    /// - `removable`: Whether the plugin can be uninstalled
+    /// - `persist`: Whether to persist the installation
+    ///
+    /// # Side Effects
+    /// - Installs plugin using metadata source for validation
+    /// - Updates status message
+    /// - Shows error notifications on failure
+    /// - Drains compatibility warnings to notifications
     pub(crate) fn install_plugin_from_folder<P: AsRef<Path>>(
         &mut self,
         folder: P,
@@ -228,6 +335,18 @@ impl GuiApp {
         self.drain_plugin_compatibility_warnings_to_notifications();
     }
 
+    /// Refreshes an installed plugin with updated code from path.
+    ///
+    /// # Parameters
+    /// - `kind`: Plugin type identifier
+    /// - `path`: Path to the updated plugin files
+    ///
+    /// # Side Effects
+    /// - Removes UI state for existing plugin instances
+    /// - Refreshes plugin installation if path is not empty
+    /// - Updates status message
+    /// - Shows error notifications on failure
+    /// - Drains compatibility warnings to notifications
     pub(crate) fn refresh_installed_plugin(&mut self, kind: String, path: &Path) {
         let plugin_ids: Vec<u64> = self
             .workspace_manager
@@ -269,20 +388,39 @@ impl GuiApp {
         self.drain_plugin_compatibility_warnings_to_notifications();
     }
 
+    /// Refreshes library paths for all installed plugins.
+    ///
+    /// # Side Effects
+    /// Updates the library paths in the plugin manager's installed plugins list
     pub(crate) fn refresh_installed_library_paths(&mut self) {
         self.plugin_manager.refresh_installed_library_paths();
     }
 
+    /// Injects current library paths into workspace plugin definitions.
+    ///
+    /// # Side Effects
+    /// Updates library_path field for all plugins in the current workspace
     pub(crate) fn inject_library_paths_into_workspace(&mut self) {
         self.plugin_manager
             .inject_library_paths_into_workspace(&mut self.workspace_manager.workspace);
     }
 
+    /// Loads all installed plugins from the plugin directory.
+    ///
+    /// # Side Effects
+    /// - Scans and loads plugin manifests and metadata
+    /// - Drains compatibility warnings to notifications
     pub(crate) fn load_installed_plugins(&mut self) {
         self.plugin_manager.load_installed_plugins();
         self.drain_plugin_compatibility_warnings_to_notifications();
     }
 
+    /// Refreshes metadata cache for installed plugins with incomplete metadata.
+    ///
+    /// # Side Effects
+    /// - Identifies plugins with missing metadata (inputs, outputs, variables, schemas)
+    /// - Queries runtime for updated metadata using metadata source
+    /// - Updates plugin manager's cached metadata
     pub(crate) fn refresh_installed_plugin_metadata_cache(&mut self) {
         let targets: Vec<(String, PathBuf)> = self
             .plugin_manager

@@ -1,19 +1,54 @@
+//! Plotter UI components and window management for RTSyn GUI.
+//!
+//! This module provides the user interface components for managing and displaying
+//! real-time plotting windows in the RTSyn application. It handles:
+//!
+//! - Plotter window rendering and viewport management
+//! - Interactive controls for plot customization (knobs, wheels, timebase)
+//! - Series data visualization with scaling and offset controls
+//! - Export functionality for plot images (PNG/SVG)
+//! - Settings dialogs for plot appearance and behavior
+//! - Connection management for plotter plugins
+//! - Notification display for plotter-specific messages
+//!
+//! The module implements a comprehensive plotting interface that allows users to
+//! visualize real-time data streams from various plugins, customize appearance,
+//! and export plots for documentation or analysis purposes.
+
 use super::*;
+use crate::utils::truncate_string;
 use crate::ui_state::PlotterPreviewState;
 use std::time::Duration;
 
 impl GuiApp {
-    fn truncate_tab_label(name: &str, max_chars: usize) -> String {
-        let mut out = String::new();
-        for ch in name.chars().take(max_chars) {
-            out.push(ch);
-        }
-        if name.chars().count() > max_chars {
-            out.push_str("...");
-        }
-        out
-    }
-
+    /// Renders an interactive circular knob control for parameter adjustment.
+    ///
+    /// This function creates a rotary knob widget that allows users to adjust numeric
+    /// values through mouse dragging and scroll wheel interaction. The knob provides
+    /// visual feedback with a circular indicator and supports fine control modes.
+    ///
+    /// # Parameters
+    /// - `ui`: Mutable reference to the egui UI context for rendering
+    /// - `label`: Display label shown above the knob
+    /// - `value`: Mutable reference to the value being controlled
+    /// - `min`: Minimum allowed value for the parameter
+    /// - `max`: Maximum allowed value for the parameter
+    /// - `sensitivity`: Base sensitivity multiplier for value changes
+    /// - `_decimals`: Number of decimal places (currently unused in implementation)
+    ///
+    /// # Behavior
+    /// - **Drag Control**: Horizontal mouse dragging adjusts the value with variable sensitivity
+    /// - **Scroll Wheel**: Mouse wheel provides alternative adjustment method
+    /// - **Fine Control**: Holding Shift reduces sensitivity by 80% for precise adjustments
+    /// - **Visual Feedback**: Circular knob with position indicator showing current value
+    /// - **Deadzone**: Small deadzone prevents accidental adjustments from minor movements
+    ///
+    /// # Implementation Details
+    /// - Uses temporary data storage for drag state management
+    /// - Implements progressive sensitivity scaling based on drag distance
+    /// - Clamps all values to the specified min/max range
+    /// - Requests UI repaints during active adjustment for smooth feedback
+    /// - Handles both active pointer tracking and fallback drag state
     fn knob_control(
         ui: &mut egui::Ui,
         label: &str,
@@ -134,6 +169,32 @@ impl GuiApp {
         });
     }
 
+    /// Renders a text input box with scroll wheel support for numeric value editing.
+    ///
+    /// This function creates a grouped text input field that allows direct text entry
+    /// of numeric values while also supporting mouse wheel adjustments. It provides
+    /// a clean, centered layout with custom styling.
+    ///
+    /// # Parameters
+    /// - `ui`: Mutable reference to the egui UI context for rendering
+    /// - `title`: Display title shown above the input box
+    /// - `value`: Mutable reference to the numeric value being edited
+    /// - `decimals`: Number of decimal places to display in the formatted value
+    /// - `min`: Minimum allowed value (used for clamping parsed input)
+    /// - `max`: Maximum allowed value (used for clamping parsed input)
+    ///
+    /// # Behavior
+    /// - **Text Input**: Direct editing of the numeric value as formatted text
+    /// - **Input Validation**: Parses text input and clamps to min/max range
+    /// - **Formatting**: Displays value with specified decimal precision
+    /// - **Styling**: Custom background colors for different interaction states
+    /// - **Layout**: Centered text alignment within a fixed-width container
+    ///
+    /// # Implementation Details
+    /// - Uses custom color scheme (dark grays) for visual consistency
+    /// - Handles parsing errors gracefully by ignoring invalid input
+    /// - Maintains value within specified bounds automatically
+    /// - Provides 180px width for consistent layout across different controls
     fn wheel_value_box(
         ui: &mut egui::Ui,
         title: &str,
@@ -169,6 +230,35 @@ impl GuiApp {
         });
     }
 
+    /// Implements 1-2-5 sequence stepping for timebase and measurement values.
+    ///
+    /// This function provides standard engineering stepping through values using the
+    /// 1-2-5 sequence (1, 2, 5, 10, 20, 50, 100, etc.), which is commonly used in
+    /// oscilloscopes and measurement instruments for intuitive value selection.
+    ///
+    /// # Parameters
+    /// - `value`: Current value to step from
+    /// - `direction`: Step direction (positive for up, negative for down, zero for no change)
+    ///
+    /// # Returns
+    /// The next value in the 1-2-5 sequence, clamped to the range [0.1, 60000.0]
+    ///
+    /// # Algorithm
+    /// 1. Normalizes the input value to find the current decade (power of 10)
+    /// 2. Identifies the closest value in the 1-2-5 sequence within that decade
+    /// 3. Steps to the next/previous value in the sequence based on direction
+    /// 4. Handles decade transitions when stepping beyond sequence boundaries
+    /// 5. Clamps the result to prevent extreme values
+    ///
+    /// # Examples
+    /// - `step_125(1.5, 1)` → `2.0` (next in sequence)
+    /// - `step_125(5.0, 1)` → `10.0` (next decade)
+    /// - `step_125(2.0, -1)` → `1.0` (previous in sequence)
+    ///
+    /// # Use Cases
+    /// - Timebase control in oscilloscope-like interfaces
+    /// - Measurement range selection
+    /// - Any application requiring standard engineering value stepping
     fn step_125(value: f64, direction: i32) -> f64 {
         let seq = [1.0_f64, 2.0, 5.0];
         let mut v = value.max(0.1);
@@ -205,6 +295,37 @@ impl GuiApp {
         (seq[idx] * 10_f64.powi(exp)).clamp(0.1, 60_000.0)
     }
 
+    /// Renders timebase control interface for plot time window configuration.
+    ///
+    /// This function creates a horizontal control panel that allows users to adjust
+    /// the time window displayed in plots using oscilloscope-style timebase controls.
+    /// It provides both coarse stepping and fine adjustment capabilities.
+    ///
+    /// # Parameters
+    /// - `ui`: Mutable reference to the egui UI context for rendering
+    /// - `window_ms`: Mutable reference to the total time window in milliseconds
+    /// - `timebase_divisions`: Mutable reference to the number of time divisions
+    ///
+    /// # Controls Provided
+    /// - **Step Buttons**: Left/right arrows for 1-2-5 sequence stepping
+    /// - **Direct Input**: Drag value widget for precise ms/div adjustment
+    /// - **Division Count**: Adjustable number of time divisions (1-200)
+    /// - **Total Display**: Shows calculated total time window
+    ///
+    /// # Behavior
+    /// - Calculates ms/div from total window and division count
+    /// - Uses `step_125()` for standard timebase stepping
+    /// - Clamps division count to reasonable range (1-200)
+    /// - Updates total window when either parameter changes
+    /// - Maintains total window within bounds (100ms to 600s)
+    ///
+    /// # Layout
+    /// The controls are arranged horizontally: Label | ◀ | ▶ | DragValue | "ms/div" | "x" | Divisions | "div" | Separator | Total
+    ///
+    /// # Implementation Details
+    /// - Synchronizes changes between ms/div and total window calculations
+    /// - Provides immediate visual feedback for all adjustments
+    /// - Uses consistent clamping to prevent invalid configurations
     fn render_timebase_controls(
         ui: &mut egui::Ui,
         window_ms: &mut f64,
@@ -264,6 +385,38 @@ impl GuiApp {
         }
     }
 
+    /// Renders scale and offset control knobs for a data series.
+    ///
+    /// This function creates two interactive knob controls that allow users to adjust
+    /// the scaling and DC offset of a data series in real-time. These controls are
+    /// essential for normalizing and positioning different data streams for optimal
+    /// visualization.
+    ///
+    /// # Parameters
+    /// - `ui`: Mutable reference to the egui UI context for rendering
+    /// - `scale`: Mutable reference to the scaling factor (gain) for the series
+    /// - `offset`: Mutable reference to the DC offset value for the series
+    ///
+    /// # Controls
+    /// - **Scale Knob**: Adjusts multiplicative scaling from 0.001 to 1,000,000
+    /// - **Offset Knob**: Adjusts additive offset from -1 billion to +1 billion
+    ///
+    /// # Behavior
+    /// - Scale control uses logarithmic-style sensitivity for wide range coverage
+    /// - Offset control uses linear sensitivity appropriate for typical signal ranges
+    /// - Both knobs support fine adjustment mode (Shift key) and scroll wheel input
+    /// - Scale is automatically clamped to prevent zero or negative values
+    ///
+    /// # Use Cases
+    /// - Normalizing signals with different amplitude ranges
+    /// - Removing DC bias from AC signals
+    /// - Scaling engineering units to display units
+    /// - Vertically positioning multiple traces for comparison
+    ///
+    /// # Implementation Details
+    /// - Ensures scale never goes to zero (minimum 0.001)
+    /// - Uses appropriate sensitivity values for each parameter type
+    /// - Provides immediate visual feedback through knob position indicators
     fn render_series_wheels(ui: &mut egui::Ui, scale: &mut f64, offset: &mut f64) {
         Self::knob_control(ui, "Scale", scale, 0.001, 1_000_000.0, 0.08, 3);
         Self::knob_control(
@@ -280,6 +433,36 @@ impl GuiApp {
         }
     }
 
+    /// Determines if a series name is a placeholder generated by the system.
+    ///
+    /// This function identifies automatically generated series names that follow the
+    /// pattern "Series N" where N is a number. This distinction is important for
+    /// deciding whether to replace placeholder names with more meaningful names
+    /// derived from actual data connections.
+    ///
+    /// # Parameters
+    /// - `name`: The series name string to check
+    ///
+    /// # Returns
+    /// `true` if the name matches the placeholder pattern "Series N", `false` otherwise
+    ///
+    /// # Pattern Recognition
+    /// - Trims whitespace from the input name
+    /// - Checks for exact "Series " prefix
+    /// - Validates that the suffix is a parseable positive integer
+    /// - Case-sensitive matching (requires exact capitalization)
+    ///
+    /// # Use Cases
+    /// - Determining when to auto-update series names from connection metadata
+    /// - Preserving user-customized series names while updating defaults
+    /// - Managing the transition from placeholder to meaningful names
+    ///
+    /// # Examples
+    /// - `"Series 1"` → `true`
+    /// - `"Series 42"` → `true`
+    /// - `"Custom Name"` → `false`
+    /// - `"series 1"` → `false` (case mismatch)
+    /// - `"Series ABC"` → `false` (non-numeric suffix)
     fn is_placeholder_series_name(name: &str) -> bool {
         let trimmed = name.trim();
         if !trimmed.starts_with("Series ") {
@@ -288,6 +471,39 @@ impl GuiApp {
         trimmed["Series ".len()..].parse::<usize>().is_ok()
     }
 
+    /// Synchronizes series control arrays with a seed state, preserving user customizations.
+    ///
+    /// This function ensures that the series control arrays (names, scales, offsets, colors)
+    /// in the target state match the length and structure of a seed state, while intelligently
+    /// preserving user customizations and replacing only placeholder values with meaningful
+    /// data from the seed.
+    ///
+    /// # Parameters
+    /// - `state`: Mutable reference to the state being synchronized
+    /// - `seed`: Reference to the seed state providing the target structure and default values
+    ///
+    /// # Synchronization Logic
+    /// 1. **Size Matching**: Adjusts array lengths to match the seed state
+    /// 2. **Expansion**: Adds new entries with seed values when target is smaller
+    /// 3. **Truncation**: Removes excess entries when target is larger
+    /// 4. **Smart Name Updates**: Replaces placeholder names with seed names while preserving custom names
+    ///
+    /// # Preservation Rules
+    /// - User-defined custom series names are never overwritten
+    /// - Placeholder names (e.g., "Series 1") are replaced with meaningful seed names
+    /// - Empty names are always replaced with seed names when available
+    /// - Scale, offset, and color values are preserved for existing series
+    ///
+    /// # Use Cases
+    /// - Updating plotter settings when connection topology changes
+    /// - Maintaining user customizations across plugin reconfigurations
+    /// - Initializing new series with sensible defaults
+    /// - Handling dynamic changes in the number of data series
+    ///
+    /// # Implementation Details
+    /// - Uses `is_placeholder_series_name()` to identify replaceable names
+    /// - Maintains array consistency across all series-related vectors
+    /// - Handles edge cases like empty seed states gracefully
     fn sync_series_controls_from_seed(state: &mut PlotterPreviewState, seed: &PlotterPreviewState) {
         let target = seed.series_names.len();
         if state.series_names.len() < target {
@@ -328,6 +544,41 @@ impl GuiApp {
         }
     }
 
+    /// Generates meaningful series names based on plugin connections.
+    ///
+    /// This function creates descriptive names for data series by examining the
+    /// connection topology and generating names that reflect the actual data sources.
+    /// It provides much more informative labels than generic placeholder names.
+    ///
+    /// # Parameters
+    /// - `plugin_id`: The ID of the plugin for which to generate series names
+    /// - `count`: The number of series names to generate
+    ///
+    /// # Returns
+    /// A `Vec<String>` containing generated series names, one for each requested series
+    ///
+    /// # Name Generation Logic
+    /// For each series index `i`:
+    /// 1. Constructs the expected input port name as `"in_{i}"`
+    /// 2. Searches workspace connections for a connection to this port
+    /// 3. If found, creates name as `"{source_plugin}:{source_port}"`
+    /// 4. If not found, falls back to placeholder `"Series {i+1}"`
+    ///
+    /// # Examples
+    /// - Connected input: `"SignalGen:output"` (meaningful)
+    /// - Unconnected input: `"Series 2"` (placeholder)
+    ///
+    /// # Use Cases
+    /// - Providing context-aware series labels in plot legends
+    /// - Helping users identify data sources in multi-series plots
+    /// - Automatically updating labels when connections change
+    /// - Improving plot readability and documentation value
+    ///
+    /// # Implementation Details
+    /// - Uses workspace connection metadata for name resolution
+    /// - Handles missing connections gracefully with fallback names
+    /// - Maintains consistent indexing (1-based for user display)
+    /// - Leverages `plugin_display_name()` for readable plugin names
     fn aligned_series_names(&self, plugin_id: u64, count: usize) -> Vec<String> {
         (0..count)
             .map(|i| {
@@ -349,6 +600,40 @@ impl GuiApp {
             .collect()
     }
 
+    /// Renders floating notification toasts for plotter-specific messages.
+    ///
+    /// This function displays temporary notification messages that slide in from the
+    /// right side of the screen, providing feedback about plotter operations, errors,
+    /// or status changes. The notifications use smooth animations and automatic timing.
+    ///
+    /// # Parameters
+    /// - `ctx`: The egui context for rendering and animation
+    /// - `plugin_id`: The ID of the plotter plugin to show notifications for
+    ///
+    /// # Notification Behavior
+    /// - **Slide Animation**: Notifications slide in from off-screen right
+    /// - **Timing**: Total display duration of 2.8 seconds
+    /// - **Fade Transitions**: 0.35s slide-in, 0.45s slide-out with smooth easing
+    /// - **Stacking**: Multiple notifications stack vertically
+    /// - **Limit**: Maximum of 4 notifications shown simultaneously
+    ///
+    /// # Visual Properties
+    /// - **Position**: Top-right corner with 12px margin
+    /// - **Size**: Maximum width of 360px, auto-height
+    /// - **Styling**: Dark semi-transparent background with subtle border
+    /// - **Content**: Title (bold, 14pt) and message (regular, 13pt)
+    ///
+    /// # Animation Details
+    /// - Uses smooth step function for natural easing curves
+    /// - Calculates position based on age and transition phases
+    /// - Requests continuous repaints during active animations
+    /// - Handles cleanup automatically through NotificationHandler
+    ///
+    /// # Implementation Notes
+    /// - Non-interactive overlays (click-through)
+    /// - Foreground rendering order for visibility
+    /// - Efficient early exit when no notifications exist
+    /// - Automatic repaint scheduling for smooth animation
     fn render_plotter_notifications(&mut self, ctx: &egui::Context, plugin_id: u64) {
         let Some(list) = self.notification_handler.get_plugin_notifications(plugin_id) else {
             return;
@@ -414,6 +699,49 @@ impl GuiApp {
         }
     }
 
+    /// Toggles the running state of a plugin from within a plotter window.
+    ///
+    /// This function handles start/stop operations for plugins that support runtime
+    /// control, performing validation checks and updating both the workspace state
+    /// and the logic engine. It provides comprehensive error handling for various
+    /// failure conditions.
+    ///
+    /// # Parameters
+    /// - `plugin_id`: The ID of the plugin to toggle
+    ///
+    /// # Returns
+    /// - `Ok(bool)`: The new running state (true if started, false if stopped)
+    /// - `Err(String)`: Error message describing why the operation failed
+    ///
+    /// # Validation Checks (for starting)
+    /// 1. **Plugin Existence**: Verifies the plugin exists in the workspace
+    /// 2. **Start/Stop Support**: Checks if the plugin supports runtime control
+    /// 3. **Required Inputs**: Validates all required input connections are present
+    /// 4. **Required Outputs**: Validates all required output connections are present
+    ///
+    /// # State Updates
+    /// - Updates the plugin's running flag in the workspace
+    /// - Sends state change message to the logic engine
+    /// - Marks workspace as dirty for persistence
+    /// - Opens plotter viewport if starting a plotter-capable plugin
+    /// - Recomputes UI refresh rates for optimal performance
+    ///
+    /// # Error Conditions
+    /// - Plugin not found in workspace
+    /// - Plugin doesn't support start/stop operations
+    /// - Missing required input connections
+    /// - Missing required output connections
+    ///
+    /// # Side Effects
+    /// - May open plotter windows for visualization plugins
+    /// - Triggers workspace persistence
+    /// - Updates logic engine state
+    /// - Recalculates UI refresh rates
+    ///
+    /// # Use Cases
+    /// - Interactive start/stop from plotter window controls
+    /// - Batch operations on multiple plotters
+    /// - Automated plugin lifecycle management
     fn toggle_plugin_running_from_plotter_window(
         &mut self,
         plugin_id: u64,
@@ -508,6 +836,54 @@ impl GuiApp {
         Ok(new_running)
     }
 
+    /// Renders all open plotter windows with their controls and settings dialogs.
+    ///
+    /// This is the main function responsible for rendering the complete plotter interface,
+    /// including plot displays, control buttons, settings dialogs, and export functionality.
+    /// It manages multiple plotter windows simultaneously and handles all user interactions.
+    ///
+    /// # Parameters
+    /// - `ctx`: The egui context for rendering and viewport management
+    ///
+    /// # Rendered Components
+    /// - **Plot Display**: Real-time data visualization with customizable appearance
+    /// - **Control Buttons**: Start/Stop, Add/Remove connections, Settings, Capture
+    /// - **Settings Dialog**: Comprehensive plot customization interface
+    /// - **Export Dialog**: Image/SVG export with resolution controls
+    /// - **Connection Editor**: Embedded connection management (when active)
+    /// - **Notifications**: Floating status messages and alerts
+    ///
+    /// # Window Management
+    /// - Creates separate viewports for each plotter (or embedded windows)
+    /// - Handles window close events and cleanup
+    /// - Manages dialog state persistence across frames
+    /// - Coordinates between main window and popup dialogs
+    ///
+    /// # User Interactions Handled
+    /// - **Start/Stop**: Plugin execution control with validation
+    /// - **Settings**: Plot appearance and behavior configuration
+    /// - **Export**: Image capture with format and resolution options
+    /// - **Connections**: Add/remove data source connections
+    /// - **Series Control**: Individual series scaling, offset, and naming
+    /// - **Timebase**: Time window and division configuration
+    ///
+    /// # State Management
+    /// - Synchronizes settings between dialogs and live plots
+    /// - Preserves user customizations across sessions
+    /// - Handles dynamic series count changes
+    /// - Manages temporary dialog state in egui data storage
+    ///
+    /// # Performance Considerations
+    /// - Requests repaints at appropriate refresh rates
+    /// - Efficiently handles multiple concurrent plotters
+    /// - Minimizes unnecessary UI updates
+    /// - Optimizes viewport rendering for smooth animation
+    ///
+    /// # Implementation Details
+    /// - Uses viewport system for native window management
+    /// - Falls back to embedded windows when viewports unavailable
+    /// - Implements comprehensive error handling for all operations
+    /// - Maintains consistent UI layout across different screen sizes
     pub(crate) fn render_plotter_windows(&mut self, ctx: &egui::Context) {
         let mut closed = Vec::new();
         let mut export_saved: Vec<u64> = Vec::new();
@@ -900,7 +1276,7 @@ impl GuiApp {
                                                     (state.series_tab_start + visible).min(total);
                                                 for i in state.series_tab_start..end {
                                                     let full = state.series_names[i].clone();
-                                                    let text = Self::truncate_tab_label(&full, 20);
+                                                    let text = truncate_string(&full, 20);
                                                     let selected = state.selected_series_tab == i;
                                                     let resp = ui.add_sized(
                                                         [180.0, 24.0],
@@ -1276,6 +1652,50 @@ impl GuiApp {
         }
     }
 
+    /// Constructs a complete plotter preview state from current plugin configuration.
+    ///
+    /// This function builds a comprehensive state object that contains all the settings
+    /// and metadata needed to render and configure a plotter. It intelligently merges
+    /// saved settings with live plugin data and connection information.
+    ///
+    /// # Parameters
+    /// - `plugin_id`: The ID of the plugin to build preview state for
+    ///
+    /// # Returns
+    /// A `PlotterPreviewState` containing all plotter configuration and display settings
+    ///
+    /// # State Construction Process
+    /// 1. **Initialize**: Creates default state with target plugin ID
+    /// 2. **Live Data**: Extracts current series count and connection names
+    /// 3. **Saved Settings**: Loads previously saved plotter configuration if available
+    /// 4. **Series Sync**: Synchronizes series arrays with current connection topology
+    /// 5. **Plugin Config**: Incorporates plugin-specific settings (priority, refresh rate)
+    /// 6. **Defaults**: Applies sensible defaults for missing configuration
+    ///
+    /// # Data Sources
+    /// - **Plotter Manager**: Saved preview settings and live plotter state
+    /// - **Workspace**: Plugin configuration and connection topology
+    /// - **Connection Names**: Generated from `aligned_series_names()`
+    /// - **Default Values**: Fallback settings for new or unconfigured plotters
+    ///
+    /// # Series Management
+    /// - Automatically adjusts series count to match live connections
+    /// - Preserves user-customized series names and settings
+    /// - Assigns default colors using a predefined palette
+    /// - Ensures minimum of one series for UI consistency
+    ///
+    /// # Default Configuration
+    /// - **Visual**: Axes, legend, and grid enabled; dark theme
+    /// - **Timebase**: 10 divisions, window from live plotter
+    /// - **Series**: Auto-generated names, 1.0 scale, 0.0 offset
+    /// - **Colors**: 8-color palette cycling for multiple series
+    /// - **Export**: 1920x1080 PNG format
+    ///
+    /// # Use Cases
+    /// - Initializing settings dialogs with current configuration
+    /// - Preparing export operations with live data
+    /// - Synchronizing UI state with plugin changes
+    /// - Providing consistent defaults for new plotters
     fn build_plotter_preview_state(&self, plugin_id: u64) -> PlotterPreviewState {
         let mut state = PlotterPreviewState::default();
         state.target = Some(plugin_id);
@@ -1425,6 +1845,52 @@ impl GuiApp {
         state
     }
 
+    /// Applies a plotter preview state to persistent storage and plugin configuration.
+    ///
+    /// This function takes a complete plotter preview state and persists it to the
+    /// appropriate storage locations, updating both the plotter manager's settings
+    /// and the plugin's workspace configuration. It ensures that user customizations
+    /// are preserved across application sessions.
+    ///
+    /// # Parameters
+    /// - `plugin_id`: The ID of the plugin to apply settings to
+    /// - `state`: The preview state containing all settings to apply
+    ///
+    /// # Storage Updates
+    /// 1. **Plotter Manager**: Stores visual and series settings in preview settings map
+    /// 2. **Plugin Config**: Updates plugin priority and refresh rate in workspace
+    /// 3. **Workspace Persistence**: Marks workspace as dirty for automatic saving
+    /// 4. **Logic Engine**: Sends updated workspace to background processing
+    ///
+    /// # Settings Applied
+    /// - **Visual Settings**: Axes, legend, grid visibility, theme, titles
+    /// - **Series Configuration**: Names, scales, offsets, colors
+    /// - **Timebase Settings**: Window duration, division count
+    /// - **Export Options**: Quality settings, format preferences
+    /// - **Plugin Parameters**: Priority level, refresh rate
+    ///
+    /// # Data Validation
+    /// - Clamps timebase divisions to valid range (1-200)
+    /// - Ensures refresh rate is at least 1.0 Hz
+    /// - Validates all numeric parameters are within reasonable bounds
+    ///
+    /// # Side Effects
+    /// - Triggers workspace persistence mechanism
+    /// - Updates live plugin configuration in logic engine
+    /// - May affect plugin execution priority and timing
+    /// - Influences plotter rendering performance and quality
+    ///
+    /// # Use Cases
+    /// - Saving user customizations from settings dialogs
+    /// - Applying export configurations before image capture
+    /// - Persisting changes made through interactive controls
+    /// - Batch updating multiple plotter configurations
+    ///
+    /// # Implementation Notes
+    /// - Uses tuple storage format for efficient serialization
+    /// - Handles missing plugins gracefully without errors
+    /// - Maintains backward compatibility with existing settings
+    /// - Ensures atomic updates to prevent inconsistent state
     fn apply_plotter_preview_state(&mut self, plugin_id: u64, state: &PlotterPreviewState) {
         self.plotter_manager.plotter_preview_settings.insert(
             plugin_id,
@@ -1467,6 +1933,47 @@ impl GuiApp {
         }
     }
 
+    /// Constructs series transform objects from scale and offset arrays.
+    ///
+    /// This utility function converts separate arrays of scaling factors and offset
+    /// values into a vector of `SeriesTransform` objects that can be used by the
+    /// plotter rendering system. It handles array length mismatches gracefully.
+    ///
+    /// # Parameters
+    /// - `scales`: Array of scaling factors for each series
+    /// - `offsets`: Array of offset values for each series
+    /// - `count`: Number of transform objects to create
+    ///
+    /// # Returns
+    /// A `Vec<SeriesTransform>` containing transform objects for plotter rendering
+    ///
+    /// # Transform Construction
+    /// For each series index from 0 to `count`:
+    /// - Uses the corresponding scale value, or defaults to 1.0 if array is too short
+    /// - Uses the corresponding offset value, or defaults to 0.0 if array is too short
+    /// - Creates a `SeriesTransform` object with these values
+    ///
+    /// # Default Behavior
+    /// - **Missing Scale**: Defaults to 1.0 (no scaling)
+    /// - **Missing Offset**: Defaults to 0.0 (no offset)
+    /// - **Empty Arrays**: Creates transforms with default values
+    ///
+    /// # Use Cases
+    /// - Converting UI control values to plotter-compatible format
+    /// - Preparing transform data for plot rendering
+    /// - Handling dynamic series count changes
+    /// - Providing consistent transform objects regardless of input array lengths
+    ///
+    /// # Mathematical Application
+    /// Each transform applies the formula: `output = (input * scale) + offset`
+    /// - Scale adjusts the amplitude/magnitude of the signal
+    /// - Offset shifts the signal vertically (DC bias adjustment)
+    ///
+    /// # Implementation Details
+    /// - Uses safe array indexing with fallback defaults
+    /// - Creates exactly `count` transform objects regardless of input lengths
+    /// - Maintains consistent behavior for edge cases
+    /// - Optimized for frequent calls during UI updates
     fn build_series_transforms(
         scales: &[f64],
         offsets: &[f64],
@@ -1480,6 +1987,58 @@ impl GuiApp {
             .collect()
     }
 
+    /// Renders the plotter preview and export dialog window.
+    ///
+    /// This function displays a comprehensive dialog that allows users to customize
+    /// plot appearance, configure series settings, and export plots as images.
+    /// It provides real-time preview of changes and extensive customization options.
+    ///
+    /// # Parameters
+    /// - `ctx`: The egui context for rendering the dialog
+    ///
+    /// # Dialog Sections
+    /// 1. **Basic Settings**: Title, axes visibility, legend, grid, theme
+    /// 2. **Axis Configuration**: X and Y axis labels and formatting
+    /// 3. **Timebase Controls**: Time window and division settings
+    /// 4. **Series Customization**: Individual series names, colors, and transforms
+    /// 5. **Live Preview**: Real-time plot preview with current settings
+    /// 6. **Export Options**: Resolution, format, and quality settings
+    ///
+    /// # Interactive Features
+    /// - **Real-time Preview**: Shows immediate feedback for all setting changes
+    /// - **Series Tuning**: Individual scale and offset controls for each series
+    /// - **Color Picker**: Full color customization for each data series
+    /// - **Resolution Control**: Automatic aspect ratio maintenance for exports
+    /// - **Format Selection**: PNG or SVG export options
+    ///
+    /// # State Management
+    /// - Synchronizes with live plugin data automatically
+    /// - Preserves user customizations across dialog sessions
+    /// - Handles dynamic series count changes gracefully
+    /// - Maintains consistent state between preview and export
+    ///
+    /// # Export Configuration
+    /// - **Resolution**: Configurable width/height with aspect ratio locking
+    /// - **Format**: PNG (raster) or SVG (vector) output options
+    /// - **Quality**: High-quality rendering options for publication use
+    /// - **Aspect Ratio**: Automatic 16:9 ratio maintenance with manual override
+    ///
+    /// # User Experience
+    /// - **Responsive Layout**: Adapts to different window sizes
+    /// - **Scrollable Content**: Handles large numbers of series gracefully
+    /// - **Immediate Feedback**: All changes reflected in preview instantly
+    /// - **Intuitive Controls**: Familiar UI patterns for all interactions
+    ///
+    /// # Implementation Details
+    /// - Uses `build_plotter_preview_state()` for initialization
+    /// - Applies `sync_series_controls_from_seed()` for consistency
+    /// - Triggers screenshot requests through `request_plotter_screenshot()`
+    /// - Maintains dialog state in `self.plotter_preview`
+    ///
+    /// # Performance Considerations
+    /// - Efficient preview rendering with minimal overhead
+    /// - Optimized for real-time interaction feedback
+    /// - Handles multiple concurrent dialogs efficiently
     pub(crate) fn render_plotter_preview_dialog(&mut self, ctx: &egui::Context) {
         if !self.plotter_preview.open {
             return;
