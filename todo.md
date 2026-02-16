@@ -91,3 +91,4 @@
 - [ ] Change dt in hindmarsh rose plugin
 - [x] Do a poc to see if its better to extract all the plotter outside the plugin view and manage the connections in window
 - [x] Optimize plotter (100 us dots)
+- [ ] Allow output from live plotter to be output (but with applied offset and amplitude) [only if realtime capabilities are preserved]
