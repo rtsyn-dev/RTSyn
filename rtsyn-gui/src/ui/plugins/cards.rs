@@ -11,14 +11,9 @@
 //! and user-installed plugins with dynamic UI schema support.
 
 use super::*;
-use crate::utils::{format_f64_with_input, normalize_numeric_input, parse_f64_input, truncate_string};
-use crate::WindowFocus;
+use crate::utils::{format_f64_with_input, normalize_numeric_input, parse_f64_input};
 use crate::{
-    has_rt_capabilities, spawn_file_dialog_thread, zenity_file_dialog, BuildAction, LivePlotter,
-    PluginFieldDraft,
-};
-use rtsyn_cli::plugin_creator::{
-    create_plugin, CreatorBehavior, PluginCreateRequest, PluginKindType, PluginLanguage,
+    has_rt_capabilities, spawn_file_dialog_thread, zenity_file_dialog, LivePlotter,
 };
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};

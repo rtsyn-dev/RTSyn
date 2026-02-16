@@ -11,17 +11,12 @@
 //! and user-installed plugins with dynamic UI schema support.
 
 use super::*;
-use crate::utils::{format_f64_with_input, normalize_numeric_input, parse_f64_input, truncate_string};
+use crate::utils::truncate_string;
 use crate::WindowFocus;
 use crate::{
-    has_rt_capabilities, spawn_file_dialog_thread, zenity_file_dialog, BuildAction, LivePlotter,
+    BuildAction,
     PluginFieldDraft,
 };
-use rtsyn_cli::plugin_creator::{
-    create_plugin, CreatorBehavior, PluginCreateRequest, PluginKindType, PluginLanguage,
-};
-use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
 
 impl GuiApp {
 /// Truncates plugin names for display in list views with ellipsis.
