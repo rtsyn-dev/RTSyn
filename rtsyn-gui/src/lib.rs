@@ -8,25 +8,19 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
 use workspace::ConnectionDefinition;
 
-// Operation modules
-mod connection_operations;
-mod dialog_polling;
-mod helpers;
-mod plugin_operations;
-mod workspace_operations;
+// GuiApp implementation modules
+mod app_impl;
 
 // Core modules
-mod daemon_viewer;
-mod formatting;
+mod daemon;
 mod managers;
-mod notifications;
 mod plotter;
 mod state;
 mod ui;
 mod utils;
 
 use managers::{FileDialogManager, NotificationHandler, PlotterManager, PluginBehaviorManager};
-use helpers::{has_rt_capabilities, spawn_file_dialog_thread, zenity_file_dialog, zenity_file_dialog_with_name};
+use utils::{has_rt_capabilities, spawn_file_dialog_thread, zenity_file_dialog, zenity_file_dialog_with_name};
 use plotter::LivePlotter;
 use rtsyn_core::plugin::PluginManager;
 use rtsyn_core::workspace::WorkspaceManager;
@@ -213,7 +207,7 @@ pub fn run_gui(config: GuiConfig) -> Result<(), GuiError> {
         if let Ok(plugin_id) = id_str.parse::<u64>() {
             let socket_path = std::env::var("RTSYN_DAEMON_SOCKET")
                 .unwrap_or_else(|_| "/tmp/rtsyn-daemon.sock".to_string());
-            return daemon_viewer::run_daemon_plugin_viewer(config, plugin_id, socket_path);
+            return daemon::run_daemon_plugin_viewer(config, plugin_id, socket_path);
         }
     }
     let (logic_tx, logic_state_rx) = match spawn_runtime() {
@@ -359,10 +353,6 @@ struct GuiApp {
     uml_export_height: u32,
     uml_preview_zoom: f32,
 }
-
-mod app_impl;
-
-
 
 impl GuiApp {
 }

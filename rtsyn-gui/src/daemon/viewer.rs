@@ -51,7 +51,7 @@ pub fn run_daemon_plugin_viewer(
             let mut fonts = egui::FontDefinitions::default();
             fonts.font_data.insert(
                 "fa".to_string(),
-                egui::FontData::from_static(include_bytes!("../assets/fonts/fa-solid-900.ttf")),
+                egui::FontData::from_static(include_bytes!("../../assets/fonts/fa-solid-900.ttf")),
             );
             let family = fonts
                 .families

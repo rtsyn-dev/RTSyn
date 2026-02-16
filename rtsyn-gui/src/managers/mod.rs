@@ -12,7 +12,6 @@ pub mod file_dialogs;
 pub mod notifications;
 pub mod plugin_behavior;
 pub mod plotter;
-pub mod workspace;
 
 pub use file_dialogs::FileDialogManager;
 pub use notifications::NotificationHandler;

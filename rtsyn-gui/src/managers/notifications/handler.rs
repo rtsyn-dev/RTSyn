@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-use crate::notifications::Notification;
+use super::types::Notification;
 use std::collections::HashMap;
 use std::time::Instant;
 
