@@ -13,6 +13,7 @@
 //! provides visual feedback for connection states, including highlighting and tooltips.
 
 use super::*;
+use crate::HighlightMode;
 use crate::WindowFocus;
 
 impl GuiApp {
@@ -51,6 +52,8 @@ impl GuiApp {
         self.connection_editor.last_selected = None;
         self.connection_editor.last_tab = None;
         self.connection_highlight_plugin_id = None;
+        // Clear connection highlights when entering connection mode
+        self.highlight_mode = HighlightMode::None;
         self.pending_window_focus = Some(match mode {
             ConnectionEditMode::Add => WindowFocus::ConnectionEditorAdd,
             ConnectionEditMode::Remove => WindowFocus::ConnectionEditorRemove,

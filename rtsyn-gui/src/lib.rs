@@ -8,6 +8,13 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
 use workspace::ConnectionDefinition;
 
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum HighlightMode {
+    None,
+    AllConnections(u64),
+    SingleConnection(u64, u64),
+}
+
 // GuiApp implementation modules
 mod app_impl;
 
@@ -20,7 +27,7 @@ mod ui;
 mod utils;
 
 use managers::{FileDialogManager, NotificationHandler, PlotterManager, PluginBehaviorManager};
-use utils::{has_rt_capabilities, spawn_file_dialog_thread, zenity_file_dialog, zenity_file_dialog_with_name};
+use utils::{distance_to_segment, has_rt_capabilities, spawn_file_dialog_thread, zenity_file_dialog, zenity_file_dialog_with_name};
 use plotter::LivePlotter;
 use rtsyn_core::plugin::PluginManager;
 use rtsyn_core::workspace::WorkspaceManager;
@@ -328,6 +335,7 @@ struct GuiApp {
     plugin_positions: HashMap<u64, egui::Pos2>,
     plugin_rects: HashMap<u64, egui::Rect>,
     connections_view_enabled: bool,
+    connection_clicked_this_frame: bool,
     available_cores: usize,
     selected_cores: Vec<bool>,
     frequency_value: f64,
@@ -337,7 +345,8 @@ struct GuiApp {
     output_refresh_hz: f64,
     plotter_screenshot_target: Option<u64>,
     connection_highlight_plugin_id: Option<u64>,
-    selected_plugin_id: Option<u64>,
+    highlight_mode: HighlightMode,
+    pending_highlight: Option<HighlightMode>,
     plugin_context_menu: Option<(u64, egui::Pos2, u64)>,
     connection_context_menu: Option<(Vec<ConnectionDefinition>, egui::Pos2, u64)>,
     connection_editor_host: ConnectionEditorHost,
@@ -638,17 +647,54 @@ impl eframe::App for GuiApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.add_space(8.0);
             let panel_rect = ui.max_rect();
-            self.render_connection_view(ctx, panel_rect);
-            self.render_plugin_cards(ctx, panel_rect);
+            
+            // Reset connection click flag at start of frame
+            self.connection_clicked_this_frame = false;
+            
+            // Three-phase rendering when highlight mode is active
+            if !matches!(self.highlight_mode, HighlightMode::None) {
+                // Phase 1: Render non-connected plugins
+                self.render_plugin_cards_filtered(ctx, panel_rect, Some(false));
+                // Phase 2: Render connections (now on Middle layer via Area)
+                self.render_connection_view(ctx, panel_rect);
+                // Phase 3: Render connected plugins
+                self.render_plugin_cards_filtered(ctx, panel_rect, Some(true));
+            } else {
+                // Normal rendering
+                self.render_connection_view(ctx, panel_rect);
+                self.render_plugin_cards(ctx, panel_rect);
+            }
             if ctx.input(|i| i.pointer.primary_clicked()) {
                 if let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) {
                     let over_plugin = self.plugin_rects.values().any(|rect| rect.contains(pos));
-                    if !over_plugin {
-                        self.selected_plugin_id = None;
+                    // Check if over connection by testing distance to any connection
+                    let over_connection = if !over_plugin {
+                        self.workspace_manager.workspace.connections.iter().any(|conn| {
+                            if let (Some(from_rect), Some(to_rect)) = (
+                                self.plugin_rects.get(&conn.from_plugin),
+                                self.plugin_rects.get(&conn.to_plugin)
+                            ) {
+                                let start = from_rect.center();
+                                let end = to_rect.center();
+                                distance_to_segment(pos, start, end) <= 10.0
+                            } else {
+                                false
+                            }
+                        })
+                    } else {
+                        false
+                    };
+                    if !over_plugin && !over_connection && !self.connection_clicked_this_frame {
+                        self.highlight_mode = HighlightMode::None;
                     }
                 }
             }
         });
+        
+        // Apply pending highlight at end of frame (after rendering)
+        if let Some(pending) = self.pending_highlight.take() {
+            self.highlight_mode = pending;
+        }
 
         self.render_workspace_dialog(ctx);
         self.render_load_workspaces_window(ctx);

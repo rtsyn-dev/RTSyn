@@ -1,4 +1,5 @@
 use crate::GuiApp;
+use crate::HighlightMode;
 use rtsyn_core::plugin::PluginMetadataSource;
 use rtsyn_runtime::LogicMessage;
 use std::path::{Path, PathBuf};
@@ -221,8 +222,14 @@ impl GuiApp {
 
         let removed_id = self.workspace_manager.workspace.plugins[plugin_index].id;
 
-        if self.selected_plugin_id == Some(removed_id) {
-            self.selected_plugin_id = None;
+        // Clear highlight if removed plugin was highlighted
+        if matches!(self.highlight_mode, HighlightMode::AllConnections(id) if id == removed_id) {
+            self.highlight_mode = HighlightMode::None;
+        }
+        if let HighlightMode::SingleConnection(from, to) = self.highlight_mode {
+            if from == removed_id || to == removed_id {
+                self.highlight_mode = HighlightMode::None;
+            }
         }
         if self.windows.plugin_config_id == Some(removed_id) {
             self.windows.plugin_config_id = None;
@@ -285,8 +292,14 @@ impl GuiApp {
         );
 
         for id in &removed_ids {
-            if self.selected_plugin_id == Some(*id) {
-                self.selected_plugin_id = None;
+            // Clear highlight if removed plugin was highlighted
+            if matches!(self.highlight_mode, HighlightMode::AllConnections(hid) if hid == *id) {
+                self.highlight_mode = HighlightMode::None;
+            }
+            if let HighlightMode::SingleConnection(from, to) = self.highlight_mode {
+                if from == *id || to == *id {
+                    self.highlight_mode = HighlightMode::None;
+                }
             }
             if self.windows.plugin_config_id == Some(*id) {
                 self.windows.plugin_config_id = None;
@@ -358,8 +371,14 @@ impl GuiApp {
             .collect();
 
         for id in &plugin_ids {
-            if self.selected_plugin_id == Some(*id) {
-                self.selected_plugin_id = None;
+            // Clear highlight if refreshed plugin was highlighted
+            if matches!(self.highlight_mode, HighlightMode::AllConnections(hid) if hid == *id) {
+                self.highlight_mode = HighlightMode::None;
+            }
+            if let HighlightMode::SingleConnection(from, to) = self.highlight_mode {
+                if from == *id || to == *id {
+                    self.highlight_mode = HighlightMode::None;
+                }
             }
             if self.windows.plugin_config_id == Some(*id) {
                 self.windows.plugin_config_id = None;

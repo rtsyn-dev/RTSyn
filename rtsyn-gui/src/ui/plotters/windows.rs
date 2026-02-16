@@ -1061,7 +1061,6 @@ impl GuiApp {
             }
         }
         for plugin_id in add_connection_requested {
-            self.selected_plugin_id = Some(plugin_id);
             self.open_connection_editor_in_plugin_window(
                 plugin_id,
                 plugin_id,
@@ -1069,7 +1068,6 @@ impl GuiApp {
             );
         }
         for plugin_id in remove_connection_requested {
-            self.selected_plugin_id = Some(plugin_id);
             self.open_connection_editor_in_plugin_window(
                 plugin_id,
                 plugin_id,

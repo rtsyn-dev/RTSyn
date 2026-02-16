@@ -1,4 +1,5 @@
 use crate::GuiApp;
+use crate::HighlightMode;
 use crate::NewPluginDraft;
 use crate::state;
 use crate::state::{
@@ -84,6 +85,7 @@ impl GuiApp {
                 plugin_positions: HashMap::new(),
                 plugin_rects: HashMap::new(),
                 connections_view_enabled: true,
+                connection_clicked_this_frame: false,
                 available_cores,
                 selected_cores: (0..available_cores).map(|i| i == 0).collect(),
                 frequency_value: 1000.0,
@@ -93,7 +95,8 @@ impl GuiApp {
                 output_refresh_hz: 1.0,
                 plotter_screenshot_target: None,
                 connection_highlight_plugin_id: None,
-                selected_plugin_id: None,
+                highlight_mode: HighlightMode::None,
+                pending_highlight: None,
                 plugin_context_menu: None,
                 connection_context_menu: None,
                 connection_editor_host: ConnectionEditorHost::Main,
@@ -119,6 +122,91 @@ impl GuiApp {
             app.apply_workspace_settings();
             app
         }
+
+    /// Handles double-click on a plugin - highlights all its connections.
+    /// Handles double-click on a plugin - highlights all its connections.
+    /// If plugin is already highlighted, clears highlights.
+    pub(crate) fn double_click_plugin(&mut self, plugin_id: u64) {
+        // Check if plugin has connections
+        let has_connections = self.workspace_manager.workspace.connections.iter()
+            .any(|c| c.from_plugin == plugin_id || c.to_plugin == plugin_id);
+        
+        if !has_connections {
+            // Non-connected plugin - just clear any existing highlight
+            self.highlight_mode = HighlightMode::None;
+            self.pending_highlight = None;
+            return;
+        }
+        
+        // Toggle off only if clicking the SAME plugin again
+        if matches!(self.highlight_mode, HighlightMode::AllConnections(id) if id == plugin_id) {
+            self.highlight_mode = HighlightMode::None;
+            self.pending_highlight = None;
+            return;
+        }
+        
+        // If currently highlighted, clear and set pending for next frame
+        if !matches!(self.highlight_mode, HighlightMode::None) {
+            self.pending_highlight = Some(HighlightMode::AllConnections(plugin_id));
+            self.highlight_mode = HighlightMode::None;
+        } else {
+            // Direct switch from None
+            self.highlight_mode = HighlightMode::AllConnections(plugin_id);
+        }
+    }
+    
+    /// Handles click on a connection - highlights only the two connected plugins.
+    pub(crate) fn click_connection(&mut self, from_plugin: u64, to_plugin: u64) {
+        // Mark that connection was clicked this frame
+        self.connection_clicked_this_frame = true;
+        
+        // If clicking the reverse direction of current highlight, keep it (don't switch)
+        if matches!(self.highlight_mode, HighlightMode::SingleConnection(f, t) 
+            if (f == from_plugin && t == to_plugin) || (f == to_plugin && t == from_plugin)) {
+            return;
+        }
+        
+        // Direct switch (same as double-click behavior)
+        self.highlight_mode = HighlightMode::SingleConnection(from_plugin, to_plugin);
+    }
+    
+    /// Checks if a connection should be highlighted.
+    pub(crate) fn should_highlight_connection(&self, from_plugin: u64, to_plugin: u64) -> bool {
+        match self.highlight_mode {
+            HighlightMode::AllConnections(plugin_id) => {
+                from_plugin == plugin_id || to_plugin == plugin_id
+            }
+            HighlightMode::SingleConnection(from, to) => {
+                // Highlight all connections between these two plugins (bidirectional)
+                (from_plugin == from && to_plugin == to) || (from_plugin == to && to_plugin == from)
+            }
+            HighlightMode::None => false,
+        }
+    }
+    
+    /// Gets the set of plugins that should be highlighted based on current highlight mode.
+    pub(crate) fn get_highlighted_plugins(&self) -> HashSet<u64> {
+        match self.highlight_mode {
+            HighlightMode::AllConnections(plugin_id) => {
+                let mut set = HashSet::new();
+                set.insert(plugin_id);
+                for conn in &self.workspace_manager.workspace.connections {
+                    if conn.from_plugin == plugin_id || conn.to_plugin == plugin_id {
+                        set.insert(conn.from_plugin);
+                        set.insert(conn.to_plugin);
+                    }
+                }
+                set
+            }
+            HighlightMode::SingleConnection(from, to) => {
+                let mut set = HashSet::new();
+                set.insert(from);
+                set.insert(to);
+                set
+            }
+            HighlightMode::None => HashSet::new(),
+        }
+    }
 
     /// ```
     pub(crate) fn center_window(ctx: &egui::Context, size: egui::Vec2) -> egui::Pos2 {

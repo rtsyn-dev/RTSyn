@@ -11,6 +11,7 @@
 //! and user-installed plugins with dynamic UI schema support.
 
 use super::*;
+use crate::HighlightMode;
 use crate::utils::{format_f64_with_input, normalize_numeric_input, parse_f64_input};
 use crate::{
     has_rt_capabilities, spawn_file_dialog_thread, zenity_file_dialog, LivePlotter,
@@ -61,6 +62,10 @@ impl GuiApp {
     /// - Implements card height capping to prevent UI overflow
     /// - Optimizes rendering for plugins with many variables
     pub(crate) fn render_plugin_cards(&mut self, ctx: &egui::Context, panel_rect: egui::Rect) {
+        self.render_plugin_cards_filtered(ctx, panel_rect, None);
+    }
+    
+    pub(crate) fn render_plugin_cards_filtered(&mut self, ctx: &egui::Context, panel_rect: egui::Rect, only_connected: Option<bool>) {
         const CARD_WIDTH: f32 = 280.0;
         const CARD_FIXED_HEIGHT: f32 = 132.0;
         const PANEL_PAD: f32 = 8.0;
@@ -120,7 +125,23 @@ impl GuiApp {
         let right_down = ctx.input(|i| i.pointer.secondary_down());
         let card_height_cap = (panel_rect.height() - PANEL_PAD * 2.0).max(220.0);
         let scroll_max_height = (card_height_cap - CARD_FIXED_HEIGHT).max(72.0);
+        let mut plugin_to_select: Option<u64> = None;
+        
+        // Build set of highlighted plugins if filtering
+        let highlighted_plugins = self.get_highlighted_plugins();
+        
+        // Check if we should highlight plugin borders (for connection highlight mode)
+        let has_connection_highlight = !matches!(self.highlight_mode, HighlightMode::None);
+        
         for plugin in &mut self.workspace_manager.workspace.plugins {
+            // Apply filter if specified
+            if let Some(want_connected) = only_connected {
+                let is_highlighted = highlighted_plugins.contains(&plugin.id);
+                if want_connected != is_highlighted {
+                    continue;
+                }
+            }
+            
             let behavior = self
                 .behavior_manager
                 .cached_behaviors
@@ -184,6 +205,10 @@ impl GuiApp {
                 Some(tab_primary)
             } else if selected_id == Some(plugin.id) {
                 Some(tab_secondary)
+            } else if has_connection_highlight && highlighted_plugins.contains(&plugin.id) {
+                // Highlight plugin borders when connections are highlighted
+                // Use blue color that fits the palette
+                Some(egui::Color32::from_rgb(100, 150, 255))
             } else {
                 None
             };
@@ -1268,21 +1293,39 @@ impl GuiApp {
             );
             self.plugin_positions.insert(plugin.id, clamped_pos);
             self.plugin_rects.insert(plugin.id, response.response.rect);
+            
+            // Move connected plugins to top so they render above connections
+            if only_connected == Some(true) {
+                ctx.move_to_top(response.response.layer_id);
+            }
+            
             if ctx.input(|i| {
                 i.pointer
                     .button_double_clicked(egui::PointerButton::Primary)
             }) {
                 if response.response.hovered() && !self.confirm_dialog.open {
                     // Toggle selection
-                    if self.selected_plugin_id == Some(plugin.id) {
-                        self.selected_plugin_id = None;
+                    if matches!(self.highlight_mode, HighlightMode::AllConnections(id) if id == plugin.id) {
+                        self.highlight_mode = HighlightMode::None;
                     } else {
-                        self.selected_plugin_id = Some(plugin.id);
+                        plugin_to_select = Some(plugin.id);
                     }
                 }
             }
-            if response.response.clicked() || response.response.dragged() {
-                ctx.move_to_top(response.response.layer_id);
+            // On click, select plugin if connected, otherwise clear highlight
+            // But skip if this is a double-click (to avoid blink)
+            if response.response.clicked() && !self.confirm_dialog.open 
+                && !ctx.input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary)) {
+                let is_highlighted = highlighted_plugins.contains(&plugin.id);
+                if is_highlighted {
+                    // Clicking a highlighted plugin - select it
+                    if !matches!(self.highlight_mode, HighlightMode::AllConnections(id) if id == plugin.id) {
+                        plugin_to_select = Some(plugin.id);
+                    }
+                } else {
+                    // Clicking a non-highlighted plugin - clear connection highlight
+                    self.highlight_mode = HighlightMode::None;
+                }
             }
             if ctx.input(|i| i.pointer.button_released(egui::PointerButton::Secondary)) {
                 if let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) {
@@ -1375,6 +1418,11 @@ impl GuiApp {
 
         if let Some(message) = pending_info {
             self.show_info("Plugin", &message);
+        }
+        
+        // Call shared function after loop to avoid borrow checker issues
+        if let Some(plugin_id) = plugin_to_select {
+            self.double_click_plugin(plugin_id);
         }
     }
 

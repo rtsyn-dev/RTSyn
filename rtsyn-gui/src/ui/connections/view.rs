@@ -13,6 +13,7 @@
 //! provides visual feedback for connection states, including highlighting and tooltips.
 
 use super::*;
+use crate::HighlightMode;
 
 impl GuiApp {
 /// Renders the visual connection lines between plugins in the workspace.
@@ -66,10 +67,36 @@ impl GuiApp {
             return;
         }
 
-        let painter = ctx.layer_painter(egui::LayerId::new(
-            egui::Order::Background,
-            egui::Id::new("connection_lines"),
-        ));
+        // When highlight mode active, render in two passes
+        if !matches!(self.highlight_mode, HighlightMode::None) {
+            // Pass 1: Non-highlighted connections on Background layer
+            let painter = ctx.layer_painter(egui::LayerId::new(
+                egui::Order::Background,
+                egui::Id::new("connection_lines_bg"),
+            ));
+            self.render_connections_internal(ctx, panel_rect, &painter, false);
+            
+            // Pass 2: Highlighted connections on Middle layer
+            egui::Area::new(egui::Id::new("connection_lines_area"))
+                .order(egui::Order::Middle)
+                .fixed_pos(panel_rect.min)
+                .interactable(false)
+                .movable(false)
+                .show(ctx, |ui| {
+                    let painter = ui.painter();
+                    self.render_connections_internal(ctx, panel_rect, painter, true);
+                });
+        } else {
+            // Normal mode: all connections on Background layer
+            let painter = ctx.layer_painter(egui::LayerId::new(
+                egui::Order::Background,
+                egui::Id::new("connection_lines"),
+            ));
+            self.render_connections_internal(ctx, panel_rect, &painter, false);
+        }
+    }
+    
+    fn render_connections_internal(&mut self, ctx: &egui::Context, panel_rect: egui::Rect, painter: &egui::Painter, only_highlighted: bool) {
 
         let mut groups: HashMap<(u64, u64), (Vec<String>, Vec<String>, Vec<usize>)> =
             HashMap::new();
@@ -100,11 +127,6 @@ impl GuiApp {
 
         let out_color = egui::Color32::from_rgb(80, 200, 120);
         let in_color = egui::Color32::from_rgb(255, 170, 80);
-        let selected_plugin = if self.confirm_dialog.open {
-            None
-        } else {
-            self.selected_plugin_id
-        };
         let with_alpha = |color: egui::Color32, alpha: u8| {
             egui::Color32::from_rgba_premultiplied(color.r(), color.g(), color.b(), alpha)
         };
@@ -151,11 +173,16 @@ impl GuiApp {
                 egui::Vec2::ZERO
             };
 
-            let is_selected = selected_plugin
-                .map(|selected| selected == from_id || selected == to_id)
-                .unwrap_or(false);
-            let (out_line, in_line, stroke) = if let Some(_) = selected_plugin {
-                if is_selected {
+            let is_highlighted = self.should_highlight_connection(from_id, to_id);
+            let has_any_highlight = !matches!(self.highlight_mode, HighlightMode::None);
+            
+            // Filter based on only_highlighted parameter
+            if only_highlighted != is_highlighted {
+                continue;
+            }
+            
+            let (out_line, in_line, stroke) = if has_any_highlight {
+                if is_highlighted {
                     (out_color, in_color, 4.0)
                 } else {
                     (with_alpha(out_color, 80), with_alpha(in_color, 80), 1.5)
@@ -305,6 +332,10 @@ impl GuiApp {
                 if !matched.is_empty() {
                     self.connection_context_menu = Some((matched, pointer, ctx.frame_nr()));
                 }
+            }
+            // Handle primary click on connection
+            if ctx.input(|i| i.pointer.primary_clicked()) && !self.confirm_dialog.open {
+                self.click_connection(from_id, to_id);
             }
             let outputs_len = outputs.len();
             let inputs_len = inputs.len();

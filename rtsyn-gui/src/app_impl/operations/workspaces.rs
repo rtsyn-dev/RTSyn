@@ -1,5 +1,5 @@
 use crate::state::WorkspaceDialogMode;
-use crate::{spawn_file_dialog_thread, GuiApp};
+use crate::{spawn_file_dialog_thread, GuiApp, HighlightMode};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -33,6 +33,8 @@ impl GuiApp {
         {
             Ok(()) => {
                 let name = self.workspace_manager.workspace.name.clone();
+                // Clear highlight mode when loading new workspace
+                self.highlight_mode = HighlightMode::None;
                 self.refresh_installed_library_paths();
                 self.inject_library_paths_into_workspace();
                 self.apply_loads_started_on_load();
