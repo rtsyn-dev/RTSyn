@@ -4,6 +4,7 @@ use rtsyn_runtime::spawn_runtime;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::process;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
 use workspace::ConnectionDefinition;
@@ -22,6 +23,7 @@ mod utils;
 use managers::{FileDialogManager, NotificationHandler, PlotterManager, PluginBehaviorManager};
 use utils::{has_rt_capabilities, spawn_file_dialog_thread, zenity_file_dialog, zenity_file_dialog_with_name};
 use plotter::LivePlotter;
+use rtsyn_cli::plugin_creator::PluginKindType;
 use rtsyn_core::plugin::PluginManager;
 use rtsyn_core::workspace::WorkspaceManager;
 use state::{
@@ -86,16 +88,26 @@ enum WindowFocus {
     Help,
 }
 
+static NEXT_PLUGIN_FIELD_ID: AtomicU64 = AtomicU64::new(1);
+
 #[derive(Debug, Clone)]
 struct PluginFieldDraft {
+    id: u64,
     name: String,
     type_name: String,
     default_value: String,
 }
 
+impl PluginFieldDraft {
+    fn next_id() -> u64 {
+        NEXT_PLUGIN_FIELD_ID.fetch_add(1, Ordering::Relaxed)
+    }
+}
+
 impl Default for PluginFieldDraft {
     fn default() -> Self {
         Self {
+            id: PluginFieldDraft::next_id(),
             name: String::new(),
             type_name: "f64".to_string(),
             default_value: "0.0".to_string(),
@@ -107,6 +119,7 @@ impl Default for PluginFieldDraft {
 struct NewPluginDraft {
     name: String,
     language: String,
+    plugin_type: PluginKindType,
     main_characteristics: String,
     autostart: bool,
     supports_start_stop: bool,
@@ -114,8 +127,12 @@ struct NewPluginDraft {
     supports_apply: bool,
     external_window: bool,
     starts_expanded: bool,
-    required_input_ports_csv: String,
-    required_output_ports_csv: String,
+    required_inputs_all: bool,
+    required_outputs_all: bool,
+    required_inputs: Vec<String>,
+    required_outputs: Vec<String>,
+    required_input_selection: String,
+    required_output_selection: String,
     variables: Vec<PluginFieldDraft>,
     inputs: Vec<PluginFieldDraft>,
     outputs: Vec<PluginFieldDraft>,
@@ -127,6 +144,7 @@ impl Default for NewPluginDraft {
         Self {
             name: String::new(),
             language: "rust".to_string(),
+            plugin_type: PluginKindType::Standard,
             main_characteristics: String::new(),
             autostart: false,
             supports_start_stop: true,
@@ -134,8 +152,12 @@ impl Default for NewPluginDraft {
             supports_apply: false,
             external_window: false,
             starts_expanded: true,
-            required_input_ports_csv: String::new(),
-            required_output_ports_csv: String::new(),
+            required_inputs_all: false,
+            required_outputs_all: false,
+            required_inputs: Vec::new(),
+            required_outputs: Vec::new(),
+            required_input_selection: String::new(),
+            required_output_selection: String::new(),
             variables: Vec::new(),
             inputs: Vec::new(),
             outputs: Vec::new(),
@@ -357,6 +379,13 @@ struct GuiApp {
 }
 
 impl GuiApp {
+    fn plugin_creator_field_names(fields: &[PluginFieldDraft]) -> Vec<String> {
+        fields
+            .iter()
+            .map(|entry| entry.name.trim().to_string())
+            .filter(|name| !name.is_empty())
+            .collect()
+    }
 }
 
 impl eframe::App for GuiApp {

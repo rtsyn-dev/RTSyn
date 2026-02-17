@@ -248,9 +248,32 @@ impl GuiApp {
         let outputs_spec = Self::plugin_creator_draft_to_spec(&self.new_plugin_draft.outputs);
         let internal_spec =
             Self::plugin_creator_draft_to_spec(&self.new_plugin_draft.internal_variables);
+        let input_names = Self::plugin_creator_field_names(&self.new_plugin_draft.inputs);
+        let output_names = Self::plugin_creator_field_names(&self.new_plugin_draft.outputs);
+        let required_inputs = if self.new_plugin_draft.required_inputs_all {
+            input_names.clone()
+        } else {
+            self.new_plugin_draft
+                .required_inputs
+                .iter()
+                .filter(|name| input_names.contains(name))
+                .cloned()
+                .collect()
+        };
+        let required_outputs = if self.new_plugin_draft.required_outputs_all {
+            output_names.clone()
+        } else {
+            self.new_plugin_draft
+                .required_outputs
+                .iter()
+                .filter(|name| output_names.contains(name))
+                .cloned()
+                .collect()
+        };
         self.create_plugin_from_specs(
             name,
             &self.new_plugin_draft.language,
+            self.new_plugin_draft.plugin_type,
             &self.new_plugin_draft.main_characteristics,
             self.new_plugin_draft.autostart,
             self.new_plugin_draft.supports_start_stop,
@@ -258,8 +281,8 @@ impl GuiApp {
             self.new_plugin_draft.supports_apply,
             self.new_plugin_draft.external_window,
             self.new_plugin_draft.starts_expanded,
-            &self.new_plugin_draft.required_input_ports_csv,
-            &self.new_plugin_draft.required_output_ports_csv,
+            &required_inputs,
+            &required_outputs,
             &vars_spec,
             &inputs_spec,
             &outputs_spec,
@@ -284,8 +307,8 @@ impl GuiApp {
     /// - `supports_apply`: Whether plugin supports apply/modify operations
     /// - `external_window`: Whether plugin opens in external window
     /// - `starts_expanded`: Whether plugin UI starts in expanded state
-    /// - `required_input_ports_csv`: Comma-separated list of required input ports
-    /// - `required_output_ports_csv`: Comma-separated list of required output ports
+    /// - `required_input_ports`: List of required input ports
+    /// - `required_output_ports`: List of required output ports
     /// - `vars_spec`: Variable specifications in "name:type=default" format
     /// - `inputs_spec`: Input port specifications
     /// - `outputs_spec`: Output port specifications
@@ -304,6 +327,7 @@ impl GuiApp {
         &self,
         name: &str,
         language: &str,
+        plugin_type: PluginKindType,
         main: &str,
         autostart: bool,
         supports_start_stop: bool,
@@ -311,8 +335,8 @@ impl GuiApp {
         supports_apply: bool,
         external_window: bool,
         starts_expanded: bool,
-        required_input_ports_csv: &str,
-        required_output_ports_csv: &str,
+        required_input_ports: &[String],
+        required_output_ports: &[String],
         vars_spec: &str,
         inputs_spec: &str,
         outputs_spec: &str,
@@ -365,7 +389,7 @@ impl GuiApp {
                     .to_string()
             },
             language: parsed_language,
-            plugin_type: PluginKindType::Standard,
+            plugin_type,
             behavior: CreatorBehavior {
                 autostart,
                 supports_start_stop,
@@ -373,18 +397,8 @@ impl GuiApp {
                 supports_apply,
                 external_window,
                 starts_expanded,
-                required_input_ports: required_input_ports_csv
-                    .split(',')
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_string)
-                    .collect(),
-                required_output_ports: required_output_ports_csv
-                    .split(',')
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_string)
-                    .collect(),
+                required_input_ports: required_input_ports.to_vec(),
+                required_output_ports: required_output_ports.to_vec(),
             },
             inputs,
             outputs,
