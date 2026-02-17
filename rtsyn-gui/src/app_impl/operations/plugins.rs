@@ -199,6 +199,49 @@ impl GuiApp {
         self.mark_workspace_dirty();
     }
 
+    /// Starts every plugin in the current workspace.
+    pub(crate) fn start_all_plugins(&mut self) {
+        let mut changed = false;
+        for plugin in &mut self.workspace_manager.workspace.plugins {
+            if !plugin.running {
+                plugin.running = true;
+                changed = true;
+            }
+        }
+        if changed {
+            let _ = self
+                .state_sync
+                .logic_tx
+                .send(LogicMessage::SetAllPluginsRunning(true));
+            self.open_running_plotters();
+            self.mark_workspace_dirty();
+        }
+    }
+
+    /// Stops every running plugin in the current workspace.
+    pub(crate) fn stop_all_plugins(&mut self) {
+        let mut changed = false;
+        for plugin in &mut self.workspace_manager.workspace.plugins {
+            if plugin.running {
+                plugin.running = false;
+                changed = true;
+            }
+        }
+        if changed {
+            let _ = self
+                .state_sync
+                .logic_tx
+                .send(LogicMessage::SetAllPluginsRunning(false));
+            for plotter in self.plotter_manager.plotters.values() {
+                if let Ok(mut plotter) = plotter.lock() {
+                    plotter.open = false;
+                }
+            }
+            self.recompute_plotter_ui_hz();
+            self.mark_workspace_dirty();
+        }
+    }
+
     /// Removes a plugin from the workspace by index.
     ///
     /// # Parameters

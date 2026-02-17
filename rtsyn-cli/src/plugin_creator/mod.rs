@@ -6,9 +6,9 @@ pub mod templates;
 pub mod validation;
 
 pub use validation::{
-    normalize_default, parse_variable_line, quote_array, sanitize_names, strip_language_suffix,
-    to_kebab_case, to_pascal_case, CreatorBehavior, FieldType, PluginKindType, PluginLanguage,
-    PluginVariable,
+    ensure_unique_field_names, normalize_default, parse_variable_line, quote_array, sanitize_names,
+    sanitize_unique_names, strip_language_suffix, to_kebab_case, to_pascal_case, CreatorBehavior,
+    FieldNameAllocator, FieldType, PluginKindType, PluginLanguage, PluginVariable,
 };
 
 pub use templates::{
@@ -57,14 +57,23 @@ pub fn create_plugin(req: &PluginCreateRequest) -> Result<PathBuf, String> {
 
     let (plugin_dir, src_dir) = create_plugin_structure(&req.base_dir, &folder_base)?;
 
-    let inputs = sanitize_names(&req.inputs);
-    let outputs = sanitize_names(&req.outputs);
-    let internals = sanitize_names(&req.internal_variables);
-    let numeric_vars: Vec<&PluginVariable> = req
-        .variables
+    let inputs = sanitize_unique_names(&req.inputs, "input ports")?;
+    let outputs = sanitize_unique_names(&req.outputs, "output ports")?;
+    let internals = sanitize_unique_names(&req.internal_variables, "internal variables")?;
+    let mut variables = req.variables.clone();
+    let variable_names: Vec<String> = variables.iter().map(|v| v.name.clone()).collect();
+    ensure_unique_field_names(&variable_names, "plugin variables")?;
+    let mut allocator = FieldNameAllocator::new();
+    for var in variables.iter_mut() {
+        var.name = allocator.allocate(&var.name, "_cfg");
+    }
+    let numeric_vars: Vec<&PluginVariable> = variables
         .iter()
         .filter(|v| matches!(v.field_type, FieldType::Float | FieldType::Int))
         .collect();
+    let inputs = allocator.allocate_series(inputs, "_in");
+    let outputs = allocator.allocate_series(outputs, "_out");
+    let internals = allocator.allocate_series(internals, "_intern");
 
     let input_array = quote_array(&inputs);
     let output_array = quote_array(&outputs);
@@ -78,7 +87,7 @@ pub fn create_plugin(req: &PluginCreateRequest) -> Result<PathBuf, String> {
         generate_match_arms(&numeric_vars, &inputs, &outputs, &internals);
     let (c_config_arms, c_input_arms, c_output_arms) =
         generate_c_match_arms(&numeric_vars, &inputs, &outputs);
-    let (default_vars_vec, default_vars_json_pairs) = generate_default_vars(&req.variables);
+    let (default_vars_vec, default_vars_json_pairs) = generate_default_vars(&variables);
 
     let process_body = generate_process_body(req.plugin_type, &inputs, &outputs, &internals);
     let c_process_body = generate_c_process_body(req.plugin_type, &inputs, &outputs, &internals);

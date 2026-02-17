@@ -27,6 +27,7 @@ pub enum LogicMessage {
     UpdateSettings(LogicSettings),
     UpdateWorkspace(WorkspaceDefinition),
     SetPluginRunning(u64, bool),
+    SetAllPluginsRunning(bool),
     RestartPlugin(u64),
     QueryPluginBehavior(
         String,

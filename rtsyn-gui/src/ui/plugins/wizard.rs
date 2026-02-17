@@ -14,7 +14,8 @@ use super::*;
 use crate::WindowFocus;
 use crate::{has_rt_capabilities, spawn_file_dialog_thread, zenity_file_dialog, PluginFieldDraft};
 use rtsyn_cli::plugin_creator::{
-    create_plugin, CreatorBehavior, PluginCreateRequest, PluginKindType, PluginLanguage,
+    create_plugin, normalize_default, CreatorBehavior, FieldType, PluginCreateRequest,
+    PluginKindType, PluginLanguage,
 };
 use std::sync::mpsc;
 
@@ -47,6 +48,20 @@ impl GuiApp {
             "i64" | "i32" => "0",
             "string" | "file" | "path" => "",
             _ => "0.0",
+        }
+    }
+
+    pub(crate) fn normalize_field_default_for_type(type_name: &str, value: &mut String) {
+        if value.trim().is_empty() {
+            *value = Self::plugin_creator_default_by_type(type_name).to_string();
+            return;
+        }
+        let field_type = match FieldType::parse(type_name) {
+            Ok(ft) => ft,
+            Err(_) => return,
+        };
+        if let Ok(normalized) = normalize_default(field_type, value.trim()) {
+            *value = normalized;
         }
     }
 

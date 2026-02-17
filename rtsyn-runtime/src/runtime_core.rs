@@ -137,6 +137,13 @@ pub fn run_runtime_loop(
                     LogicMessage::SetPluginRunning(plugin_id, running) => {
                         plugin_running.insert(plugin_id, running);
                     }
+                    LogicMessage::SetAllPluginsRunning(running) => {
+                        if let Some(ws) = workspace.as_ref() {
+                            for plugin in &ws.plugins {
+                                plugin_running.insert(plugin.id, running);
+                            }
+                        }
+                    }
                     LogicMessage::QueryPluginBehavior(kind, library_path, response_tx) => {
                         let behavior = match kind.as_str() {
                             "csv_recorder" => Some(CsvRecorderedPlugin::new(0).behavior()),

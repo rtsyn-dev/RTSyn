@@ -327,6 +327,12 @@ impl GuiApp {
                                                 )
                                                 .to_string();
                                         }
+                                        let field = &mut fields[current_idx];
+                                        let type_name = field.type_name.clone();
+                                        Self::normalize_field_default_for_type(
+                                            &type_name,
+                                            &mut field.default_value,
+                                        );
                                     }
                                     if show_default_value {
                                         let default_hint = Self::plugin_creator_default_by_type(
@@ -344,6 +350,12 @@ impl GuiApp {
                                             .changed()
                                         {
                                             changed = true;
+                                            let field = &mut fields[current_idx];
+                                            let type_name = field.type_name.clone();
+                                            Self::normalize_field_default_for_type(
+                                                &type_name,
+                                                &mut field.default_value,
+                                            );
                                         }
                                     }
                                     if ui.small_button("Remove").clicked() {

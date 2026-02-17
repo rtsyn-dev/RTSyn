@@ -18,6 +18,14 @@ pub enum RuntimePlugin {
     Dynamic(DynamicPluginInstance),
 }
 
+fn split_display_entry_key(entry: &str) -> String {
+    if let Some((key, _)) = entry.split_once('|') {
+        key.trim().to_string()
+    } else {
+        entry.trim().to_string()
+    }
+}
+
 pub struct DynamicPluginInstance {
     pub _lib: Library,
     pub api: *const PluginApi,
@@ -106,9 +114,15 @@ impl DynamicPluginInstance {
             let json = unsafe { raw.into_string() };
             serde_json::from_str::<DisplaySchema>(&json).ok()
         });
-        let internal_variables = display_schema
+        let internal_variables: Vec<String> = display_schema
             .as_ref()
-            .map(|schema| schema.variables.clone())
+            .map(|schema| {
+                schema
+                    .variables
+                    .iter()
+                    .map(|entry| split_display_entry_key(entry))
+                    .collect()
+            })
             .unwrap_or_default();
         let internal_variable_bytes = internal_variables
             .iter()

@@ -1,4 +1,5 @@
 use serde_json::{Number, Value};
+use std::collections::HashSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PluginLanguage {
@@ -194,6 +195,14 @@ pub fn parse_variable_line(line: &str) -> Result<PluginVariable, String> {
     PluginVariable::new(name, field_type, default_part)
 }
 
+fn format_float_value(v: f64) -> String {
+    if v.fract().abs() < f64::EPSILON {
+        format!("{v:.1}")
+    } else {
+        v.to_string()
+    }
+}
+
 pub fn normalize_default(field_type: FieldType, value: &str) -> Result<String, String> {
     let trimmed = value.trim();
     let candidate = if trimmed.is_empty() {
@@ -203,10 +212,11 @@ pub fn normalize_default(field_type: FieldType, value: &str) -> Result<String, S
     };
     match field_type {
         FieldType::Float => {
-            let v = candidate
+            let normalized = candidate.replace(',', ".");
+            let v = normalized
                 .parse::<f64>()
-                .map_err(|_| format!("Invalid float default '{candidate}'"))?;
-            Ok(v.to_string())
+                .map_err(|_| format!("Invalid float default '{normalized}'"))?;
+            Ok(format_float_value(v))
         }
         FieldType::Bool => match candidate.to_ascii_lowercase().as_str() {
             "true" | "1" | "yes" | "y" => Ok("true".to_string()),
@@ -287,12 +297,88 @@ pub fn to_pascal_case(input: &str) -> String {
         .collect::<String>()
 }
 
-pub fn sanitize_names(items: &[String]) -> Vec<String> {
-    items
-        .iter()
-        .map(|s| to_snake_case(s))
-        .filter(|s| !s.is_empty())
-        .collect()
+pub fn sanitize_names(items: &[String]) -> Result<Vec<String>, String> {
+    sanitize_unique_names(items, "field")
+}
+
+pub fn sanitize_unique_names(items: &[String], category: &str) -> Result<Vec<String>, String> {
+    let mut seen = HashSet::new();
+    let mut result = Vec::new();
+    for item in items {
+        let sanitized = to_snake_case(item);
+        if sanitized.is_empty() {
+            continue;
+        }
+        if !seen.insert(sanitized.clone()) {
+            return Err(format!("Duplicate {category} name '{sanitized}'"));
+        }
+        result.push(sanitized);
+    }
+    Ok(result)
+}
+
+pub fn ensure_unique_field_names(names: &[String], category: &str) -> Result<(), String> {
+    let mut seen = HashSet::new();
+    for name in names {
+        if !seen.insert(name.clone()) {
+            return Err(format!("Duplicate {category} name '{name}'"));
+        }
+    }
+    Ok(())
+}
+
+pub struct FieldNameAllocator {
+    used: HashSet<String>,
+}
+
+impl FieldNameAllocator {
+    pub fn new() -> Self {
+        Self {
+            used: HashSet::new(),
+        }
+    }
+
+    pub fn allocate(&mut self, base: &str, suffix: &str) -> String {
+        if self.used.insert(base.to_string()) {
+            return base.to_string();
+        }
+        let mut idx = 1;
+        loop {
+            let candidate = if idx == 1 {
+                format!("{base}{suffix}")
+            } else {
+                format!("{base}{suffix}{idx}")
+            };
+            if self.used.insert(candidate.clone()) {
+                return candidate;
+            }
+            idx += 1;
+        }
+    }
+
+    pub fn allocate_series(&mut self, bases: Vec<String>, suffix: &str) -> Vec<String> {
+        bases
+            .into_iter()
+            .map(|base| self.allocate(&base, suffix))
+            .collect()
+    }
+}
+
+pub fn uniquify_plugin_variable_names(vars: &mut [PluginVariable], duplicate_suffix: &str) {
+    let mut seen = HashSet::new();
+    for var in vars.iter_mut() {
+        let base = var.name.clone();
+        if seen.insert(base.clone()) {
+            continue;
+        }
+        let mut candidate = format!("{base}{duplicate_suffix}");
+        let mut idx = 2;
+        while !seen.insert(candidate.clone()) {
+            candidate = format!("{base}{duplicate_suffix}{idx}");
+            idx += 1;
+        }
+        var.name = candidate;
+    }
 }
 
 pub fn quote_array(items: &[String]) -> String {

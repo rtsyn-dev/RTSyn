@@ -226,6 +226,7 @@ impl GuiApp {
                     Ok(path) => {
                         self.status = format!("Plugin scaffold created at {}", path.display());
                         self.show_info("Plugin Creator", &self.status.clone());
+                        self.windows.new_plugin_open = false;
                     }
                     Err(err) => {
                         self.status = err.clone();

@@ -660,6 +660,15 @@ impl eframe::App for GuiApp {
                     });
 
                     ui.menu_button("Runtime", |ui| {
+                        if ui.button("Start all plugins").clicked() {
+                            self.start_all_plugins();
+                            ui.close_menu();
+                        }
+                        if ui.button("Stop all plugins").clicked() {
+                            self.stop_all_plugins();
+                            ui.close_menu();
+                        }
+                        ui.add(egui::Separator::default());
                         if ui.button("UML diagram").clicked() {
                             self.windows.uml_diagram_open = true;
                             self.pending_window_focus = Some(WindowFocus::UmlDiagram);

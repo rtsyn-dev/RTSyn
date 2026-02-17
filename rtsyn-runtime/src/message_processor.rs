@@ -15,6 +15,7 @@ pub enum MessageAction {
     UpdateSettings(LogicSettings, Duration),
     UpdateWorkspace(WorkspaceDefinition, RuntimeConnectionCache),
     SetPluginRunning(u64, bool),
+    SetAllPluginsRunning(bool),
     RestartPlugin(u64),
     SetPluginVariable(u64, String, serde_json::Value),
 }
@@ -100,6 +101,9 @@ pub fn process_message(
         }
         LogicMessage::SetPluginRunning(plugin_id, running) => {
             Some(MessageAction::SetPluginRunning(plugin_id, running))
+        }
+        LogicMessage::SetAllPluginsRunning(running) => {
+            Some(MessageAction::SetAllPluginsRunning(running))
         }
         LogicMessage::RestartPlugin(plugin_id) => {
             if let Some(ws) = workspace.as_ref() {

@@ -1026,13 +1026,16 @@ impl GuiApp {
                                                     .default_open(starts_expanded)
                                                     .show(ui, |ui| {
                                                         ui.add_space(4.0);
-                                                        for input_name in &schema.inputs {
+                                                        for input_entry in &schema.inputs {
+                                                            let (input_key, input_label) =
+                                                                Self::split_display_entry(input_entry);
+                                                            let key_owned = input_key.to_string();
                                                             let value = input_values
-                                                                .get(&(plugin.id, input_name.clone()))
+                                                                .get(&(plugin.id, key_owned.clone()))
                                                                 .copied()
                                                                 .unwrap_or(0.0);
                                                             let mut value_text = format!("{value:.4}");
-                                                            kv_row_wrapped(ui, input_name, 140.0, |ui| {
+                                                            kv_row_wrapped(ui, input_label, 140.0, |ui| {
                                                                 ui.add_enabled_ui(false, |ui| {
                                                                     ui.add_sized(
                                                                         [80.0, 0.0],
@@ -1053,9 +1056,12 @@ impl GuiApp {
                                                     .default_open(starts_expanded)
                                                     .show(ui, |ui| {
                                                         ui.add_space(4.0);
-                                                        for output_name in &schema.outputs {
+                                                        for output_entry in &schema.outputs {
+                                                            let (output_key, output_label) =
+                                                                Self::split_display_entry(output_entry);
+                                                            let key_owned = output_key.to_string();
                                                             let value = computed_outputs
-                                                                .get(&(plugin.id, output_name.clone()))
+                                                                .get(&(plugin.id, key_owned.clone()))
                                                                 .copied()
                                                                 .unwrap_or(0.0);
                                                             let mut value_text = if value == 0.0 {
@@ -1067,7 +1073,7 @@ impl GuiApp {
                                                             } else {
                                                                 format!("{value:.6}")
                                                             };
-                                                            kv_row_wrapped(ui, output_name, 140.0, |ui| {
+                                                            kv_row_wrapped(ui, output_label, 140.0, |ui| {
                                                                 ui.add_enabled_ui(false, |ui| {
                                                                     ui.add_sized(
                                                                         [80.0, 0.0],
@@ -1087,15 +1093,25 @@ impl GuiApp {
                                                     .default_open(starts_expanded)
                                                     .show(ui, |ui| {
                                                         ui.add_space(4.0);
-                                                        for var_name in &schema.variables {
+                                                        for var_entry in &schema.variables {
+                                                            let (var_key, var_label) =
+                                                                Self::split_display_entry(var_entry);
+                                                            let key_owned = var_key.to_string();
                                                             let value = internal_variable_values
-                                                                .get(&(plugin.id, var_name.clone()))
+                                                                .get(&(plugin.id, key_owned.clone()))
                                                                 .cloned()
                                                                 .unwrap_or_else(|| {
-                                                                    if matches!(plugin.kind.as_str(), "csv_recorder" | "live_plotter") {
-                                                                        match var_name.as_str() {
-                                                                            "input_count" => serde_json::Value::from(0),
-                                                                            "running" => serde_json::Value::from(false),
+                                                                    if matches!(
+                                                                        plugin.kind.as_str(),
+                                                                        "csv_recorder" | "live_plotter"
+                                                                    ) {
+                                                                        match var_key {
+                                                                            "input_count" => {
+                                                                                serde_json::Value::from(0)
+                                                                            }
+                                                                            "running" => {
+                                                                                serde_json::Value::from(false)
+                                                                            }
                                                                             _ => serde_json::Value::from(0.0),
                                                                         }
                                                                     } else {
@@ -1134,7 +1150,7 @@ impl GuiApp {
                                                                 }
                                                                 _ => value.to_string(),
                                                             };
-                                                            kv_row_wrapped(ui, var_name, 140.0, |ui| {
+                                                            kv_row_wrapped(ui, var_label, 140.0, |ui| {
                                                                 ui.add_enabled_ui(false, |ui| {
                                                                     ui.add_sized(
                                                                         [80.0, 0.0],
@@ -1449,6 +1465,15 @@ impl GuiApp {
         }
     }
 
+    fn split_display_entry(entry: &str) -> (&str, &str) {
+        if let Some((key, label)) = entry.split_once('|') {
+            (key.trim(), label.trim())
+        } else {
+            let trimmed = entry.trim();
+            (trimmed, trimmed)
+        }
+    }
+
     /// Renders a plugin preview panel showing plugin information and capabilities.
     ///
     /// This function creates a detailed preview of a plugin's characteristics, including
@@ -1519,7 +1544,11 @@ impl GuiApp {
                         })
                         .unwrap_or_default()
                 });
-                let mut inputs_label = inputs.join(", ");
+                let input_labels: Vec<String> = inputs
+                    .iter()
+                    .map(|entry| Self::split_display_entry(entry).1.to_string())
+                    .collect();
+                let mut inputs_label = input_labels.join(", ");
                 let is_extendable = matches!(plugin_kind, "csv_recorder" | "live_plotter");
                 if is_extendable {
                     if inputs_label.is_empty() {
@@ -1534,7 +1563,13 @@ impl GuiApp {
                     .map(|p| {
                         p.display_schema
                             .as_ref()
-                            .map(|s| s.outputs.join(", "))
+                            .map(|s| {
+                                s.outputs
+                                    .iter()
+                                    .map(|entry| Self::split_display_entry(entry).1.to_string())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            })
                             .unwrap_or_else(|| p.metadata_outputs.join(", "))
                     })
                     .unwrap_or_default();
