@@ -1682,4 +1682,152 @@ impl GuiApp {
 
         rebuilt.join(" ")
     }
+
+    pub(crate) fn render_state_view(&mut self, ctx: &egui::Context, panel_rect: egui::Rect) {
+        self.render_state_view_filtered(ctx, panel_rect, None);
+    }
+
+    pub(crate) fn render_state_view_filtered(&mut self, ctx: &egui::Context, panel_rect: egui::Rect, only_connected: Option<bool>) {
+        const CIRCLE_RADIUS: f32 = 30.0;
+        const SPACING: f32 = 100.0;
+        
+        let highlighted_plugins = self.get_highlighted_plugins();
+        let has_connection_highlight = !matches!(self.highlight_mode, HighlightMode::None);
+        
+        let current_id = self.connection_editor.plugin_id;
+        let selected_id = self.connection_highlight_plugin_id;
+        let tab_primary = match self.connection_editor.tab {
+            ConnectionEditTab::Inputs => egui::Color32::from_rgb(255, 170, 80),
+            ConnectionEditTab::Outputs => egui::Color32::from_rgb(80, 200, 120),
+        };
+        let tab_secondary = match self.connection_editor.tab {
+            ConnectionEditTab::Inputs => egui::Color32::from_rgb(80, 200, 120),
+            ConnectionEditTab::Outputs => egui::Color32::from_rgb(255, 170, 80),
+        };
+        
+        let mut plugin_to_select: Option<u64> = None;
+        
+        let visible_plugins: Vec<_> = self.workspace_manager.workspace.plugins
+            .iter()
+            .filter(|p| {
+                let external = self.behavior_manager.cached_behaviors
+                    .get(&p.kind)
+                    .map(|b| b.external_window)
+                    .unwrap_or(false);
+                if external {
+                    return false;
+                }
+                if let Some(only_conn) = only_connected {
+                    let is_connected = highlighted_plugins.contains(&p.id);
+                    only_conn == is_connected
+                } else {
+                    true
+                }
+            })
+            .collect();
+        
+        let name_by_kind: std::collections::HashMap<String, String> = self.plugin_manager.installed_plugins
+            .iter()
+            .map(|p| (p.manifest.kind.clone(), p.manifest.name.clone()))
+            .collect();
+        
+        let cols = ((panel_rect.width() / SPACING).floor() as usize).max(1);
+        
+        for (index, plugin) in visible_plugins.iter().enumerate() {
+            let col = index % cols;
+            let row = index / cols;
+            let default_pos = panel_rect.min + egui::vec2(
+                50.0 + col as f32 * SPACING,
+                50.0 + row as f32 * SPACING
+            );
+            
+            let pos = self.plugin_positions.get(&plugin.id).copied().unwrap_or(default_pos);
+            
+            let stroke = if current_id == Some(plugin.id) {
+                egui::Stroke::new(3.0, tab_primary)
+            } else if selected_id == Some(plugin.id) {
+                egui::Stroke::new(3.0, tab_secondary)
+            } else if has_connection_highlight && highlighted_plugins.contains(&plugin.id) {
+                egui::Stroke::new(3.0, egui::Color32::from_rgb(100, 150, 255))
+            } else {
+                egui::Stroke::new(1.0, egui::Color32::from_gray(100))
+            };
+            
+            let area_id = egui::Id::new(("state_circle", plugin.id));
+            let response = egui::Area::new(area_id)
+                .order(egui::Order::Middle)
+                .default_pos(pos - egui::vec2(CIRCLE_RADIUS, CIRCLE_RADIUS))
+                .movable(true)
+                .constrain_to(panel_rect)
+                .show(ctx, |ui| {
+                    let (rect, resp) = ui.allocate_exact_size(
+                        egui::vec2(CIRCLE_RADIUS * 2.0, CIRCLE_RADIUS * 2.0),
+                        egui::Sense::click()
+                    );
+                    
+                    ui.painter().circle_filled(rect.center(), CIRCLE_RADIUS, egui::Color32::from_gray(60));
+                    ui.painter().circle_stroke(rect.center(), CIRCLE_RADIUS, stroke);
+                    ui.painter().text(
+                        rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        plugin.id.to_string(),
+                        egui::FontId::proportional(14.0),
+                        egui::Color32::WHITE
+                    );
+                    
+                    let name = name_by_kind.get(&plugin.kind)
+                        .cloned()
+                        .unwrap_or_else(|| Self::display_kind(&plugin.kind));
+                    ui.painter().text(
+                        rect.center() + egui::vec2(0.0, CIRCLE_RADIUS + 10.0),
+                        egui::Align2::CENTER_TOP,
+                        name,
+                        egui::FontId::proportional(10.0),
+                        egui::Color32::from_gray(200)
+                    );
+                    
+                    if resp.secondary_clicked() {
+                        self.plugin_context_menu = Some((plugin.id, resp.interact_pointer_pos().unwrap_or(pos), ctx.frame_nr()));
+                    }
+                    
+                    self.plugin_rects.insert(plugin.id, rect);
+                    
+                    resp
+                });
+            
+            self.plugin_positions.insert(plugin.id, response.response.rect.min + egui::vec2(CIRCLE_RADIUS, CIRCLE_RADIUS));
+            
+            if only_connected == Some(true) {
+                ctx.move_to_top(response.response.layer_id);
+            }
+            
+            // Double-click to highlight connections
+            if ctx.input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary)) {
+                if response.inner.hovered() && !self.confirm_dialog.open {
+                    if matches!(self.highlight_mode, HighlightMode::AllConnections(id) if id == plugin.id) {
+                        self.highlight_mode = HighlightMode::None;
+                    } else {
+                        plugin_to_select = Some(plugin.id);
+                    }
+                }
+            }
+            
+            // Single click handling
+            if response.inner.clicked() && !self.confirm_dialog.open 
+                && !ctx.input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary)) {
+                let is_highlighted = highlighted_plugins.contains(&plugin.id);
+                if is_highlighted {
+                    if !matches!(self.highlight_mode, HighlightMode::AllConnections(id) if id == plugin.id) {
+                        plugin_to_select = Some(plugin.id);
+                    }
+                } else {
+                    self.highlight_mode = HighlightMode::None;
+                }
+            }
+        }
+        
+        if let Some(id) = plugin_to_select {
+            self.double_click_plugin(id);
+        }
+    }
 }

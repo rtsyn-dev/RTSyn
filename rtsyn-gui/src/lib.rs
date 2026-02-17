@@ -35,7 +35,7 @@ use rtsyn_core::plugin::PluginManager;
 use rtsyn_core::workspace::WorkspaceManager;
 use state::{
     ConfirmAction, ConnectionEditorHost, FrequencyUnit, PeriodUnit, StateSync,
-    WorkspaceDialogMode, WorkspaceTimingTab,
+    ViewMode, WorkspaceDialogMode, WorkspaceTimingTab,
 };
 
 const DEDICATED_PLOTTER_VIEW_KINDS: &[&str] = &["live_plotter"];
@@ -385,6 +385,7 @@ struct GuiApp {
     uml_export_width: u32,
     uml_export_height: u32,
     uml_preview_zoom: f32,
+    view_mode: ViewMode,
 }
 
 impl GuiApp {
@@ -616,21 +617,34 @@ impl eframe::App for GuiApp {
 
                     ui.menu_button("Connections", |ui| {
                         ui.set_width(220.0);
-                        let icon = if self.connections_view_enabled {
+                        if ui.button("Manage connections").clicked() {
+                            self.windows.manage_connections_open = true;
+                            self.pending_window_focus = Some(WindowFocus::ManageConnections);
+                            ui.close_menu();
+                        }
+                    });
+
+                    ui.menu_button("View", |ui| {
+                        ui.set_width(240.0);
+                        let conn_icon = if self.connections_view_enabled {
                             "\u{f070}"
                         } else {
                             "\u{f06e}"
                         };
-                        if ui
-                            .button(format!("Toggle connections view {icon}"))
-                            .clicked()
-                        {
+                        if ui.button(format!("Toggle connections view {conn_icon}")).clicked() {
                             self.connections_view_enabled = !self.connections_view_enabled;
                             ui.close_menu();
                         }
-                        if ui.button("Manage connections").clicked() {
-                            self.windows.manage_connections_open = true;
-                            self.pending_window_focus = Some(WindowFocus::ManageConnections);
+                        let state_icon = if matches!(self.view_mode, ViewMode::State) {
+                            "\u{f205}"
+                        } else {
+                            "\u{f204}"
+                        };
+                        if ui.button(format!("Toggle state machine view {state_icon}")).clicked() {
+                            self.view_mode = match self.view_mode {
+                                ViewMode::Cards => ViewMode::State,
+                                ViewMode::State => ViewMode::Cards,
+                            };
                             ui.close_menu();
                         }
                     });
@@ -680,19 +694,37 @@ impl eframe::App for GuiApp {
             // Reset connection click flag at start of frame
             self.connection_clicked_this_frame = false;
             
-            // Three-phase rendering when highlight mode is active
-            if !matches!(self.highlight_mode, HighlightMode::None) {
-                // Phase 1: Render non-connected plugins
-                self.render_plugin_cards_filtered(ctx, panel_rect, Some(false));
-                // Phase 2: Render connections (now on Middle layer via Area)
-                self.render_connection_view(ctx, panel_rect);
-                // Phase 3: Render connected plugins
-                self.render_plugin_cards_filtered(ctx, panel_rect, Some(true));
-            } else {
-                // Normal rendering
-                self.render_connection_view(ctx, panel_rect);
-                self.render_plugin_cards(ctx, panel_rect);
+            match self.view_mode {
+                ViewMode::Cards => {
+                    // Three-phase rendering when highlight mode is active
+                    if !matches!(self.highlight_mode, HighlightMode::None) {
+                        // Phase 1: Render non-connected plugins
+                        self.render_plugin_cards_filtered(ctx, panel_rect, Some(false));
+                        // Phase 2: Render connections (now on Middle layer via Area)
+                        self.render_connection_view(ctx, panel_rect);
+                        // Phase 3: Render connected plugins
+                        self.render_plugin_cards_filtered(ctx, panel_rect, Some(true));
+                    } else {
+                        // Normal rendering
+                        self.render_connection_view(ctx, panel_rect);
+                        self.render_plugin_cards(ctx, panel_rect);
+                    }
+                }
+                ViewMode::State => {
+                    if !matches!(self.highlight_mode, HighlightMode::None) {
+                        // Phase 1: Render non-connected plugins
+                        self.render_state_view_filtered(ctx, panel_rect, Some(false));
+                        // Phase 2: Render connections
+                        self.render_connection_view(ctx, panel_rect);
+                        // Phase 3: Render connected plugins
+                        self.render_state_view_filtered(ctx, panel_rect, Some(true));
+                    } else {
+                        self.render_connection_view(ctx, panel_rect);
+                        self.render_state_view(ctx, panel_rect);
+                    }
+                }
             }
+            
             if ctx.input(|i| i.pointer.primary_clicked()) {
                 if let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) {
                     let over_plugin = self.plugin_rects.values().any(|rect| rect.contains(pos));

@@ -4,7 +4,7 @@ use crate::NewPluginDraft;
 use crate::state;
 use crate::state::{
     ConnectionEditorHost, FrequencyUnit, PeriodUnit,
-    StateSync,
+    StateSync, ViewMode,
 };
 use crate::managers::{
     FileDialogManager, NotificationHandler, PlotterManager, PluginBehaviorManager,
@@ -113,6 +113,7 @@ impl GuiApp {
                 uml_export_width: 1920,
                 uml_export_height: 1080,
                 uml_preview_zoom: 0.0,
+                view_mode: ViewMode::default(),
             };
             for warning in app.plugin_manager.take_compatibility_warnings() {
                 app.show_info("Plugin Compatibility", &warning);

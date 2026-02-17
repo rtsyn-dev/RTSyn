@@ -1835,6 +1835,37 @@ impl GuiApp {
                         self.duplicate_plugin(plugin_id);
                         close_menu = true;
                     }
+                    let remove_clicked = ui
+                        .allocate_ui_with_layout(
+                            egui::vec2(menu_width, row_height),
+                            egui::Layout::left_to_right(egui::Align::Center),
+                            |ui| {
+                                ui.add(egui::SelectableLabel::new(false, "Remove plugin"))
+                                    .clicked()
+                            },
+                        )
+                        .inner;
+                    if remove_clicked {
+                        let label = self.workspace_manager.workspace.plugins
+                            .iter()
+                            .find(|p| p.id == plugin_id)
+                            .and_then(|plugin| {
+                                let display_name = self.plugin_manager.installed_plugins
+                                    .iter()
+                                    .find(|p| p.manifest.kind == plugin.kind)
+                                    .map(|p| p.manifest.name.clone())
+                                    .unwrap_or_else(|| Self::display_kind(&plugin.kind));
+                                Some(format!("#{} {}", plugin.id, display_name))
+                            })
+                            .unwrap_or_else(|| format!("#{}", plugin_id));
+                        self.show_confirm(
+                            "Confirm removal",
+                            &format!("Remove plugin {} from the workspace?", label),
+                            "Remove",
+                            ConfirmAction::RemovePlugin(plugin_id),
+                        );
+                        close_menu = true;
+                    }
                 });
             });
 

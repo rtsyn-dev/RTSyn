@@ -71,3 +71,15 @@ pub enum ConnectionEditorHost {
     Main,
     PluginWindow(u64),
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ViewMode {
+    Cards,
+    State,
+}
+
+impl Default for ViewMode {
+    fn default() -> Self {
+        ViewMode::Cards
+    }
+}
