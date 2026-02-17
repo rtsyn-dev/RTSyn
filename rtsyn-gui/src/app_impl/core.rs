@@ -114,6 +114,7 @@ impl GuiApp {
                 uml_export_height: 1080,
                 uml_preview_zoom: 0.0,
                 view_mode: ViewMode::default(),
+                plugin_name_cache: None,
             };
             for warning in app.plugin_manager.take_compatibility_warnings() {
                 app.show_info("Plugin Compatibility", &warning);
@@ -248,5 +249,21 @@ impl GuiApp {
                 .to_string_lossy()
                 .to_string()
         }
+
+    pub(crate) fn get_name_by_kind(&mut self) -> std::collections::HashMap<String, String> {
+        if self.plugin_name_cache.is_none() {
+            self.plugin_name_cache = Some(
+                self.plugin_manager.installed_plugins
+                    .iter()
+                    .map(|p| (p.manifest.kind.clone(), p.manifest.name.clone()))
+                    .collect()
+            );
+        }
+        self.plugin_name_cache.as_ref().unwrap().clone()
+    }
+
+    pub(crate) fn invalidate_name_cache(&mut self) {
+        self.plugin_name_cache = None;
+    }
 
 }

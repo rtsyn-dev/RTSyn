@@ -310,6 +310,7 @@ impl GuiApp {
         }
 
         self.scan_detected_plugins();
+        self.invalidate_name_cache();
         self.show_info("Plugin", "Plugin uninstalled");
     }
 
@@ -404,6 +405,7 @@ impl GuiApp {
             return;
         }
         self.status = "Plugin refreshed".to_string();
+        self.invalidate_name_cache();
         self.drain_plugin_compatibility_warnings_to_notifications();
     }
 

@@ -386,6 +386,7 @@ struct GuiApp {
     uml_export_height: u32,
     uml_preview_zoom: f32,
     view_mode: ViewMode,
+    plugin_name_cache: Option<std::collections::HashMap<String, String>>,
 }
 
 impl GuiApp {

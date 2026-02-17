@@ -1707,6 +1707,8 @@ impl GuiApp {
         
         let mut plugin_to_select: Option<u64> = None;
         
+        let name_by_kind = self.get_name_by_kind();
+        
         let visible_plugins: Vec<_> = self.workspace_manager.workspace.plugins
             .iter()
             .filter(|p| {
@@ -1724,11 +1726,6 @@ impl GuiApp {
                     true
                 }
             })
-            .collect();
-        
-        let name_by_kind: std::collections::HashMap<String, String> = self.plugin_manager.installed_plugins
-            .iter()
-            .map(|p| (p.manifest.kind.clone(), p.manifest.name.clone()))
             .collect();
         
         let cols = ((panel_rect.width() / SPACING).floor() as usize).max(1);
@@ -1795,7 +1792,7 @@ impl GuiApp {
                     resp
                 });
             
-            self.plugin_positions.insert(plugin.id, response.response.rect.min + egui::vec2(CIRCLE_RADIUS, CIRCLE_RADIUS));
+            self.plugin_positions.insert(plugin.id, response.response.rect.min);
             
             if only_connected == Some(true) {
                 ctx.move_to_top(response.response.layer_id);
