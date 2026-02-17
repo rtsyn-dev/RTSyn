@@ -15,6 +15,7 @@ use crate::WindowFocus;
 
 mod cards;
 mod config;
+mod state;
 mod windows;
 mod wizard;
 
