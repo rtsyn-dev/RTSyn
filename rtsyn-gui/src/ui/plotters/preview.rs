@@ -18,7 +18,7 @@
 use super::*;
 
 impl GuiApp {
-/// Renders the plotter preview and export dialog window.
+    /// Renders the plotter preview and export dialog window.
     ///
     /// This function displays a comprehensive dialog that allows users to customize
     /// plot appearance, configure series settings, and export plots as images.

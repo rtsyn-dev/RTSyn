@@ -17,7 +17,7 @@ use crate::HighlightMode;
 use crate::WindowFocus;
 
 impl GuiApp {
-/// Opens the connection editor window for a specific plugin.
+    /// Opens the connection editor window for a specific plugin.
     ///
     /// This function initializes the connection editor state and prepares it for display.
     /// The editor can be opened in either "Add" or "Remove" mode to manage connections

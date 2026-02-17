@@ -15,7 +15,7 @@ use super::*;
 use crate::WindowFocus;
 
 impl GuiApp {
-/// Opens a file dialog for loading workspace files.
+    /// Opens a file dialog for loading workspace files.
     ///
     /// This function initiates an asynchronous file dialog for selecting workspace
     /// files to load. It prevents multiple dialogs from being opened simultaneously

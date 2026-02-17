@@ -18,7 +18,7 @@
 use super::*;
 
 impl GuiApp {
-/// Renders an interactive circular knob control for parameter adjustment.
+    /// Renders an interactive circular knob control for parameter adjustment.
     ///
     /// This function creates a rotary knob widget that allows users to adjust numeric
     /// values through mouse dragging and scroll wheel interaction. The knob provides

@@ -1,7 +1,7 @@
+use crate::plugin_creator::templates::{plugin_templates_dir, render_to_file};
+use crate::plugin_creator::validation::PluginLanguage;
 use std::fs;
 use std::path::{Path, PathBuf};
-use crate::plugin_creator::validation::PluginLanguage;
-use crate::plugin_creator::templates::{plugin_templates_dir, render_to_file};
 
 pub fn create_plugin_structure(
     base_dir: &Path,
@@ -13,13 +13,13 @@ pub fn create_plugin_structure(
             base_dir.display()
         )
     })?;
-    
+
     let plugin_dir = unique_dir(base_dir, folder_base);
     let src_dir = plugin_dir.join("src");
-    
+
     fs::create_dir_all(&src_dir)
         .map_err(|e| format!("Failed to create src directory {}: {e}", src_dir.display()))?;
-    
+
     Ok((plugin_dir, src_dir))
 }
 
@@ -31,7 +31,7 @@ pub fn create_plugin_files(
     replacements: &[(&str, String)],
 ) -> Result<(), String> {
     let tpl_dir = plugin_templates_dir()?;
-    
+
     render_to_file(
         &tpl_dir.join("plugin.toml.tpl"),
         &plugin_dir.join("plugin.toml"),
@@ -60,7 +60,7 @@ pub fn create_plugin_files(
             &src_dir.join(format!("{kind}.h")),
             replacements,
         )?;
-        
+
         if language == PluginLanguage::C {
             render_to_file(
                 &tpl_dir.join("c_core.c.tpl"),
@@ -85,7 +85,7 @@ pub fn create_plugin_files(
             )?;
         }
     }
-    
+
     Ok(())
 }
 

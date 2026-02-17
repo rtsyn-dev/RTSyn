@@ -55,4 +55,3 @@ pub fn styled_button(ui: &mut egui::Ui, label: impl Into<egui::WidgetText>) -> e
         egui::Button::new(label).min_size(super::BUTTON_SIZE),
     )
 }
-

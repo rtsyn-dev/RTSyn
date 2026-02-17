@@ -145,7 +145,7 @@ pub fn plugin_show(catalog: &PluginCatalog, name: String) -> DaemonResponse {
         .list_installed()
         .iter()
         .find(|p| p.manifest.kind == key || p.manifest.name == key);
-    
+
     match plugin {
         Some(p) => {
             let summary = PluginSummary {
@@ -232,7 +232,12 @@ pub fn plugin_set(
 }
 
 pub fn plugin_view(workspace_manager: &WorkspaceManager, id: u64) -> DaemonResponse {
-    if let Some(plugin) = workspace_manager.workspace.plugins.iter().find(|p| p.id == id) {
+    if let Some(plugin) = workspace_manager
+        .workspace
+        .plugins
+        .iter()
+        .find(|p| p.id == id)
+    {
         let variables: Vec<(String, serde_json::Value)> = match plugin.config {
             serde_json::Value::Object(ref map) => {
                 map.iter().map(|(k, v)| (k.clone(), v.clone())).collect()

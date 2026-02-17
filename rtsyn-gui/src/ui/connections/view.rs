@@ -16,7 +16,7 @@ use super::*;
 use crate::HighlightMode;
 
 impl GuiApp {
-/// Renders the visual connection lines between plugins in the workspace.
+    /// Renders the visual connection lines between plugins in the workspace.
     ///
     /// This function draws interactive connection lines that visually represent the audio/MIDI
     /// connections between plugins. The lines are drawn as colored segments with directional
@@ -75,7 +75,7 @@ impl GuiApp {
                 egui::Id::new("connection_lines_bg"),
             ));
             self.render_connections_internal(ctx, panel_rect, &painter, false);
-            
+
             // Pass 2: Highlighted connections on Middle layer
             egui::Area::new(egui::Id::new("connection_lines_area"))
                 .order(egui::Order::Middle)
@@ -95,9 +95,14 @@ impl GuiApp {
             self.render_connections_internal(ctx, panel_rect, &painter, false);
         }
     }
-    
-    fn render_connections_internal(&mut self, ctx: &egui::Context, panel_rect: egui::Rect, painter: &egui::Painter, only_highlighted: bool) {
 
+    fn render_connections_internal(
+        &mut self,
+        ctx: &egui::Context,
+        panel_rect: egui::Rect,
+        painter: &egui::Painter,
+        only_highlighted: bool,
+    ) {
         let mut groups: HashMap<(u64, u64), (Vec<String>, Vec<String>, Vec<usize>)> =
             HashMap::new();
         for (idx, connection) in self
@@ -175,12 +180,12 @@ impl GuiApp {
 
             let is_highlighted = self.should_highlight_connection(from_id, to_id);
             let has_any_highlight = !matches!(self.highlight_mode, HighlightMode::None);
-            
+
             // Filter based on only_highlighted parameter
             if only_highlighted != is_highlighted {
                 continue;
             }
-            
+
             let (out_line, in_line, stroke) = if has_any_highlight {
                 if is_highlighted {
                     (out_color, in_color, 4.0)

@@ -4,8 +4,8 @@ use live_plotter_plugin::LivePlotterPlugin;
 use performance_monitor_plugin::PerformanceMonitorPlugin;
 use rtsyn_plugin::ui::DisplaySchema;
 use rtsyn_plugin::{
-    Plugin, PluginApi, PluginString, RTSYN_PLUGIN_ABI_VERSION,
-    RTSYN_PLUGIN_ABI_VERSION_SYMBOL, RTSYN_PLUGIN_API_SYMBOL,
+    Plugin, PluginApi, PluginString, RTSYN_PLUGIN_ABI_VERSION, RTSYN_PLUGIN_ABI_VERSION_SYMBOL,
+    RTSYN_PLUGIN_API_SYMBOL,
 };
 use serde_json::Value;
 
@@ -206,26 +206,22 @@ pub fn set_dynamic_config_if_needed(
     );
     let json = Value::Object(out).to_string();
     let api = unsafe { &*plugin_instance.api };
-    (api.set_config_json)(
-        plugin_instance.handle,
-        json.as_bytes().as_ptr(),
-        json.len(),
-    );
+    (api.set_config_json)(plugin_instance.handle, json.as_bytes().as_ptr(), json.len());
     plugin_instance.last_base_config = Some(plugin_config.clone());
     plugin_instance.last_period_seconds = Some(period_seconds);
     plugin_instance.last_max_integration_steps = Some(max_integration_steps);
 }
 
-pub fn set_dynamic_config_patch(plugin_instance: &mut DynamicPluginInstance, key: &str, value: Value) {
+pub fn set_dynamic_config_patch(
+    plugin_instance: &mut DynamicPluginInstance,
+    key: &str,
+    value: Value,
+) {
     let api = unsafe { &*plugin_instance.api };
     let mut patch = serde_json::Map::new();
     patch.insert(key.to_string(), value.clone());
     let json = Value::Object(patch).to_string();
-    (api.set_config_json)(
-        plugin_instance.handle,
-        json.as_bytes().as_ptr(),
-        json.len(),
-    );
+    (api.set_config_json)(plugin_instance.handle, json.as_bytes().as_ptr(), json.len());
 
     if let Some(Value::Object(ref mut cfg)) = plugin_instance.last_base_config {
         cfg.insert(key.to_string(), value);

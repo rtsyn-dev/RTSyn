@@ -13,14 +13,11 @@
 use super::*;
 use crate::utils::truncate_string;
 use crate::WindowFocus;
-use crate::{
-    BuildAction,
-    PluginFieldDraft,
-};
+use crate::{BuildAction, PluginFieldDraft};
 use rtsyn_cli::plugin_creator::PluginKindType;
 
 impl GuiApp {
-/// Truncates plugin names for display in list views with ellipsis.
+    /// Truncates plugin names for display in list views with ellipsis.
     ///
     /// This function ensures plugin names fit within constrained list layouts
     /// by truncating them to a specified character limit and adding ellipsis
@@ -130,8 +127,7 @@ impl GuiApp {
                                                 {
                                                     continue;
                                                 }
-                                                let display_label =
-                                                    truncate_string(&label, 44);
+                                                let display_label = truncate_string(&label, 44);
                                                 let response = ui
                                                     .allocate_ui_with_layout(
                                                         egui::vec2(ui.available_width(), 22.0),
@@ -279,9 +275,12 @@ impl GuiApp {
                             ui.set_max_width(section_width);
                             let mut style = ui.style().as_ref().clone();
                             style.visuals.extreme_bg_color = egui::Color32::from_rgb(58, 58, 62);
-                            style.visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(58, 58, 62);
-                            style.visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(66, 66, 72);
-                            style.visuals.widgets.active.bg_fill = egui::Color32::from_rgb(72, 72, 78);
+                            style.visuals.widgets.inactive.bg_fill =
+                                egui::Color32::from_rgb(58, 58, 62);
+                            style.visuals.widgets.hovered.bg_fill =
+                                egui::Color32::from_rgb(66, 66, 72);
+                            style.visuals.widgets.active.bg_fill =
+                                egui::Color32::from_rgb(72, 72, 78);
                             ui.set_style(style);
                             let field_id = fields[current_idx].id;
                             ui.push_id(field_id, |ui| {
@@ -330,11 +329,10 @@ impl GuiApp {
                                         }
                                     }
                                     if show_default_value {
-                                        let default_hint =
-                                            Self::plugin_creator_default_by_type(
-                                                &fields[current_idx].type_name,
-                                            )
-                                            .to_string();
+                                        let default_hint = Self::plugin_creator_default_by_type(
+                                            &fields[current_idx].type_name,
+                                        )
+                                        .to_string();
                                         if ui
                                             .add_sized(
                                                 [120.0, 26.0],
@@ -402,10 +400,7 @@ impl GuiApp {
                 changed = true;
             }
         } else if !candidates.is_empty()
-            && (selection.is_empty()
-                || !candidates
-                    .iter()
-                    .any(|name| name == selection.trim()))
+            && (selection.is_empty() || !candidates.iter().any(|name| name == selection.trim()))
         {
             selection.clear();
             selection.push_str(&candidates[0]);
@@ -1846,11 +1841,16 @@ impl GuiApp {
                         )
                         .inner;
                     if remove_clicked {
-                        let label = self.workspace_manager.workspace.plugins
+                        let label = self
+                            .workspace_manager
+                            .workspace
+                            .plugins
                             .iter()
                             .find(|p| p.id == plugin_id)
                             .and_then(|plugin| {
-                                let display_name = self.plugin_manager.installed_plugins
+                                let display_name = self
+                                    .plugin_manager
+                                    .installed_plugins
                                     .iter()
                                     .find(|p| p.manifest.kind == plugin.kind)
                                     .map(|p| p.manifest.name.clone())

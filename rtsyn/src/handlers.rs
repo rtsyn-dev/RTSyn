@@ -110,7 +110,9 @@ fn handle_plugin_command(command: PluginCommands) -> Result<(), Box<dyn std::err
         PluginCommands::Restart { id } => DaemonRequest::RuntimePluginRestart { id },
     };
     match client::send_request(&request) {
-        Ok(response) => handle_plugin_response(response, available_json_query, runtime_list_json_query),
+        Ok(response) => {
+            handle_plugin_response(response, available_json_query, runtime_list_json_query)
+        }
         Err(err) => print_error(&err),
     }
     Ok(())
@@ -132,7 +134,9 @@ fn handle_workspace_command(command: WorkspaceCommands) -> Result<(), Box<dyn st
     Ok(())
 }
 
-fn handle_connection_command(command: ConnectionCommands) -> Result<(), Box<dyn std::error::Error>> {
+fn handle_connection_command(
+    command: ConnectionCommands,
+) -> Result<(), Box<dyn std::error::Error>> {
     let request = match command {
         ConnectionCommands::List => DaemonRequest::ConnectionList,
         ConnectionCommands::Show { plugin_id } => DaemonRequest::ConnectionShow { plugin_id },
@@ -202,14 +206,19 @@ fn handle_daemon_response(response: DaemonResponse) {
     }
 }
 
-fn handle_plugin_response(response: DaemonResponse, available_json_query: bool, runtime_list_json_query: bool) {
+fn handle_plugin_response(
+    response: DaemonResponse,
+    available_json_query: bool,
+    runtime_list_json_query: bool,
+) {
     match response {
         DaemonResponse::Ok { message } => print_info(&message),
         DaemonResponse::Error { message } => print_error(&message),
         DaemonResponse::PluginAdded { id } => print_info(&format!("Plugin added with id {id}")),
         DaemonResponse::PluginList { plugins } => {
             if available_json_query {
-                let json = serde_json::to_string_pretty(&plugins).unwrap_or_else(|_| "[]".to_string());
+                let json =
+                    serde_json::to_string_pretty(&plugins).unwrap_or_else(|_| "[]".to_string());
                 println!("{json}");
                 return;
             }
@@ -217,7 +226,8 @@ fn handle_plugin_response(response: DaemonResponse, available_json_query: bool, 
         }
         DaemonResponse::RuntimeList { plugins } => {
             if runtime_list_json_query {
-                let json = serde_json::to_string_pretty(&plugins).unwrap_or_else(|_| "[]".to_string());
+                let json =
+                    serde_json::to_string_pretty(&plugins).unwrap_or_else(|_| "[]".to_string());
                 println!("{json}");
                 return;
             }
@@ -258,7 +268,8 @@ fn handle_runtime_response(response: DaemonResponse, settings_json_query: bool) 
         DaemonResponse::Error { message } => print_error(&message),
         DaemonResponse::RuntimeSettings { settings } => {
             if settings_json_query {
-                let json = serde_json::to_string_pretty(&settings).unwrap_or_else(|_| "{}".to_string());
+                let json =
+                    serde_json::to_string_pretty(&settings).unwrap_or_else(|_| "{}".to_string());
                 println!("{json}");
                 return;
             }
@@ -266,7 +277,8 @@ fn handle_runtime_response(response: DaemonResponse, settings_json_query: bool) 
         }
         DaemonResponse::RuntimeSettingsOptions { options } => {
             if settings_json_query {
-                let json = serde_json::to_string_pretty(&options).unwrap_or_else(|_| "{}".to_string());
+                let json =
+                    serde_json::to_string_pretty(&options).unwrap_or_else(|_| "{}".to_string());
                 println!("{json}");
                 return;
             }

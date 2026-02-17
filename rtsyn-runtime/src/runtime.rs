@@ -1,7 +1,7 @@
-use std::sync::mpsc::{Receiver, Sender};
 use crate::message_handler::{LogicMessage, LogicState};
 use crate::rt_thread::{ActiveRtBackend, RuntimeThread};
 use crate::runtime_core::run_runtime_loop;
+use std::sync::mpsc::{Receiver, Sender};
 
 /// Spawns the runtime in a new thread with real-time scheduling
 pub fn spawn_runtime() -> Result<(Sender<LogicMessage>, Receiver<LogicState>), String> {

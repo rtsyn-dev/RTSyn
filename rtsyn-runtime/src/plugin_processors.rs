@@ -229,12 +229,7 @@ pub fn process_dynamic_plugin(
                 }
             }
             let bytes = &plugin_instance.input_bytes[idx];
-            (api.set_input)(
-                plugin_instance.handle,
-                bytes.as_ptr(),
-                bytes.len(),
-                value,
-            );
+            (api.set_input)(plugin_instance.handle, bytes.as_ptr(), bytes.len(), value);
         }
     }
     if is_running {
@@ -285,6 +280,7 @@ pub fn process_comedi_daq(
     outputs: &mut HashMap<(u64, String), f64>,
     input_values: &mut HashMap<(u64, String), f64>,
     plugin_ctx: &mut PluginContext,
+    is_running: bool,
 ) {
     let device_path = plugin
         .config
@@ -315,6 +311,16 @@ pub fn process_comedi_daq(
 
     plugin_instance.set_active_ports(&active_inputs, &active_outputs);
     plugin_instance.set_config(device_path.to_string(), scan_devices, scan_nonce);
+
+    if !is_running {
+        if plugin_instance.is_open() {
+            let _ = plugin_instance.close();
+        }
+        for port in plugin_instance.output_port_names() {
+            outputs.insert((plugin.id, port.clone()), 0.0);
+        }
+        return;
+    }
 
     let has_active_inputs = !active_inputs.is_empty();
     let has_active_outputs = !active_outputs.is_empty();

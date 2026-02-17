@@ -1,6 +1,6 @@
+use crate::plugin_creator::validation::{PluginKindType, PluginVariable};
 use std::fs;
 use std::path::{Path, PathBuf};
-use crate::plugin_creator::validation::{PluginKindType, PluginVariable};
 
 pub fn plugin_templates_dir() -> Result<PathBuf, String> {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -183,7 +183,12 @@ pub fn generate_match_arms(
         .map(|v| format!("            \"{v}\" => Some(self.{v}),\n"))
         .collect::<String>();
 
-    (config_match_arms, input_match_arms, output_match_arms, internal_match_arms)
+    (
+        config_match_arms,
+        input_match_arms,
+        output_match_arms,
+        internal_match_arms,
+    )
 }
 
 pub fn generate_c_match_arms(

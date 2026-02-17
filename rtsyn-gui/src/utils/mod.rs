@@ -8,7 +8,9 @@ pub mod numeric;
 pub mod strings;
 pub mod system;
 
-pub use system::{has_rt_capabilities, spawn_file_dialog_thread, zenity_file_dialog, zenity_file_dialog_with_name};
+pub use system::{
+    has_rt_capabilities, spawn_file_dialog_thread, zenity_file_dialog, zenity_file_dialog_with_name,
+};
 
 pub use numeric::{
     distance_to_segment, format_f64_6, format_f64_with_input, normalize_numeric_input,

@@ -1,5 +1,5 @@
 use crate::validation::Validator;
-use crate::workspace::{settings::*, io::*};
+use crate::workspace::{io::*, settings::*};
 use std::path::{Path, PathBuf};
 use workspace::{WorkspaceDefinition, WorkspaceSettings};
 
@@ -158,8 +158,7 @@ impl WorkspaceManager {
             settings.period_value =
                 period_value_from_seconds(period_seconds, &settings.period_unit)?;
         } else if period_changed {
-            let period_seconds =
-                period_seconds_from(settings.period_value, &settings.period_unit)?;
+            let period_seconds = period_seconds_from(settings.period_value, &settings.period_unit)?;
             let hz = 1.0 / period_seconds;
             settings.frequency_value = frequency_value_from_hz(hz, &settings.frequency_unit)?;
         }
@@ -175,8 +174,7 @@ impl WorkspaceManager {
         let settings = &self.workspace.settings;
         normalize_frequency_unit(&settings.frequency_unit)?;
         normalize_period_unit(&settings.period_unit)?;
-        let period_seconds =
-            period_seconds_from(settings.period_value, &settings.period_unit)?;
+        let period_seconds = period_seconds_from(settings.period_value, &settings.period_unit)?;
         let (time_scale, time_label) = time_scale_and_label(&settings.period_unit)?;
         let mut cores = settings.selected_cores.clone();
         Validator::normalize_cores(&mut cores);

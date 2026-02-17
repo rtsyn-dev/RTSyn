@@ -20,7 +20,7 @@ use rtsyn_core::workspace::{
 use rtsyn_runtime::LogicSettings;
 
 impl GuiApp {
-/// Renders the workspace runtime settings configuration window.
+    /// Renders the workspace runtime settings configuration window.
     ///
     /// This function displays a comprehensive interface for configuring runtime
     /// settings including CPU core selection, timing parameters (frequency/period),

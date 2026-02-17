@@ -2,8 +2,8 @@ pub mod plugin_handler;
 
 use crate::protocol::RuntimeSettingsOptions;
 use crate::protocol::{
-    ConnectionSummary, DaemonRequest, DaemonResponse, RuntimePluginState,
-    RuntimePluginSummary, WorkspaceSummary, DEFAULT_SOCKET_PATH,
+    ConnectionSummary, DaemonRequest, DaemonResponse, RuntimePluginState, RuntimePluginSummary,
+    WorkspaceSummary, DEFAULT_SOCKET_PATH,
 };
 use rtsyn_core::connection::{extendable_input_index, next_available_extendable_input_index};
 use rtsyn_core::plotter_view::{
@@ -873,12 +873,17 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
             }
             response
         }
-        DaemonRequest::RuntimePluginRestart { id } => {
-            plugin_handler::plugin_restart(&state.workspace_manager, id, &state.runtime_query.logic_tx)
-        }
-        DaemonRequest::RuntimeSetVariables { id, json } => {
-            plugin_handler::plugin_set(&mut state.workspace_manager, id, json, &state.runtime_query.logic_tx)
-        }
+        DaemonRequest::RuntimePluginRestart { id } => plugin_handler::plugin_restart(
+            &state.workspace_manager,
+            id,
+            &state.runtime_query.logic_tx,
+        ),
+        DaemonRequest::RuntimeSetVariables { id, json } => plugin_handler::plugin_set(
+            &mut state.workspace_manager,
+            id,
+            json,
+            &state.runtime_query.logic_tx,
+        ),
     };
 
     send_response(&mut stream, &response)?;

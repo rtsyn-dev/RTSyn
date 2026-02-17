@@ -57,8 +57,7 @@ impl PluginCatalog {
         workspace: &mut WorkspaceDefinition,
         kind: &str,
     ) -> Vec<u64> {
-        self.manager
-            .remove_plugins_by_kind(workspace, kind)
+        self.manager.remove_plugins_by_kind(workspace, kind)
     }
 
     pub fn inject_library_paths_into_workspace(&self, workspace: &mut WorkspaceDefinition) {

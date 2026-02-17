@@ -1,6 +1,6 @@
 use eframe::{egui, egui::RichText};
-use rtsyn_runtime::{LogicMessage, LogicState};
 use rtsyn_runtime::spawn_runtime;
+use rtsyn_runtime::{LogicMessage, LogicState};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::process;
@@ -28,14 +28,17 @@ mod ui;
 mod utils;
 
 use managers::{FileDialogManager, NotificationHandler, PlotterManager, PluginBehaviorManager};
-use utils::{distance_to_segment, has_rt_capabilities, spawn_file_dialog_thread, zenity_file_dialog, zenity_file_dialog_with_name};
 use plotter::LivePlotter;
 use rtsyn_cli::plugin_creator::PluginKindType;
 use rtsyn_core::plugin::PluginManager;
 use rtsyn_core::workspace::WorkspaceManager;
 use state::{
-    ConfirmAction, ConnectionEditorHost, FrequencyUnit, PeriodUnit, StateSync,
-    ViewMode, WorkspaceDialogMode, WorkspaceTimingTab,
+    ConfirmAction, ConnectionEditorHost, FrequencyUnit, PeriodUnit, StateSync, ViewMode,
+    WorkspaceDialogMode, WorkspaceTimingTab,
+};
+use utils::{
+    distance_to_segment, has_rt_capabilities, spawn_file_dialog_thread, zenity_file_dialog,
+    zenity_file_dialog_with_name,
 };
 
 const DEDICATED_PLOTTER_VIEW_KINDS: &[&str] = &["live_plotter"];
@@ -190,43 +193,43 @@ pub(crate) struct WorkspaceSettingsDraft {
 }
 
 /// Initializes and runs the RTSyn GUI application with automatic runtime spawning.
-/// 
+///
 /// This is the main entry point for the RTSyn GUI application. It handles two
 /// execution modes: daemon plugin viewer mode and normal application mode.
 /// In normal mode, it spawns the logic runtime and initializes the GUI.
-/// 
+///
 /// # Parameters
-/// 
+///
 /// * `config` - GUI configuration specifying window title, dimensions, and other settings
-/// 
+///
 /// # Returns
-/// 
+///
 /// * `Ok(())` - GUI application completed successfully
 /// * `Err(GuiError)` - GUI initialization or runtime error occurred
-/// 
+///
 /// # Execution Modes
-/// 
+///
 /// ## Daemon Plugin Viewer Mode
 /// Activated when environment variables are set:
 /// - `RTSYN_DAEMON_VIEW_PLUGIN_ID` - Plugin ID to view
 /// - `RTSYN_DAEMON_SOCKET` - Socket path (defaults to "/tmp/rtsyn-daemon.sock")
-/// 
+///
 /// In this mode, the GUI connects to an existing daemon process to view a specific
 /// plugin's interface rather than running a full application instance.
-/// 
+///
 /// ## Normal Application Mode
 /// 1. Spawns the logic runtime using `spawn_runtime()`
 /// 2. Creates communication channels between GUI and runtime
 /// 3. Delegates to `run_gui_with_runtime()` for GUI initialization
-/// 
+///
 /// # Error Handling
-/// 
+///
 /// - Runtime spawn failures cause immediate process termination with error message
 /// - GUI initialization errors are propagated as `GuiError::Gui`
 /// - Environment variable parsing errors fall back to normal mode
-/// 
+///
 /// # Side Effects
-/// 
+///
 /// - May spawn background runtime threads
 /// - Creates GUI window and event loop
 /// - In daemon mode, establishes socket connection to existing daemon
@@ -250,45 +253,45 @@ pub fn run_gui(config: GuiConfig) -> Result<(), GuiError> {
 }
 
 /// Runs the RTSyn GUI application with pre-existing runtime communication channels.
-/// 
+///
 /// This function initializes and runs the eframe-based GUI application using provided
 /// communication channels to an already-running logic runtime. It configures the
 /// GUI framework, sets up fonts, and creates the main application instance.
-/// 
+///
 /// # Parameters
-/// 
+///
 /// * `config` - GUI configuration containing window title, dimensions, and display settings
 /// * `logic_tx` - Sender channel for sending messages to the logic runtime
 /// * `logic_state_rx` - Receiver channel for receiving state updates from the logic runtime
-/// 
+///
 /// # Returns
-/// 
+///
 /// * `Ok(())` - GUI application completed successfully (user closed window)
 /// * `Err(GuiError::Gui)` - eframe initialization or runtime error occurred
-/// 
+///
 /// # GUI Framework Setup
-/// 
+///
 /// 1. **Window Configuration**: Creates native window with specified dimensions
 /// 2. **VSync Disabled**: Prevents hangs and lag on occluded windows
 /// 3. **Font Setup**: Loads FontAwesome icons for UI elements
 /// 4. **Application Creation**: Instantiates `GuiApp` with runtime channels
-/// 
+///
 /// # Font Configuration
-/// 
+///
 /// Embeds and configures FontAwesome solid icons (fa-solid-900.ttf) for use in
 /// buttons and UI elements. The font is added to the proportional font family
 /// to enable icon rendering alongside text.
-/// 
+///
 /// # Application Lifecycle
-/// 
+///
 /// - Creates eframe native options with custom viewport settings
 /// - Disables VSync to prevent performance issues with window occlusion
 /// - Sets up font definitions including embedded FontAwesome icons
 /// - Instantiates GuiApp with runtime communication channels
 /// - Runs the event loop until application termination
-/// 
+///
 /// # Error Propagation
-/// 
+///
 /// eframe errors are wrapped in `GuiError::Gui` and propagated to the caller.
 /// The error message includes the original eframe error description.
 pub fn run_gui_with_runtime(
@@ -401,66 +404,66 @@ impl GuiApp {
 
 impl eframe::App for GuiApp {
     /// Main GUI update loop called by eframe for each frame.
-    /// 
+    ///
     /// This method implements the core GUI update cycle, handling user input,
     /// processing runtime state updates, managing UI components, and rendering
     /// the complete application interface.
-    /// 
+    ///
     /// # Parameters
-    /// 
+    ///
     /// * `ctx` - egui context providing input handling and rendering capabilities
     /// * `_frame` - eframe frame reference (unused in current implementation)
-    /// 
+    ///
     /// # Update Cycle Overview
-    /// 
+    ///
     /// ## 1. Style Configuration
     /// - Disables selectable labels to prevent unwanted text selection
     /// - Configures UI interaction behavior
-    /// 
+    ///
     /// ## 2. Dialog Polling
     /// - Polls all asynchronous file dialogs for completion
     /// - Handles build, install, import, load, export operations
     /// - Processes CSV path selection and plugin creation dialogs
     /// - Updates plotter screenshot operations
-    /// 
+    ///
     /// ## 3. Runtime State Processing
     /// - Polls logic runtime for state updates via `poll_logic_state()`
     /// - Updates plotter displays with new data
     /// - Synchronizes GUI state with runtime state
-    /// 
+    ///
     /// ## 4. Refresh Rate Management
     /// - Calculates optimal refresh rate based on active plotters
     /// - Requests appropriate repaint timing from egui
     /// - Balances responsiveness with performance
-    /// 
+    ///
     /// ## 5. Workspace Synchronization
     /// - Sends workspace updates to runtime when dirty flag is set
     /// - Ensures runtime has current workspace configuration
     /// - Clears dirty flag after successful synchronization
-    /// 
+    ///
     /// ## 6. Input Handling
     /// - Processes Escape key for dialog dismissal
     /// - Handles global keyboard shortcuts
     /// - Manages dialog state transitions
-    /// 
+    ///
     /// ## 7. UI Rendering
     /// - Renders top menu bar with workspace, plugin, and runtime menus
     /// - Displays main central panel with plugin cards and connections
     /// - Shows all active dialogs and windows
     /// - Handles context menus and popup interactions
-    /// 
+    ///
     /// # Refresh Rate Strategy
-    /// 
+    ///
     /// ## Active Plotter Mode
     /// - Uses maximum refresh rate from open plotters (minimum 1 Hz)
     /// - Ensures smooth real-time data visualization
-    /// 
+    ///
     /// ## Idle Mode
     /// - Uses 250ms refresh interval when window is not focused
     /// - Reduces CPU usage when application is in background
-    /// 
+    ///
     /// # Dialog Management
-    /// 
+    ///
     /// Renders all possible dialogs and windows:
     /// - Workspace management dialogs
     /// - Plugin installation and configuration windows
@@ -468,16 +471,16 @@ impl eframe::App for GuiApp {
     /// - Plotter preview and configuration dialogs
     /// - Help and information displays
     /// - Confirmation and notification overlays
-    /// 
+    ///
     /// # State Management
-    /// 
+    ///
     /// - Maintains window rectangle tracking for layout management
     /// - Handles pending window focus requests
     /// - Manages plugin selection and context menu state
     /// - Coordinates between different UI components
-    /// 
+    ///
     /// # Performance Considerations
-    /// 
+    ///
     /// - Non-blocking runtime communication prevents GUI freezing
     /// - Adaptive refresh rates optimize CPU usage
     /// - Efficient dialog polling minimizes overhead
@@ -632,7 +635,10 @@ impl eframe::App for GuiApp {
                         } else {
                             "\u{f06e}"
                         };
-                        if ui.button(format!("Toggle connections view {conn_icon}")).clicked() {
+                        if ui
+                            .button(format!("Toggle connections view {conn_icon}"))
+                            .clicked()
+                        {
                             self.connections_view_enabled = !self.connections_view_enabled;
                             ui.close_menu();
                         }
@@ -641,7 +647,10 @@ impl eframe::App for GuiApp {
                         } else {
                             "\u{f204}"
                         };
-                        if ui.button(format!("Toggle state machine view {state_icon}")).clicked() {
+                        if ui
+                            .button(format!("Toggle state machine view {state_icon}"))
+                            .clicked()
+                        {
                             self.view_mode = match self.view_mode {
                                 ViewMode::Cards => ViewMode::State,
                                 ViewMode::State => ViewMode::Cards,
@@ -691,10 +700,10 @@ impl eframe::App for GuiApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.add_space(8.0);
             let panel_rect = ui.max_rect();
-            
+
             // Reset connection click flag at start of frame
             self.connection_clicked_this_frame = false;
-            
+
             match self.view_mode {
                 ViewMode::Cards => {
                     // Three-phase rendering when highlight mode is active
@@ -725,24 +734,28 @@ impl eframe::App for GuiApp {
                     }
                 }
             }
-            
+
             if ctx.input(|i| i.pointer.primary_clicked()) {
                 if let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) {
                     let over_plugin = self.plugin_rects.values().any(|rect| rect.contains(pos));
                     // Check if over connection by testing distance to any connection
                     let over_connection = if !over_plugin {
-                        self.workspace_manager.workspace.connections.iter().any(|conn| {
-                            if let (Some(from_rect), Some(to_rect)) = (
-                                self.plugin_rects.get(&conn.from_plugin),
-                                self.plugin_rects.get(&conn.to_plugin)
-                            ) {
-                                let start = from_rect.center();
-                                let end = to_rect.center();
-                                distance_to_segment(pos, start, end) <= 10.0
-                            } else {
-                                false
-                            }
-                        })
+                        self.workspace_manager
+                            .workspace
+                            .connections
+                            .iter()
+                            .any(|conn| {
+                                if let (Some(from_rect), Some(to_rect)) = (
+                                    self.plugin_rects.get(&conn.from_plugin),
+                                    self.plugin_rects.get(&conn.to_plugin),
+                                ) {
+                                    let start = from_rect.center();
+                                    let end = to_rect.center();
+                                    distance_to_segment(pos, start, end) <= 10.0
+                                } else {
+                                    false
+                                }
+                            })
                     } else {
                         false
                     };
@@ -752,7 +765,7 @@ impl eframe::App for GuiApp {
                 }
             }
         });
-        
+
         // Apply pending highlight at end of frame (after rendering)
         if let Some(pending) = self.pending_highlight.take() {
             self.highlight_mode = pending;

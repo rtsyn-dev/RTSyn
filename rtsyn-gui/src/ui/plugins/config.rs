@@ -14,7 +14,7 @@ use super::*;
 use crate::WindowFocus;
 
 impl GuiApp {
-/// Determines the appropriate window size for plugin configuration dialogs.
+    /// Determines the appropriate window size for plugin configuration dialogs.
     ///
     /// This function returns optimal window dimensions based on the plugin type,
     /// ensuring that configuration windows are appropriately sized for their

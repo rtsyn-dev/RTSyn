@@ -1,4 +1,7 @@
-use rtsyn_cli::protocol::{PluginSummary, RuntimePluginSummary, RuntimePluginState, WorkspaceSummary, ConnectionSummary, RuntimeSettingsOptions};
+use rtsyn_cli::protocol::{
+    ConnectionSummary, PluginSummary, RuntimePluginState, RuntimePluginSummary,
+    RuntimeSettingsOptions, WorkspaceSummary,
+};
 use workspace::WorkspaceSettings;
 
 pub fn print_info(message: &str) {
@@ -16,11 +19,18 @@ pub fn print_plugin_list(plugins: &[PluginSummary]) {
         print_info("List of available plugins:");
         for plugin in plugins {
             let version = plugin.version.as_deref().unwrap_or("unknown");
-            let removable = if plugin.removable { "removable" } else { "bundled" };
+            let removable = if plugin.removable {
+                "removable"
+            } else {
+                "bundled"
+            };
             if let Some(path) = &plugin.path {
                 println!("{} ({}) [{}] {}", plugin.name, plugin.kind, removable, path);
             } else {
-                println!("{} ({}) [{}] v{}", plugin.name, plugin.kind, removable, version);
+                println!(
+                    "{} ({}) [{}] v{}",
+                    plugin.name, plugin.kind, removable, version
+                );
             }
         }
     }
@@ -80,7 +90,10 @@ pub fn print_workspace_list(workspaces: &[WorkspaceSummary]) {
         print_info("List of workspaces:");
         for ws in workspaces {
             let plugins = if ws.plugins == 1 { "plugin" } else { "plugins" };
-            println!("{} - {} {} ({})", ws.name, ws.plugins, plugins, ws.description);
+            println!(
+                "{} - {} {} ({})",
+                ws.name, ws.plugins, plugins, ws.description
+            );
         }
     }
 }
@@ -93,7 +106,12 @@ pub fn print_connection_list(connections: &[ConnectionSummary]) {
         for conn in connections {
             println!(
                 "[{}] {}:{} -> {}:{} ({})",
-                conn.index, conn.from_plugin, conn.from_port, conn.to_plugin, conn.to_port, conn.kind
+                conn.index,
+                conn.from_plugin,
+                conn.from_port,
+                conn.to_plugin,
+                conn.to_port,
+                conn.kind
             );
         }
     }

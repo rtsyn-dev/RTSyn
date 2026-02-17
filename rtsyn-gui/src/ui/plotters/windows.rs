@@ -16,12 +16,12 @@
 //! and export plots for documentation or analysis purposes.
 
 use super::*;
-use crate::utils::truncate_string;
 use crate::state::PlotterPreviewState;
+use crate::utils::truncate_string;
 use std::time::Duration;
 
 impl GuiApp {
-/// Renders floating notification toasts for plotter-specific messages.
+    /// Renders floating notification toasts for plotter-specific messages.
     ///
     /// This function displays temporary notification messages that slide in from the
     /// right side of the screen, providing feedback about plotter operations, errors,
@@ -56,7 +56,10 @@ impl GuiApp {
     /// - Efficient early exit when no notifications exist
     /// - Automatic repaint scheduling for smooth animation
     pub(super) fn render_plotter_notifications(&mut self, ctx: &egui::Context, plugin_id: u64) {
-        let Some(list) = self.notification_handler.get_plugin_notifications(plugin_id) else {
+        let Some(list) = self
+            .notification_handler
+            .get_plugin_notifications(plugin_id)
+        else {
             return;
         };
         if list.is_empty() {
@@ -237,7 +240,7 @@ impl GuiApp {
         }
 
         let new_running = !currently_running;
-        
+
         self.workspace_manager.workspace.plugins[plugin_index].running = new_running;
         let _ = self
             .state_sync
@@ -327,12 +330,9 @@ impl GuiApp {
                 plotter
                     .lock()
                     .ok()
-                    .and_then(|plotter| {
-                        if plotter.open { Some(*id) } else { None }
-                    })
+                    .and_then(|plotter| if plotter.open { Some(*id) } else { None })
             })
             .collect();
-        
 
         for plugin_id in plotter_ids {
             let settings_seed = self.build_plotter_preview_state(plugin_id);
@@ -868,13 +868,16 @@ impl GuiApp {
                                             }
                                         });
                                     ui.add_space(2.0);
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.add_space(4.0);
-                                        if styled_button(ui, "Apply").clicked() {
-                                            ctx.data_mut(|d| d.insert_temp(save_id, true));
-                                            ctx.request_repaint();
-                                        }
-                                    });
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            ui.add_space(4.0);
+                                            if styled_button(ui, "Apply").clicked() {
+                                                ctx.data_mut(|d| d.insert_temp(save_id, true));
+                                                ctx.request_repaint();
+                                            }
+                                        },
+                                    );
                                     ui.add_space(4.0);
                                 });
                             ctx.data_mut(|d| {
@@ -1032,13 +1035,22 @@ impl GuiApp {
                 self.connection_editor.plugin_id = None;
                 self.connection_editor_host = ConnectionEditorHost::Main;
             }
-            // Just close the plotter window, don't remove the plugin
-            if let Some(plotter) = self.plotter_manager.plotters.get(&id) {
+            let should_remove_plugin = self
+                .workspace_manager
+                .workspace
+                .plugins
+                .iter()
+                .find(|p| p.id == id)
+                .map(|p| self.plugin_uses_plotter_viewport(&p.kind))
+                .unwrap_or(false);
+            if should_remove_plugin {
+                self.remove_plugin_by_id(id);
+            } else if let Some(plotter) = self.plotter_manager.plotters.get(&id) {
                 if let Ok(mut plotter) = plotter.lock() {
                     plotter.open = false;
                 }
+                self.recompute_plotter_ui_hz();
             }
-            self.recompute_plotter_ui_hz();
         }
 
         for plugin_id in export_saved {

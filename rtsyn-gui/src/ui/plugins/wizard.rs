@@ -12,17 +12,14 @@
 
 use super::*;
 use crate::WindowFocus;
-use crate::{
-    has_rt_capabilities, spawn_file_dialog_thread, zenity_file_dialog,
-    PluginFieldDraft,
-};
+use crate::{has_rt_capabilities, spawn_file_dialog_thread, zenity_file_dialog, PluginFieldDraft};
 use rtsyn_cli::plugin_creator::{
     create_plugin, CreatorBehavior, PluginCreateRequest, PluginKindType, PluginLanguage,
 };
 use std::sync::mpsc;
 
 impl GuiApp {
-/// Returns the default value string for a given plugin field type.
+    /// Returns the default value string for a given plugin field type.
     ///
     /// This function maps plugin field types to their appropriate default values
     /// used in the plugin creation wizard. The defaults ensure newly created

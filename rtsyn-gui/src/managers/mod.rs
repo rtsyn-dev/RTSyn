@@ -10,10 +10,10 @@
 
 pub mod file_dialogs;
 pub mod notifications;
-pub mod plugin_behavior;
 pub mod plotter;
+pub mod plugin_behavior;
 
 pub use file_dialogs::FileDialogManager;
 pub use notifications::NotificationHandler;
-pub use plugin_behavior::PluginBehaviorManager;
 pub use plotter::PlotterManager;
+pub use plugin_behavior::PluginBehaviorManager;

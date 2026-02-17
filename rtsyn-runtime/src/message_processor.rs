@@ -5,11 +5,11 @@ use workspace::WorkspaceDefinition;
 use crate::connection_cache::{build_connection_cache, RuntimeConnectionCache};
 use crate::message_handler::{LogicMessage, LogicSettings};
 use crate::plugin_manager::{runtime_plugin_loads_started, DynamicPluginInstance, RuntimePlugin};
+#[cfg(feature = "comedi")]
+use comedi_daq_plugin::ComediDaqPlugin;
 use csv_recorder_plugin::CsvRecorderedPlugin;
 use live_plotter_plugin::LivePlotterPlugin;
 use performance_monitor_plugin::PerformanceMonitorPlugin;
-#[cfg(feature = "comedi")]
-use comedi_daq_plugin::ComediDaqPlugin;
 
 pub enum MessageAction {
     UpdateSettings(LogicSettings, Duration),
@@ -34,17 +34,29 @@ pub fn process_message(
             let mut new_ids: HashSet<u64> = HashSet::new();
             for plugin in &new_workspace.plugins {
                 new_ids.insert(plugin.id);
-                if let std::collections::hash_map::Entry::Vacant(e) = plugin_instances.entry(plugin.id) {
+                if let std::collections::hash_map::Entry::Vacant(e) =
+                    plugin_instances.entry(plugin.id)
+                {
                     let instance = match plugin.kind.as_str() {
-                        "csv_recorder" => RuntimePlugin::CsvRecorder(CsvRecorderedPlugin::new(plugin.id)),
-                        "live_plotter" => RuntimePlugin::LivePlotter(LivePlotterPlugin::new(plugin.id)),
-                        "performance_monitor" => RuntimePlugin::PerformanceMonitor(PerformanceMonitorPlugin::new(plugin.id)),
+                        "csv_recorder" => {
+                            RuntimePlugin::CsvRecorder(CsvRecorderedPlugin::new(plugin.id))
+                        }
+                        "live_plotter" => {
+                            RuntimePlugin::LivePlotter(LivePlotterPlugin::new(plugin.id))
+                        }
+                        "performance_monitor" => RuntimePlugin::PerformanceMonitor(
+                            PerformanceMonitorPlugin::new(plugin.id),
+                        ),
                         #[cfg(feature = "comedi")]
                         "comedi_daq" => RuntimePlugin::ComediDaq(ComediDaqPlugin::new(plugin.id)),
                         _ => {
-                            if let Some(path) = plugin.config.get("library_path").and_then(|v| v.as_str()) {
+                            if let Some(path) =
+                                plugin.config.get("library_path").and_then(|v| v.as_str())
+                            {
                                 unsafe {
-                                    if let Some(dynamic) = DynamicPluginInstance::load(path, plugin.id) {
+                                    if let Some(dynamic) =
+                                        DynamicPluginInstance::load(path, plugin.id)
+                                    {
                                         RuntimePlugin::Dynamic(dynamic)
                                     } else {
                                         continue;
@@ -57,7 +69,9 @@ pub fn process_message(
                     };
                     e.insert(instance);
                 }
-                if let std::collections::hash_map::Entry::Vacant(e) = plugin_running.entry(plugin.id) {
+                if let std::collections::hash_map::Entry::Vacant(e) =
+                    plugin_running.entry(plugin.id)
+                {
                     if let Some(instance) = plugin_instances.get(&plugin.id) {
                         e.insert(runtime_plugin_loads_started(instance));
                     }
@@ -77,9 +91,12 @@ pub fn process_message(
                 }
                 plugin_running.remove(&id);
             }
-            
+
             let connection_cache = build_connection_cache(&new_workspace);
-            Some(MessageAction::UpdateWorkspace(new_workspace, connection_cache))
+            Some(MessageAction::UpdateWorkspace(
+                new_workspace,
+                connection_cache,
+            ))
         }
         LogicMessage::SetPluginRunning(plugin_id, running) => {
             Some(MessageAction::SetPluginRunning(plugin_id, running))
@@ -88,15 +105,25 @@ pub fn process_message(
             if let Some(ws) = workspace.as_ref() {
                 if let Some(plugin) = ws.plugins.iter().find(|p| p.id == plugin_id) {
                     let instance = match plugin.kind.as_str() {
-                        "csv_recorder" => RuntimePlugin::CsvRecorder(CsvRecorderedPlugin::new(plugin.id)),
-                        "live_plotter" => RuntimePlugin::LivePlotter(LivePlotterPlugin::new(plugin.id)),
-                        "performance_monitor" => RuntimePlugin::PerformanceMonitor(PerformanceMonitorPlugin::new(plugin.id)),
+                        "csv_recorder" => {
+                            RuntimePlugin::CsvRecorder(CsvRecorderedPlugin::new(plugin.id))
+                        }
+                        "live_plotter" => {
+                            RuntimePlugin::LivePlotter(LivePlotterPlugin::new(plugin.id))
+                        }
+                        "performance_monitor" => RuntimePlugin::PerformanceMonitor(
+                            PerformanceMonitorPlugin::new(plugin.id),
+                        ),
                         #[cfg(feature = "comedi")]
                         "comedi_daq" => RuntimePlugin::ComediDaq(ComediDaqPlugin::new(plugin.id)),
                         _ => {
-                            if let Some(path) = plugin.config.get("library_path").and_then(|v| v.as_str()) {
+                            if let Some(path) =
+                                plugin.config.get("library_path").and_then(|v| v.as_str())
+                            {
                                 unsafe {
-                                    if let Some(dynamic) = DynamicPluginInstance::load(path, plugin.id) {
+                                    if let Some(dynamic) =
+                                        DynamicPluginInstance::load(path, plugin.id)
+                                    {
                                         RuntimePlugin::Dynamic(dynamic)
                                     } else {
                                         return None;

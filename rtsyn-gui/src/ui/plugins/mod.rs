@@ -22,7 +22,7 @@ mod wizard;
 impl GuiApp {
     const NEW_PLUGIN_TYPES: [&'static str; 6] = ["f64", "f32", "i64", "i32", "bool", "string"];
 
-/// Opens the plugin management window.
+    /// Opens the plugin management window.
     ///
     /// This function activates the plugin management interface where users can
     /// install, uninstall, and manage plugins. It refreshes the plugin detection

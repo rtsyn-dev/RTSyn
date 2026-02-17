@@ -1,7 +1,7 @@
 use csv_recorder_plugin::CsvRecorderedPlugin;
 use live_plotter_plugin::LivePlotterPlugin;
 use performance_monitor_plugin::PerformanceMonitorPlugin;
-use rtsyn_plugin::{Plugin, PluginContext};
+use rtsyn_plugin::{DeviceDriver, Plugin, PluginContext};
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::time::{Duration, Instant};
@@ -12,11 +12,11 @@ use crate::message_handler::{LogicMessage, LogicSettings, LogicState};
 use crate::plugin_manager::{
     runtime_plugin_loads_started, set_dynamic_config_patch, DynamicPluginInstance, RuntimePlugin,
 };
+#[cfg(feature = "comedi")]
+use crate::plugin_processors::process_comedi_daq;
 use crate::plugin_processors::{
     process_csv_recorder, process_dynamic_plugin, process_live_plotter, process_performance_monitor,
 };
-#[cfg(feature = "comedi")]
-use crate::plugin_processors::process_comedi_daq;
 use crate::rt_thread::ActiveRtBackend;
 
 pub fn run_runtime_loop(
@@ -63,7 +63,9 @@ pub fn run_runtime_loop(
                         let mut new_ids: HashSet<u64> = HashSet::new();
                         for plugin in &new_workspace.plugins {
                             new_ids.insert(plugin.id);
-                            if let std::collections::hash_map::Entry::Vacant(e) = plugin_instances.entry(plugin.id) {
+                            if let std::collections::hash_map::Entry::Vacant(e) =
+                                plugin_instances.entry(plugin.id)
+                            {
                                 let instance = match plugin.kind.as_str() {
                                     "csv_recorder" => RuntimePlugin::CsvRecorder(
                                         CsvRecorderedPlugin::new(plugin.id),
@@ -100,7 +102,9 @@ pub fn run_runtime_loop(
                                 };
                                 e.insert(instance);
                             }
-                            if let std::collections::hash_map::Entry::Vacant(e) = plugin_running.entry(plugin.id) {
+                            if let std::collections::hash_map::Entry::Vacant(e) =
+                                plugin_running.entry(plugin.id)
+                            {
                                 if let Some(instance) = plugin_instances.get(&plugin.id) {
                                     e.insert(runtime_plugin_loads_started(instance));
                                 }
@@ -270,6 +274,31 @@ pub fn run_runtime_loop(
                         let Some(plugin) = ws.plugins.iter().find(|p| p.id == plugin_id) else {
                             continue;
                         };
+                        if let Some(instance) = plugin_instances.get_mut(&plugin_id) {
+                            #[cfg(feature = "comedi")]
+                            if let RuntimePlugin::ComediDaq(plugin_instance) = instance {
+                                let device_path = plugin
+                                    .config
+                                    .get("device_path")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("/dev/comedi0")
+                                    .to_string();
+                                let scan_devices = plugin
+                                    .config
+                                    .get("scan_devices")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
+                                let scan_nonce = plugin
+                                    .config
+                                    .get("scan_nonce")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0);
+                                plugin_instance.set_config(device_path, scan_devices, scan_nonce);
+                                let _ = plugin_instance.close();
+                                let _ = plugin_instance.open();
+                                continue;
+                            }
+                        }
                         let instance = match plugin.kind.as_str() {
                             "csv_recorder" => {
                                 RuntimePlugin::CsvRecorder(CsvRecorderedPlugin::new(plugin.id))
@@ -405,6 +434,7 @@ pub fn run_runtime_loop(
                             &mut outputs,
                             &mut input_values,
                             &mut plugin_ctx,
+                            is_running,
                         );
                     }
                     RuntimePlugin::LivePlotter(plugin_instance) => {

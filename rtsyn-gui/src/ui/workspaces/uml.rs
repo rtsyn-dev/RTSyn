@@ -17,7 +17,7 @@ use std::hash::{Hash, Hasher};
 use std::io::Read;
 
 impl GuiApp {
-/// Requests UML diagram rendering from PlantUML web service.
+    /// Requests UML diagram rendering from PlantUML web service.
     ///
     /// This function encodes the provided UML text using PlantUML deflate encoding
     /// and sends a request to the PlantUML web service to render the diagram.
@@ -33,7 +33,11 @@ impl GuiApp {
     /// # Side Effects
     /// - Makes HTTP request to PlantUML web service
     /// - May block for up to 10 seconds waiting for response
-    pub(super) fn request_uml_render(&mut self, uml: &str, as_svg: bool) -> Result<Vec<u8>, String> {
+    pub(super) fn request_uml_render(
+        &mut self,
+        uml: &str,
+        as_svg: bool,
+    ) -> Result<Vec<u8>, String> {
         let encoded = plantuml_encoding::encode_plantuml_deflate(uml)
             .map_err(|err| format!("Failed to encode UML: {err:?}"))?;
         let format_path = if as_svg { "svg" } else { "png" };

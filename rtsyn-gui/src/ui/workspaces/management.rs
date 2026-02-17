@@ -15,7 +15,7 @@ use super::*;
 use crate::WindowFocus;
 
 impl GuiApp {
-/// Opens the manage workspaces window.
+    /// Opens the manage workspaces window.
     ///
     /// This function opens the workspace management interface that allows users
     /// to view, load, edit, export, and delete existing workspaces. It initializes

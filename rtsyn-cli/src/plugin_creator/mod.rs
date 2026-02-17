@@ -1,23 +1,23 @@
-use std::path::PathBuf;
 use serde_json;
+use std::path::PathBuf;
 
-pub mod validation;
-pub mod templates;
 pub mod scaffolding;
+pub mod templates;
+pub mod validation;
 
 pub use validation::{
-    PluginLanguage, PluginKindType, FieldType, PluginVariable, CreatorBehavior,
-    parse_variable_line, normalize_default, strip_language_suffix,
-    to_kebab_case, to_pascal_case, sanitize_names, quote_array
+    normalize_default, parse_variable_line, quote_array, sanitize_names, strip_language_suffix,
+    to_kebab_case, to_pascal_case, CreatorBehavior, FieldType, PluginKindType, PluginLanguage,
+    PluginVariable,
 };
 
 pub use templates::{
-    plugin_templates_dir, render_to_file, generate_process_body, generate_c_process_body,
-    generate_state_fields, generate_c_state_fields, generate_match_arms, 
-    generate_c_match_arms, generate_default_vars
+    generate_c_match_arms, generate_c_process_body, generate_c_state_fields, generate_default_vars,
+    generate_match_arms, generate_process_body, generate_state_fields, plugin_templates_dir,
+    render_to_file,
 };
 
-pub use scaffolding::{create_plugin_structure, create_plugin_files};
+pub use scaffolding::{create_plugin_files, create_plugin_structure};
 
 #[derive(Debug, Clone)]
 pub struct PluginCreateRequest {
@@ -70,11 +70,14 @@ pub fn create_plugin(req: &PluginCreateRequest) -> Result<PathBuf, String> {
     let output_array = quote_array(&outputs);
     let internal_array = quote_array(&internals);
 
-    let (state_fields, default_fields) = generate_state_fields(&inputs, &outputs, &internals, &numeric_vars);
-    let (c_state_fields, c_default_fields) = generate_c_state_fields(&inputs, &outputs, &internals, &numeric_vars);
-    let (config_match_arms, input_match_arms, output_match_arms, internal_match_arms) = 
+    let (state_fields, default_fields) =
+        generate_state_fields(&inputs, &outputs, &internals, &numeric_vars);
+    let (c_state_fields, c_default_fields) =
+        generate_c_state_fields(&inputs, &outputs, &internals, &numeric_vars);
+    let (config_match_arms, input_match_arms, output_match_arms, internal_match_arms) =
         generate_match_arms(&numeric_vars, &inputs, &outputs, &internals);
-    let (c_config_arms, c_input_arms, c_output_arms) = generate_c_match_arms(&numeric_vars, &inputs, &outputs);
+    let (c_config_arms, c_input_arms, c_output_arms) =
+        generate_c_match_arms(&numeric_vars, &inputs, &outputs);
     let (default_vars_vec, default_vars_json_pairs) = generate_default_vars(&req.variables);
 
     let process_body = generate_process_body(req.plugin_type, &inputs, &outputs, &internals);
@@ -98,12 +101,60 @@ pub fn create_plugin(req: &PluginCreateRequest) -> Result<PathBuf, String> {
         ("INTERNAL_ARRAY", internal_array),
         ("PLUGIN_TYPE_VARIANT", req.plugin_type.variant().to_string()),
         ("PLUGIN_TYPE_STR", req.plugin_type.as_str().to_string()),
-        ("LOADS_STARTED", if req.behavior.autostart { "true" } else { "false" }.to_string()),
-        ("SUPPORTS_START_STOP", if req.behavior.supports_start_stop { "true" } else { "false" }.to_string()),
-        ("SUPPORTS_RESTART", if req.behavior.supports_restart { "true" } else { "false" }.to_string()),
-        ("SUPPORTS_APPLY", if req.behavior.supports_apply { "true" } else { "false" }.to_string()),
-        ("EXTERNAL_WINDOW", if req.behavior.external_window { "true" } else { "false" }.to_string()),
-        ("STARTS_EXPANDED", if req.behavior.starts_expanded { "true" } else { "false" }.to_string()),
+        (
+            "LOADS_STARTED",
+            if req.behavior.autostart {
+                "true"
+            } else {
+                "false"
+            }
+            .to_string(),
+        ),
+        (
+            "SUPPORTS_START_STOP",
+            if req.behavior.supports_start_stop {
+                "true"
+            } else {
+                "false"
+            }
+            .to_string(),
+        ),
+        (
+            "SUPPORTS_RESTART",
+            if req.behavior.supports_restart {
+                "true"
+            } else {
+                "false"
+            }
+            .to_string(),
+        ),
+        (
+            "SUPPORTS_APPLY",
+            if req.behavior.supports_apply {
+                "true"
+            } else {
+                "false"
+            }
+            .to_string(),
+        ),
+        (
+            "EXTERNAL_WINDOW",
+            if req.behavior.external_window {
+                "true"
+            } else {
+                "false"
+            }
+            .to_string(),
+        ),
+        (
+            "STARTS_EXPANDED",
+            if req.behavior.starts_expanded {
+                "true"
+            } else {
+                "false"
+            }
+            .to_string(),
+        ),
         ("REQ_INPUT_JSON", req_input_json),
         ("REQ_OUTPUT_JSON", req_output_json),
         ("REQ_INPUT_JSON_RAW", req_input_json_raw),
@@ -129,11 +180,14 @@ pub fn create_plugin(req: &PluginCreateRequest) -> Result<PathBuf, String> {
         ("CORE_STATE_TYPE", core_state_type),
         ("FFI_CORE_STRUCT", ffi_core_struct),
         ("CORE_HEADER_FILE", format!("{kind}.h")),
-        ("BUILD_DEPS", if req.language == PluginLanguage::Rust {
-            String::new()
-        } else {
-            "[build-dependencies]\ncc = \"1\"".to_string()
-        }),
+        (
+            "BUILD_DEPS",
+            if req.language == PluginLanguage::Rust {
+                String::new()
+            } else {
+                "[build-dependencies]\ncc = \"1\"".to_string()
+            },
+        ),
     ];
 
     if req.language != PluginLanguage::Rust {

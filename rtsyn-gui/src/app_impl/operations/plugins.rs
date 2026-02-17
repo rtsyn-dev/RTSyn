@@ -263,6 +263,18 @@ impl GuiApp {
         self.mark_workspace_dirty();
     }
 
+    pub(crate) fn remove_plugin_by_id(&mut self, plugin_id: u64) {
+        if let Some(index) = self
+            .workspace_manager
+            .workspace
+            .plugins
+            .iter()
+            .position(|p| p.id == plugin_id)
+        {
+            self.remove_plugin(index);
+        }
+    }
+
     /// Uninstalls a plugin and removes all instances from workspace.
     ///
     /// # Parameters

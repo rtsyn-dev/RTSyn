@@ -16,7 +16,7 @@ use super::*;
 use crate::WindowFocus;
 
 impl GuiApp {
-/// Renders the main connection management window.
+    /// Renders the main connection management window.
     ///
     /// This function displays a comprehensive interface for managing all connections in the workspace.
     /// It provides both a list view of existing connections and controls for adding new connections

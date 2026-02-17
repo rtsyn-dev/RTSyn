@@ -27,11 +27,7 @@ pub fn scan_workspace_entries(workspace_dir: &Path) -> Vec<WorkspaceEntry> {
                         name: workspace.name,
                         description: workspace.description,
                         plugins: workspace.plugins.len(),
-                        plugin_kinds: workspace
-                            .plugins
-                            .iter()
-                            .map(|p| p.kind.clone())
-                            .collect(),
+                        plugin_kinds: workspace.plugins.iter().map(|p| p.kind.clone()).collect(),
                         path,
                     });
                 }
@@ -48,8 +44,7 @@ pub fn workspace_file_path_for(workspace_dir: &Path, name: &str) -> PathBuf {
 }
 
 pub fn load_workspace_file(path: &Path) -> Result<WorkspaceDefinition, String> {
-    WorkspaceDefinition::load_from_file(path)
-        .map_err(|e| format!("Failed to load workspace: {e}"))
+    WorkspaceDefinition::load_from_file(path).map_err(|e| format!("Failed to load workspace: {e}"))
 }
 
 pub fn save_workspace_file(workspace: &WorkspaceDefinition, path: &Path) -> Result<(), String> {

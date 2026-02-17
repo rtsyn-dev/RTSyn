@@ -15,7 +15,7 @@ use super::*;
 use crate::WindowFocus;
 
 impl GuiApp {
-/// Renders the help documentation window with topic-based information.
+    /// Renders the help documentation window with topic-based information.
     ///
     /// This function displays a tabbed help interface providing documentation
     /// about different aspects of RTSyn including plugins, workspaces, runtime,
