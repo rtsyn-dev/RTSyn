@@ -17,6 +17,7 @@ use crate::{
     BuildAction,
     PluginFieldDraft,
 };
+use rtsyn_cli::plugin_creator::PluginKindType;
 
 impl GuiApp {
 /// Truncates plugin names for display in list views with ellipsis.
@@ -253,89 +254,237 @@ impl GuiApp {
         show_default_value: bool,
     ) -> bool {
         let mut changed = false;
+        let section_width = ui.available_width();
         egui::Frame::group(ui.style())
             .inner_margin(egui::Margin::same(10.0))
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(title).strong());
-                    ui.add_space(8.0);
-                    if ui.button(add_label).clicked() {
-                        fields.push(PluginFieldDraft::default());
-                        changed = true;
+                ui.set_min_width(section_width);
+                ui.set_max_width(section_width);
+                ui.vertical(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(title).strong());
+                        ui.add_space(8.0);
+                        if ui.button(add_label).clicked() {
+                            fields.push(PluginFieldDraft::default());
+                            changed = true;
+                        }
+                    });
+                    ui.add_space(6.0);
+                    let mut remove_idx = None;
+                    let mut idx = 0usize;
+                    while idx < fields.len() {
+                        let current_idx = idx;
+                        ui.scope(|ui| {
+                            ui.set_min_width(section_width);
+                            ui.set_max_width(section_width);
+                            let mut style = ui.style().as_ref().clone();
+                            style.visuals.extreme_bg_color = egui::Color32::from_rgb(58, 58, 62);
+                            style.visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(58, 58, 62);
+                            style.visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(66, 66, 72);
+                            style.visuals.widgets.active.bg_fill = egui::Color32::from_rgb(72, 72, 78);
+                            ui.set_style(style);
+                            let field_id = fields[current_idx].id;
+                            ui.push_id(field_id, |ui| {
+                                ui.horizontal(|ui| {
+                                    if ui
+                                        .add_sized(
+                                            [200.0, 26.0],
+                                            egui::TextEdit::singleline(
+                                                &mut fields[current_idx].name,
+                                            )
+                                            .hint_text("Name"),
+                                        )
+                                        .changed()
+                                    {
+                                        changed = true;
+                                    }
+                                    let previous_type = fields[current_idx].type_name.clone();
+                                    egui::ComboBox::from_id_source((id_key, current_idx, "type"))
+                                        .width(96.0)
+                                        .selected_text(fields[current_idx].type_name.clone())
+                                        .show_ui(ui, |ui| {
+                                            for ty in Self::NEW_PLUGIN_TYPES {
+                                                if ui
+                                                    .selectable_label(
+                                                        fields[current_idx].type_name == ty,
+                                                        ty,
+                                                    )
+                                                    .clicked()
+                                                {
+                                                    fields[current_idx].type_name = ty.to_string();
+                                                    changed = true;
+                                                }
+                                            }
+                                        });
+                                    if previous_type != fields[current_idx].type_name {
+                                        let prev_default =
+                                            Self::plugin_creator_default_by_type(&previous_type);
+                                        if fields[current_idx].default_value.trim().is_empty()
+                                            || fields[current_idx].default_value == prev_default
+                                        {
+                                            fields[current_idx].default_value =
+                                                Self::plugin_creator_default_by_type(
+                                                    &fields[current_idx].type_name,
+                                                )
+                                                .to_string();
+                                        }
+                                    }
+                                    if show_default_value {
+                                        let default_hint =
+                                            Self::plugin_creator_default_by_type(
+                                                &fields[current_idx].type_name,
+                                            )
+                                            .to_string();
+                                        if ui
+                                            .add_sized(
+                                                [120.0, 26.0],
+                                                egui::TextEdit::singleline(
+                                                    &mut fields[current_idx].default_value,
+                                                )
+                                                .hint_text(default_hint),
+                                            )
+                                            .changed()
+                                        {
+                                            changed = true;
+                                        }
+                                    }
+                                    if ui.small_button("Remove").clicked() {
+                                        remove_idx = Some(current_idx);
+                                    }
+                                });
+                            });
+                        });
+                        if idx + 1 < fields.len() {
+                            ui.add_space(4.0);
+                        }
+                        idx += 1;
+                    }
+                    if let Some(idx) = remove_idx {
+                        if idx < fields.len() {
+                            fields.remove(idx);
+                            changed = true;
+                        }
                     }
                 });
-                ui.add_space(6.0);
             });
-        let mut idx = 0usize;
-        while idx < fields.len() {
-            let mut remove = false;
-            ui.horizontal(|ui| {
-                let mut style = ui.style().as_ref().clone();
-                style.visuals.extreme_bg_color = egui::Color32::from_rgb(58, 58, 62);
-                style.visuals.widgets.inactive.bg_fill = egui::Color32::from_rgb(58, 58, 62);
-                style.visuals.widgets.hovered.bg_fill = egui::Color32::from_rgb(66, 66, 72);
-                style.visuals.widgets.active.bg_fill = egui::Color32::from_rgb(72, 72, 78);
-                ui.set_style(style);
+        changed
+    }
 
-                if ui
-                    .add_sized(
-                        [200.0, 26.0],
-                        egui::TextEdit::singleline(&mut fields[idx].name).hint_text("Name"),
-                    )
-                    .changed()
-                {
-                    changed = true;
-                }
-                let previous_type = fields[idx].type_name.clone();
-                egui::ComboBox::from_id_source((id_key, idx, "type"))
-                    .width(96.0)
-                    .selected_text(fields[idx].type_name.clone())
-                    .show_ui(ui, |ui| {
-                        for ty in Self::NEW_PLUGIN_TYPES {
-                            if ui
-                                .selectable_label(fields[idx].type_name == ty, ty)
-                                .clicked()
-                            {
-                                fields[idx].type_name = ty.to_string();
+    fn render_required_ports_section(
+        ui: &mut egui::Ui,
+        id: &str,
+        all_required: &mut bool,
+        entries: &mut Vec<String>,
+        selection: &mut String,
+        available: &[String],
+        add_button_label: &str,
+    ) -> bool {
+        let mut changed = false;
+        let section_width = ui.available_width();
+        let mut seen = std::collections::HashSet::new();
+        let mut candidates = Vec::new();
+        for name in available {
+            let trimmed = name.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if entries.iter().any(|entry| entry == trimmed) {
+                continue;
+            }
+            if seen.insert(trimmed.to_string()) {
+                candidates.push(trimmed.to_string());
+            }
+        }
+
+        if *all_required {
+            if !selection.is_empty() {
+                selection.clear();
+                changed = true;
+            }
+        } else if !candidates.is_empty()
+            && (selection.is_empty()
+                || !candidates
+                    .iter()
+                    .any(|name| name == selection.trim()))
+        {
+            selection.clear();
+            selection.push_str(&candidates[0]);
+            changed = true;
+        }
+
+        egui::Frame::group(ui.style())
+            .inner_margin(egui::Margin::same(8.0))
+            .show(ui, |ui| {
+                ui.set_min_width(section_width);
+                ui.set_max_width(section_width);
+                ui.vertical(|ui| {
+                    ui.horizontal(|ui| {
+                        if ui.checkbox(all_required, "All required").changed() {
+                            changed = true;
+                        }
+                        ui.add_space(6.0);
+                        if !*all_required && !candidates.is_empty() {
+                            egui::ComboBox::from_id_source(format!("{id}_dropdown"))
+                                .selected_text(if selection.is_empty() {
+                                    "Select port"
+                                } else {
+                                    selection.as_str()
+                                })
+                                .width(140.0)
+                                .show_ui(ui, |ui| {
+                                    for option in &candidates {
+                                        if ui
+                                            .selectable_label(selection.as_str() == option, option)
+                                            .clicked()
+                                        {
+                                            *selection = option.clone();
+                                            changed = true;
+                                        }
+                                    }
+                                });
+                        }
+                        ui.add_space(6.0);
+                        let selection_text = selection.trim();
+                        let can_add = !*all_required
+                            && !selection_text.is_empty()
+                            && candidates.iter().any(|name| name == selection_text);
+                        if ui
+                            .add_enabled(can_add, egui::Button::new(add_button_label))
+                            .clicked()
+                        {
+                            entries.push(selection_text.to_string());
+                            selection.clear();
+                            changed = true;
+                        }
+                    });
+                    if !entries.is_empty() {
+                        ui.add_space(6.0);
+                        let mut remove_idx = None;
+                        ui.vertical(|ui| {
+                            for (idx, entry) in entries.iter().enumerate() {
+                                ui.push_id((id, idx), |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label(entry);
+                                        if ui.small_button("×").clicked() {
+                                            remove_idx = Some(idx);
+                                        }
+                                    });
+                                });
+                                if idx + 1 < entries.len() {
+                                    ui.add_space(4.0);
+                                }
+                            }
+                        });
+                        if let Some(idx) = remove_idx {
+                            if idx < entries.len() {
+                                entries.remove(idx);
                                 changed = true;
                             }
                         }
-                    });
-                if previous_type != fields[idx].type_name {
-                    let prev_default = Self::plugin_creator_default_by_type(&previous_type);
-                    if fields[idx].default_value.trim().is_empty()
-                        || fields[idx].default_value == prev_default
-                    {
-                        fields[idx].default_value =
-                            Self::plugin_creator_default_by_type(&fields[idx].type_name)
-                                .to_string();
                     }
-                }
-                if show_default_value {
-                    let default_hint =
-                        Self::plugin_creator_default_by_type(&fields[idx].type_name).to_string();
-                    if ui
-                        .add_sized(
-                            [120.0, 26.0],
-                            egui::TextEdit::singleline(&mut fields[idx].default_value)
-                                .hint_text(default_hint),
-                        )
-                        .changed()
-                    {
-                        changed = true;
-                    }
-                }
-                if ui.small_button("Remove").clicked() {
-                    remove = true;
-                }
+                });
             });
-            if remove {
-                fields.remove(idx);
-                changed = true;
-            } else {
-                idx += 1;
-            }
-        }
+
         changed
     }
 
@@ -394,16 +543,23 @@ impl GuiApp {
 
             egui::CentralPanel::default().show(ctx, |ui| {
                 let mut changed = false;
-                ui.heading(RichText::new("New Plugin").size(24.0));
+                ui.heading(
+                    RichText::new("New Plugin")
+                        .size(28.0)
+                        .color(egui::Color32::WHITE)
+                        .strong(),
+                );
                 ui.label(
                     "Create a Rust/C/C++ scaffold with structured inputs, outputs and runtime variables.",
                 );
                 ui.add_space(10.0);
                 egui::ScrollArea::vertical().show(ui, |ui| {
+                    let section_width = ui.available_width();
                     egui::Frame::group(ui.style())
                         .inner_margin(egui::Margin::same(12.0))
                         .show(ui, |ui| {
-                            ui.label(RichText::new("1. Name and language").strong());
+                            ui.set_min_width(section_width);
+                            ui.label(RichText::new("1. Name, language, and type").strong());
                             ui.add_space(8.0);
                             ui.scope(|ui| {
                                 let mut style = ui.style().as_ref().clone();
@@ -427,28 +583,75 @@ impl GuiApp {
                                 }
                             });
                             ui.add_space(8.0);
-                            egui::ComboBox::from_id_source("new_plugin_language")
-                                .selected_text(self.new_plugin_draft.language.clone())
-                                .show_ui(ui, |ui| {
-                                    for lang in ["rust", "c", "cpp"] {
-                                        if ui
-                                            .selectable_label(
-                                                self.new_plugin_draft.language == lang,
-                                                lang,
-                                            )
-                                            .clicked()
-                                        {
-                                            self.new_plugin_draft.language = lang.to_string();
-                                            changed = true;
+                            ui.horizontal(|ui| {
+                                ui.label("Language");
+                                ui.add_space(6.0);
+                                egui::ComboBox::from_id_source("new_plugin_language")
+                                    .selected_text(self.new_plugin_draft.language.clone())
+                                    .show_ui(ui, |ui| {
+                                        for lang in ["rust", "c", "cpp"] {
+                                            if ui
+                                                .selectable_label(
+                                                    self.new_plugin_draft.language == lang,
+                                                    lang,
+                                                )
+                                                .clicked()
+                                            {
+                                                self.new_plugin_draft.language = lang.to_string();
+                                                changed = true;
+                                            }
                                         }
+                                    });
+                                ui.add_space(16.0);
+                                ui.label("Type");
+                                ui.add_space(6.0);
+                                egui::ComboBox::from_id_source("new_plugin_type")
+                                    .selected_text(self.new_plugin_draft.plugin_type.variant())
+                                    .show_ui(ui, |ui| {
+                                        for ty in [
+                                            PluginKindType::Standard,
+                                            PluginKindType::Device,
+                                            PluginKindType::Computational,
+                                        ] {
+                                            if ui
+                                                .selectable_label(
+                                                    self.new_plugin_draft.plugin_type == ty,
+                                                    ty.variant(),
+                                                )
+                                                .clicked()
+                                            {
+                                                self.new_plugin_draft.plugin_type = ty;
+                                                changed = true;
+                                            }
+                                        }
+                                    });
+                                ui.add_space(12.0);
+                                let description = match self.new_plugin_draft.plugin_type {
+                                    PluginKindType::Standard => "Standard RTSyn plugin",
+                                    PluginKindType::Computational => {
+                                        "Plugin with computational capabilities, uses numeric integration"
                                     }
-                                });
+                                    PluginKindType::Device => {
+                                        "Device plugin for communication with hardware"
+                                    }
+                                };
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(description)
+                                            .color(egui::Color32::from_rgb(150, 150, 150))
+                                            .size(15.0),
+                                    )
+                                    .wrap(true),
+                                );
+                            });
                         });
 
                     ui.add_space(10.0);
+                    let section_width = ui.available_width();
                     egui::Frame::group(ui.style())
                         .inner_margin(egui::Margin::same(12.0))
                         .show(ui, |ui| {
+                            ui.set_min_width(section_width);
                             ui.label(RichText::new("2. Main characteristics").strong());
                             ui.add_space(8.0);
                             ui.scope(|ui| {
@@ -477,9 +680,11 @@ impl GuiApp {
                         });
 
                     ui.add_space(10.0);
+                    let section_width = ui.available_width();
                     egui::Frame::group(ui.style())
                         .inner_margin(egui::Margin::same(12.0))
                         .show(ui, |ui| {
+                            ui.set_min_width(section_width);
                             ui.label(
                                 RichText::new("3. Variables, Inputs, Outputs, Internal Variables")
                                     .strong(),
@@ -524,9 +729,11 @@ impl GuiApp {
                     );
 
                     ui.add_space(10.0);
+                    let section_width = ui.available_width();
                     egui::Frame::group(ui.style())
                         .inner_margin(egui::Margin::same(12.0))
                         .show(ui, |ui| {
+                            ui.set_min_width(section_width);
                             ui.label(RichText::new("4. Options").strong());
                             ui.add_space(6.0);
                             if ui
@@ -584,30 +791,26 @@ impl GuiApp {
                                 changed = true;
                             }
                             ui.add_space(6.0);
-                            ui.label("Required connected input ports to start (comma-separated)");
-                            if ui
-                                .add(
-                                    egui::TextEdit::singleline(
-                                        &mut self.new_plugin_draft.required_input_ports_csv,
-                                    )
-                                    .hint_text("e.g. in_0,in_1"),
-                                )
-                                .changed()
-                            {
-                                changed = true;
-                            }
-                            ui.label("Required connected output ports to start (comma-separated)");
-                            if ui
-                                .add(
-                                    egui::TextEdit::singleline(
-                                        &mut self.new_plugin_draft.required_output_ports_csv,
-                                    )
-                                    .hint_text("e.g. out_0"),
-                                )
-                                .changed()
-                            {
-                                changed = true;
-                            }
+                            ui.label("Required connected input ports to start");
+                            changed |= Self::render_required_ports_section(
+                                ui,
+                                "new_plugin_required_inputs",
+                                &mut self.new_plugin_draft.required_inputs_all,
+                                &mut self.new_plugin_draft.required_inputs,
+                                &mut self.new_plugin_draft.required_input_selection,
+                                &Self::plugin_creator_field_names(&self.new_plugin_draft.inputs),
+                                "Add Input",
+                            );
+                            ui.label("Required connected output ports to start");
+                            changed |= Self::render_required_ports_section(
+                                ui,
+                                "new_plugin_required_outputs",
+                                &mut self.new_plugin_draft.required_outputs_all,
+                                &mut self.new_plugin_draft.required_outputs,
+                                &mut self.new_plugin_draft.required_output_selection,
+                                &Self::plugin_creator_field_names(&self.new_plugin_draft.outputs),
+                                "Add Output",
+                            );
                         });
 
                     ui.add_space(10.0);
