@@ -74,7 +74,7 @@
 - [x] Plotter on remove connection of i_n-1, glitches the plot (appears i_0 with no input)
 - [ ] When duplicating a plugin, it should load with the state of the plugin when added (it loads starting when it should load paused due duplicated plugin have loads started as false)
 - [x] Move plotter scale configuration to settings and better temporal scaling.
-- [ ] On click on connection, highlight it, put it over any window/plugin BUT the plugins that is connected (from them it shall remain background). When click is done elsewhere, put it on background of the rest of windows/cards (as normal). On hover when is over plugins and windows it MUST show the hover details.
+- [x] On click on connection, highlight it, put it over any window/plugin BUT the plugins that is connected (from them it shall remain background). When click is done elsewhere, put it on background of the rest of windows/cards (as normal). On hover when is over plugins and windows it MUST show the hover details.
 - [ ] "State view" mode on new "View" tab, where the cards are changed by circles (that doesnt show buttons, variables or anithing besides the id and name as in the cards) BUT preserve the cross to close, and the right click card menu (with add connection, plugin config, etc.)
 - [ ] Add clear workspace to return to default
 - [ ] On workspace load, start plugins with a iteration of difference maybe
