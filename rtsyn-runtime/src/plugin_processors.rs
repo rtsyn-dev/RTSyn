@@ -1,7 +1,9 @@
 use csv_recorder_plugin::{normalize_path, CsvRecorderedPlugin};
 use live_plotter_plugin::LivePlotterPlugin;
 use performance_monitor_plugin::PerformanceMonitorPlugin;
-use rtsyn_plugin::{DeviceDriver, Plugin, PluginContext};
+#[cfg(feature = "comedi")]
+use rtsyn_plugin::DeviceDriver;
+use rtsyn_plugin::{Plugin, PluginContext};
 use std::collections::HashMap;
 use workspace::PluginDefinition;
 

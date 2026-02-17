@@ -1,7 +1,9 @@
 use csv_recorder_plugin::CsvRecorderedPlugin;
 use live_plotter_plugin::LivePlotterPlugin;
 use performance_monitor_plugin::PerformanceMonitorPlugin;
-use rtsyn_plugin::{DeviceDriver, Plugin, PluginContext};
+#[cfg(feature = "comedi")]
+use rtsyn_plugin::DeviceDriver;
+use rtsyn_plugin::{Plugin, PluginContext};
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::time::{Duration, Instant};
@@ -274,30 +276,30 @@ pub fn run_runtime_loop(
                         let Some(plugin) = ws.plugins.iter().find(|p| p.id == plugin_id) else {
                             continue;
                         };
-                        if let Some(instance) = plugin_instances.get_mut(&plugin_id) {
-                            #[cfg(feature = "comedi")]
-                            if let RuntimePlugin::ComediDaq(plugin_instance) = instance {
-                                let device_path = plugin
-                                    .config
-                                    .get("device_path")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("/dev/comedi0")
-                                    .to_string();
-                                let scan_devices = plugin
-                                    .config
-                                    .get("scan_devices")
-                                    .and_then(|v| v.as_bool())
-                                    .unwrap_or(false);
-                                let scan_nonce = plugin
-                                    .config
-                                    .get("scan_nonce")
-                                    .and_then(|v| v.as_u64())
-                                    .unwrap_or(0);
-                                plugin_instance.set_config(device_path, scan_devices, scan_nonce);
-                                let _ = plugin_instance.close();
-                                let _ = plugin_instance.open();
-                                continue;
-                            }
+                        #[cfg(feature = "comedi")]
+                        if let Some(RuntimePlugin::ComediDaq(plugin_instance)) =
+                            plugin_instances.get_mut(&plugin_id)
+                        {
+                            let device_path = plugin
+                                .config
+                                .get("device_path")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("/dev/comedi0")
+                                .to_string();
+                            let scan_devices = plugin
+                                .config
+                                .get("scan_devices")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false);
+                            let scan_nonce = plugin
+                                .config
+                                .get("scan_nonce")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0);
+                            plugin_instance.set_config(device_path, scan_devices, scan_nonce);
+                            let _ = plugin_instance.close();
+                            let _ = plugin_instance.open();
+                            continue;
                         }
                         let instance = match plugin.kind.as_str() {
                             "csv_recorder" => {
