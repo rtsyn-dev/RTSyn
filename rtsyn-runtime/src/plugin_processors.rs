@@ -1,7 +1,7 @@
 use csv_recorder_plugin::{normalize_path, CsvRecorderedPlugin};
 use live_plotter_plugin::LivePlotterPlugin;
 use performance_monitor_plugin::PerformanceMonitorPlugin;
-use rtsyn_plugin::{Plugin, PluginContext};
+use rtsyn_plugin::{DeviceDriver, Plugin, PluginContext};
 use std::collections::HashMap;
 use workspace::PluginDefinition;
 
@@ -316,7 +316,9 @@ pub fn process_comedi_daq(
     plugin_instance.set_active_ports(&active_inputs, &active_outputs);
     plugin_instance.set_config(device_path.to_string(), scan_devices, scan_nonce);
 
-    let has_active = !active_inputs.is_empty() || !active_outputs.is_empty();
+    let has_active_inputs = !active_inputs.is_empty();
+    let has_active_outputs = !active_outputs.is_empty();
+    let has_active = has_active_inputs || has_active_outputs;
     if has_active && !plugin_instance.is_open() {
         let _ = plugin_instance.open();
     } else if !has_active && plugin_instance.is_open() {
@@ -333,10 +335,20 @@ pub fn process_comedi_daq(
 
     let _ = plugin_instance.process(plugin_ctx);
 
-    let output_port_len = plugin_instance.output_port_names().len();
-    for idx in 0..output_port_len {
-        let port = plugin_instance.output_port_names()[idx].clone();
-        let value = plugin_instance.get_output(&port);
-        outputs.insert((plugin.id, port), value);
+    if has_active_outputs && plugin_instance.is_open() {
+        let output_port_len = plugin_instance.output_port_names().len();
+        for idx in 0..output_port_len {
+            let port = plugin_instance.output_port_names()[idx].clone();
+            if active_outputs.contains(&port) {
+                let value = plugin_instance.get_output(&port);
+                outputs.insert((plugin.id, port), value);
+            } else {
+                outputs.insert((plugin.id, port), 0.0);
+            }
+        }
+    } else {
+        for port in plugin_instance.output_port_names() {
+            outputs.insert((plugin.id, port.clone()), 0.0);
+        }
     }
 }

@@ -470,21 +470,22 @@ impl Plugin for ComediDaqPlugin {
         let dev = dev.as_ptr();
 
         for (idx, (sd, ch)) in self.ao_channels.iter().enumerate() {
-            if !self.active_inputs.get(idx).copied().unwrap_or(false) {
-                continue;
-            }
             let port = self
                 .ao_port_names
                 .get(idx)
                 .map(String::as_str)
                 .unwrap_or("");
-            if let Some(v) = self.input_values.get(port) {
-                let Some((range, max)) = self.ao_calibration.get(idx).and_then(|v| *v) else {
-                    continue;
-                };
-                let raw = unsafe { comedilib::from_phys(*v, &range, max) };
-                unsafe { comedilib::write(dev, *sd, *ch, raw) }.map_err(Self::comedi_error)?;
-            }
+            let active = self.active_inputs.get(idx).copied().unwrap_or(false);
+            let value = if active {
+                self.input_values.get(port).copied().unwrap_or(0.0)
+            } else {
+                0.0
+            };
+            let Some((range, max)) = self.ao_calibration.get(idx).and_then(|v| *v) else {
+                continue;
+            };
+            let raw = unsafe { comedilib::from_phys(value, &range, max) };
+            unsafe { comedilib::write(dev, *sd, *ch, raw) }.map_err(Self::comedi_error)?;
         }
 
         for (idx, (sd, ch)) in self.ai_channels.iter().enumerate() {
