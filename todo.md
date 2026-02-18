@@ -26,7 +26,7 @@
 - [x] Loading wheel to the right of the text
 - [x] Right click over a plugin with a window over it shows the plugin right click menu (it shouldn't)
 - [ ] Make workspace (cargo rust) a package
-- [ ] Add different connections (shared memory and pipes)
+- [x] Add different connections (shared memory and pipes)
 - [ ] Performance tests
 - [x] Hover connections are shown on top of other windows
 - [x] max_latency_us should be max_latency and have a input similar of the settings (the value and the units)

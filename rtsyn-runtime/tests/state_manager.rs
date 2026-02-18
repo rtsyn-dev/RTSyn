@@ -1,5 +1,4 @@
 use rtsyn_runtime::state_manager::RuntimeState;
-use std::collections::HashMap;
 
 #[test]
 fn test_new() {

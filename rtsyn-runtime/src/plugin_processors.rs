@@ -15,7 +15,6 @@ pub fn process_csv_recorder(
     plugin_instance: &mut CsvRecorderedPlugin,
     plugin: &PluginDefinition,
     connection_cache: &RuntimeConnectionCache,
-    outputs: &HashMap<(u64, String), f64>,
     input_values: &mut HashMap<(u64, String), f64>,
     internal_variable_values: &mut HashMap<(u64, String), serde_json::Value>,
     is_running: bool,
@@ -66,10 +65,10 @@ pub fn process_csv_recorder(
     for idx in 0..input_count {
         let port = format!("in_{idx}");
         let value = if idx == 0 {
-            input_sum_cached(connection_cache, outputs, plugin.id, &port)
-                + input_sum_cached(connection_cache, outputs, plugin.id, "in")
+            input_sum_cached(connection_cache, plugin.id, &port)
+                + input_sum_cached(connection_cache, plugin.id, "in")
         } else {
-            input_sum_cached(connection_cache, outputs, plugin.id, &port)
+            input_sum_cached(connection_cache, plugin.id, &port)
         };
         input_values.insert((plugin.id, port), value);
         inputs.push(value);
@@ -101,7 +100,6 @@ pub fn process_live_plotter(
     plugin_instance: &mut LivePlotterPlugin,
     plugin: &PluginDefinition,
     connection_cache: &RuntimeConnectionCache,
-    outputs: &HashMap<(u64, String), f64>,
     input_values: &mut HashMap<(u64, String), f64>,
     internal_variable_values: &mut HashMap<(u64, String), serde_json::Value>,
     is_running: bool,
@@ -127,10 +125,10 @@ pub fn process_live_plotter(
     for idx in 0..input_count {
         let port = format!("in_{idx}");
         let value = if idx == 0 {
-            input_sum_cached(connection_cache, outputs, plugin.id, &port)
-                + input_sum_cached(connection_cache, outputs, plugin.id, "in")
+            input_sum_cached(connection_cache, plugin.id, &port)
+                + input_sum_cached(connection_cache, plugin.id, "in")
         } else {
-            input_sum_cached(connection_cache, outputs, plugin.id, &port)
+            input_sum_cached(connection_cache, plugin.id, &port)
         };
         input_values.insert((plugin.id, port), value);
         inputs.push(value);
@@ -213,7 +211,7 @@ pub fn process_dynamic_plugin(
             .map(|ports| ports.contains(input_name))
             .unwrap_or(false);
         let value = if is_connected {
-            input_sum_cached(connection_cache, outputs, plugin.id, input_name)
+            input_sum_cached(connection_cache, plugin.id, input_name)
         } else {
             0.0
         };
@@ -336,7 +334,7 @@ pub fn process_comedi_daq(
     let input_port_len = plugin_instance.input_port_names().len();
     for idx in 0..input_port_len {
         let port = plugin_instance.input_port_names()[idx].clone();
-        let value = input_sum_cached(connection_cache, outputs, plugin.id, &port);
+        let value = input_sum_cached(connection_cache, plugin.id, &port);
         input_values.insert((plugin.id, port.clone()), value);
         plugin_instance.set_input(&port, value);
     }

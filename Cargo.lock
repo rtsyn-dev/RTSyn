@@ -3213,6 +3213,7 @@ name = "rtsyn-runtime"
 version = "0.1.0"
 dependencies = [
  "comedi_daq_plugin",
+ "connection",
  "csv_recorder_plugin",
  "libc",
  "libloading 0.8.9",

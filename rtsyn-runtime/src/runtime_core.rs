@@ -403,6 +403,7 @@ pub fn run_runtime_loop(
 
             for plugin in plugins {
                 let is_running = plugin_running.get(&plugin.id).copied().unwrap_or(false);
+                connection_cache.refresh_plugin_inputs(plugin.id);
                 let instance = match plugin_instances.get_mut(&plugin.id) {
                     Some(instance) => instance,
                     None => continue,
@@ -426,7 +427,6 @@ pub fn run_runtime_loop(
                             plugin_instance,
                             &plugin,
                             &connection_cache,
-                            &outputs,
                             &mut input_values,
                             &mut internal_variable_values,
                             is_running,
@@ -451,7 +451,6 @@ pub fn run_runtime_loop(
                             plugin_instance,
                             &plugin,
                             &connection_cache,
-                            &outputs,
                             &mut input_values,
                             &mut internal_variable_values,
                             is_running,
@@ -468,6 +467,18 @@ pub fn run_runtime_loop(
                             &mut plugin_ctx,
                         );
                     }
+                }
+                let out_ports: Vec<String> = connection_cache
+                    .outgoing_ports_by_plugin
+                    .get(&plugin.id)
+                    .map(|ports| ports.iter().cloned().collect())
+                    .unwrap_or_default();
+                for port in out_ports {
+                        let value = outputs
+                            .get(&(plugin.id, port.clone()))
+                            .copied()
+                            .unwrap_or(0.0);
+                        connection_cache.publish_output(plugin.id, &port, value);
                 }
             }
             let ui_interval = if settings.ui_hz > 0.0 {

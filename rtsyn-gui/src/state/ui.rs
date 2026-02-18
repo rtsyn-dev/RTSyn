@@ -90,11 +90,11 @@ impl Default for ConnectionEditorState {
             to_idx: 0,
             from_port: String::new(),
             to_port: String::new(),
-            kind: "shared_memory".to_string(),
+            kind: "in_process".to_string(),
             kind_options: vec![
+                "in_process".to_string(),
                 "shared_memory".to_string(),
                 "pipe".to_string(),
-                "in_process".to_string(),
             ],
             open: false,
             mode: ConnectionEditMode::Add,

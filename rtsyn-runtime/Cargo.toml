@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 rtsyn_plugin = { workspace = true }
 workspace = { path = "../workspace" }
+connection = { path = "../connection" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
