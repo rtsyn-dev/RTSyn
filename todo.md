@@ -83,7 +83,7 @@
 - [x] Plugin creator options (start active etc)
 - [x] Add "sections start undropped" and make the dropdown sections start closed
 - [x] One loading workspace, dont keep start and stop and obey plugin loading attribute
-- [ ] Allow multifolder selection on plugin install
+- [x] Allow multifolder selection on plugin install
 - [ ] Alert user that a folder will be created with the logic of the plugin inside to prevent that the user creates a folder for the plugin. Also close create view on creation.
 - [x] Runtime new buttons: start all and stop all.
 - [ ] When clicking reinstall/uninstall to fast the plugin install/uninstall window gets leaked into notification view

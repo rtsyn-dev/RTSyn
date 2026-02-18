@@ -9,7 +9,8 @@ pub mod strings;
 pub mod system;
 
 pub use system::{
-    has_rt_capabilities, spawn_file_dialog_thread, zenity_file_dialog, zenity_file_dialog_with_name,
+    has_rt_capabilities, spawn_file_dialog_thread, zenity_file_dialog,
+    zenity_file_dialog_with_name, zenity_folder_dialog_multi,
 };
 
 pub use numeric::{

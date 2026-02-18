@@ -2,7 +2,7 @@ use eframe::{egui, egui::RichText};
 use rtsyn_runtime::spawn_runtime;
 use rtsyn_runtime::{LogicMessage, LogicState};
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -39,7 +39,7 @@ use state::{
 };
 use utils::{
     distance_to_segment, has_rt_capabilities, spawn_file_dialog_thread, zenity_file_dialog,
-    zenity_file_dialog_with_name,
+    zenity_file_dialog_with_name, zenity_folder_dialog_multi,
 };
 
 const DEDICATED_PLOTTER_VIEW_KINDS: &[&str] = &["live_plotter"];
@@ -423,6 +423,7 @@ struct GuiApp {
     connection_editor: state::ConnectionEditorState,
     workspace_dialog: state::WorkspaceDialogState,
     build_dialog: state::BuildDialogState,
+    pending_build_queue: VecDeque<(BuildAction, String)>,
     confirm_dialog: state::ConfirmDialogState,
     workspace_settings: state::WorkspaceSettingsState,
     help_state: state::HelpState,

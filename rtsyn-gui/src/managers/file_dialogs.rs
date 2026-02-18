@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 
 pub struct FileDialogManager {
-    pub install_dialog_rx: Option<Receiver<Option<PathBuf>>>,
+    pub install_dialog_rx: Option<Receiver<Option<Vec<PathBuf>>>>,
     pub import_dialog_rx: Option<Receiver<Option<PathBuf>>>,
     pub load_dialog_rx: Option<Receiver<Option<PathBuf>>>,
     pub export_dialog_rx: Option<Receiver<(PathBuf, Option<PathBuf>)>>,

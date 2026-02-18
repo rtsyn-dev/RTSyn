@@ -12,7 +12,10 @@
 
 use super::*;
 use crate::WindowFocus;
-use crate::{has_rt_capabilities, spawn_file_dialog_thread, zenity_file_dialog, PluginFieldDraft};
+use crate::{
+    has_rt_capabilities, spawn_file_dialog_thread, zenity_file_dialog,
+    zenity_folder_dialog_multi, PluginFieldDraft,
+};
 use rtsyn_cli::plugin_creator::{
     create_plugin, normalize_default, CreatorBehavior, FieldType, PluginCreateRequest,
     PluginKindType, PluginLanguage,
@@ -65,10 +68,10 @@ impl GuiApp {
         }
     }
 
-    /// Opens a file dialog for selecting a plugin installation folder.
+    /// Opens a file dialog for selecting plugin installation folders.
     ///
     /// This function initiates an asynchronous file dialog to allow users to browse
-    /// and select a folder containing plugins to install. It prevents multiple
+    /// and select one or more folders containing plugins to install. It prevents multiple
     /// dialogs from being opened simultaneously and provides user feedback.
     ///
     /// # Behavior
@@ -93,12 +96,12 @@ impl GuiApp {
         self.status = "Opening plugin folder dialog...".to_string();
 
         crate::spawn_file_dialog_thread(move || {
-            let folder = if crate::has_rt_capabilities() {
-                crate::zenity_file_dialog("folder", None)
+            let folders = if crate::has_rt_capabilities() {
+                zenity_folder_dialog_multi()
             } else {
-                rfd::FileDialog::new().pick_folder()
+                rfd::FileDialog::new().pick_folders()
             };
-            let _ = tx.send(folder);
+            let _ = tx.send(folders);
         });
     }
 

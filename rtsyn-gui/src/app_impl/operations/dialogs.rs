@@ -60,21 +60,30 @@ impl GuiApp {
                 self.show_info("Plugin", "Plugin build failed");
             }
             self.build_dialog.open = false;
+
+            // Start queued builds (if any). Immediate install/refresh actions are
+            // handled synchronously, so keep draining until an async build starts.
+            while self.build_dialog.rx.is_none() {
+                let Some((next_action, next_label)) = self.pending_build_queue.pop_front() else {
+                    break;
+                };
+                self.start_plugin_build(next_action, next_label);
+            }
         }
     }
 
-    /// Polls the install dialog for folder selection and initiates plugin installation.
+    /// Polls the install dialog for folder selections and initiates plugin installation.
     ///
     /// This function monitors the install dialog's receiver channel for user folder
-    /// selection. When a folder is selected, it extracts the folder name as a label
-    /// and starts the plugin build process with installation parameters.
+    /// selections. For each selected folder, it extracts a label and starts or queues
+    /// the plugin build process with installation parameters.
     ///
     /// # Parameters
     /// - Sets `removable: true` - allows the plugin to be uninstalled later
     /// - Sets `persist: true` - saves the plugin installation persistently
     ///
     /// # Behavior
-    /// - On folder selection: starts plugin build with Install action
+    /// - On folder selection: starts/queues plugin builds for each selected folder
     /// - On cancellation: updates status to indicate cancellation
     /// - Cleans up the receiver channel after processing
     pub(crate) fn poll_install_dialog(&mut self) {
@@ -85,20 +94,26 @@ impl GuiApp {
 
         if let Some(selection) = result {
             self.file_dialogs.install_dialog_rx = None;
-            if let Some(folder) = selection {
-                let label = folder
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or("plugin")
-                    .to_string();
-                self.start_plugin_build(
-                    BuildAction::Install {
-                        path: folder,
-                        removable: true,
-                        persist: true,
-                    },
-                    label,
-                );
+            if let Some(folders) = selection {
+                if folders.is_empty() {
+                    self.status = "Plugin install cancelled".to_string();
+                    return;
+                }
+                for folder in folders {
+                    let label = folder
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("plugin")
+                        .to_string();
+                    self.start_plugin_build(
+                        BuildAction::Install {
+                            path: folder,
+                            removable: true,
+                            persist: true,
+                        },
+                        label,
+                    );
+                }
             } else {
                 self.status = "Plugin install cancelled".to_string();
             }
@@ -430,7 +445,8 @@ impl GuiApp {
     /// - Creates receiver channel for build result communication
     pub(crate) fn start_plugin_build(&mut self, action: BuildAction, label: String) {
         if self.build_dialog.rx.is_some() {
-            self.status = "Plugin build already running".to_string();
+            self.pending_build_queue.push_back((action, label));
+            self.status = "Plugin build queued".to_string();
             return;
         }
         let path = match &action {

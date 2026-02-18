@@ -70,6 +70,7 @@ impl GuiApp {
             connection_editor: state::ConnectionEditorState::default(),
             workspace_dialog: state::WorkspaceDialogState::default(),
             build_dialog: state::BuildDialogState::default(),
+            pending_build_queue: std::collections::VecDeque::new(),
             confirm_dialog: state::ConfirmDialogState::default(),
             workspace_settings: state::WorkspaceSettingsState::default(),
             help_state: state::HelpState::default(),

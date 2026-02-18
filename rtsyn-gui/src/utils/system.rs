@@ -15,6 +15,31 @@ pub fn zenity_file_dialog(mode: &str, filter: Option<&str>) -> Option<PathBuf> {
     zenity_file_dialog_with_name(mode, filter, None)
 }
 
+pub fn zenity_folder_dialog_multi() -> Option<Vec<PathBuf>> {
+    let mut cmd = Command::new("zenity");
+    cmd.arg("--file-selection")
+        .arg("--directory")
+        .arg("--multiple")
+        .arg("--separator=\n");
+    cmd.output().ok().and_then(|output| {
+        if !output.status.success() {
+            return None;
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let folders: Vec<PathBuf> = stdout
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(PathBuf::from)
+            .collect();
+        if folders.is_empty() {
+            None
+        } else {
+            Some(folders)
+        }
+    })
+}
+
 pub fn zenity_file_dialog_with_name(
     mode: &str,
     filter: Option<&str>,
