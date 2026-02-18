@@ -5,7 +5,7 @@
 - [ ] Replace the rtsyn-plugin in Cargo.toml template when release
 - [ ] Python library cpython
 - [ ] Python plugin development
-- [ ] Create a plugin that can help creating plugins
+- [x] Create a plugin that can help creating plugins
 - [ ] Impove, change and refactor the plotter: It shall generate plots from different inputs, this should be the y value and the x the time (period of collection)
 - [ ] Let the installed plugins be organized in folders (virtual view), there is one reserved for the System ones
 - [x] Allow changing the color of the plotter lines and names
@@ -68,7 +68,7 @@
 - [x] Change needs connections to be needs_outputs and needs_inputs (daq constraint, to have atleast one but doesnt need both)
 - [ ] Add a settings section for default paths (for plugins, for images, for data etc)
 - [x] Fix no wrap with long names in plugins
-- [ ] Delete three dots and make title white on loading/building plugin
+- [x] Delete three dots and make title white on loading/building plugin
 - [ ] Checkbox on plugin config "Show on UML diagram"
 - [x] Plotter on remove connection of i_n-1, glitches the plot (appears i_0 with no input)
 - [x] When duplicating a plugin, it should load with the state of the plugin when added (it loads starting when it should load paused due duplicated plugin have loads started as false)
@@ -81,11 +81,11 @@
 - [ ] Add plugin order buttons
 - [ ] When reinstalled on loaded workspace, reset button dissapears
 - [x] Plugin creator options (start active etc)
-- [ ] Add "sections start undropped" and make the dropdown sections start closed
-- [ ] One loading workspace, dont keep start and stop and obey plugin loading attribute
+- [x] Add "sections start undropped" and make the dropdown sections start closed
+- [x] One loading workspace, dont keep start and stop and obey plugin loading attribute
 - [ ] Allow multifolder selection on plugin install
 - [ ] Alert user that a folder will be created with the logic of the plugin inside to prevent that the user creates a folder for the plugin. Also close create view on creation.
-- [ ] Runtime new buttons: start all and stop all.
+- [x] Runtime new buttons: start all and stop all.
 - [ ] When clicking reinstall/uninstall to fast the plugin install/uninstall window gets leaked into notification view
 - [ ] Change dt in hindmarsh rose plugin
 - [x] Do a poc to see if its better to extract all the plotter outside the plugin view and manage the connections in window

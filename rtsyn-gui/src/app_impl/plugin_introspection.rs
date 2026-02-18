@@ -100,12 +100,7 @@ impl GuiApp {
     }
 
     pub(crate) fn ensure_plugin_behavior_cached(&mut self, kind: &str) {
-        self.behavior_manager.ensure_behavior_cached(
-            kind,
-            None,
-            &self.state_sync.logic_tx,
-            &self.plugin_manager,
-        );
+        self.ensure_plugin_behavior_cached_with_path(kind, None);
     }
 
     pub(crate) fn ensure_plugin_behavior_cached_with_path(
@@ -114,12 +109,17 @@ impl GuiApp {
         library_path: Option<&PathBuf>,
     ) {
         let path_str = library_path.map(|p| p.to_string_lossy().to_string());
-        self.behavior_manager.ensure_behavior_cached(
+        let behavior = self.behavior_manager.ensure_behavior_cached(
             kind,
             path_str.as_deref(),
             &self.state_sync.logic_tx,
             &self.plugin_manager,
         );
+        if let Some(behavior) = behavior {
+            self.plugin_manager
+                .plugin_behaviors
+                .insert(kind.to_string(), behavior.clone());
+        }
     }
 
     pub(crate) fn plugin_display_name(&self, plugin_id: u64) -> String {

@@ -469,7 +469,7 @@ impl GuiApp {
         self.build_dialog.open = true;
         self.build_dialog.in_progress = true;
         self.build_dialog.title = "Building plugin".to_string();
-        self.build_dialog.message = format!("Building {label}...");
+        self.build_dialog.message = format!("Building {label}");
         std::thread::spawn(move || {
             let success = PluginManager::build_plugin(&path);
             let _ = tx.send(BuildResult { success, action });

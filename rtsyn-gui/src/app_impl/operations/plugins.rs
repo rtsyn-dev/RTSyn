@@ -189,32 +189,17 @@ impl GuiApp {
                 .and_then(|v| v.as_str())
                 .map(std::path::PathBuf::from);
             self.ensure_plugin_behavior_cached_with_path(&kind, library_path.as_ref());
-            if let Some(behavior) = self.behavior_manager.cached_behaviors.get(&kind) {
-                self.plugin_manager
-                    .plugin_behaviors
-                    .insert(kind.clone(), behavior.clone());
-            }
         }
-        let new_id = match self
+        match self
             .plugin_manager
             .duplicate_plugin_in_workspace(&mut self.workspace_manager.workspace, plugin_id)
         {
-            Ok(id) => id,
+            Ok(_) => {}
             Err(_) => {
                 self.show_info("Plugin", "Invalid plugin");
                 return;
             }
         };
-        if let Some(kind) = self
-            .workspace_manager
-            .workspace
-            .plugins
-            .iter()
-            .find(|p| p.id == new_id)
-            .map(|p| p.kind.clone())
-        {
-            self.ensure_plugin_behavior_cached(&kind);
-        }
         self.status = "Plugin duplicated".to_string();
         self.mark_workspace_dirty();
     }

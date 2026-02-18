@@ -430,7 +430,9 @@ impl GuiApp {
                 egui::Frame::window(ui.style())
                     .rounding(egui::Rounding::same(6.0))
                     .show(ui, |ui| {
-                        ui.heading(&self.build_dialog.title);
+                        ui.heading(
+                            egui::RichText::new(&self.build_dialog.title).color(egui::Color32::WHITE),
+                        );
                         if self.build_dialog.in_progress {
                             ui.horizontal(|ui| {
                                 ui.label(&self.build_dialog.message);
