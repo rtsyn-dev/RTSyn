@@ -1,7 +1,10 @@
 use crate::GuiApp;
 use crate::HighlightMode;
+use crate::state::PluginOrderMode;
+use crate::ViewMode;
 use rtsyn_core::plugin::PluginMetadataSource;
 use rtsyn_runtime::LogicMessage;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::Duration;
@@ -81,6 +84,119 @@ impl PluginMetadataSource for GuiMetadataSource<'_> {
 }
 
 impl GuiApp {
+    pub(crate) const PLUGIN_CARD_WIDTH: f32 = 280.0;
+    pub(crate) const PLUGIN_CARD_FIXED_HEIGHT: f32 = 132.0;
+    pub(crate) const PLUGIN_CARD_GRID_X_GAP: f32 = 20.0;
+    pub(crate) const PLUGIN_CARD_GRID_Y_GAP: f32 = 48.0;
+    pub(crate) const PLUGIN_LAYOUT_OFFSET_X: f32 = 12.0;
+    pub(crate) const PLUGIN_LAYOUT_OFFSET_Y: f32 = 12.0;
+
+    pub(crate) fn plugin_layout_grid_for_view(view_mode: ViewMode) -> (f32, f32, f32, f32) {
+        match view_mode {
+            // Keep spacing aligned with card dimensions and avoid overlap.
+            ViewMode::Cards => (
+                Self::PLUGIN_CARD_WIDTH + Self::PLUGIN_CARD_GRID_X_GAP,
+                Self::PLUGIN_CARD_FIXED_HEIGHT + Self::PLUGIN_CARD_GRID_Y_GAP,
+                Self::PLUGIN_LAYOUT_OFFSET_X,
+                Self::PLUGIN_LAYOUT_OFFSET_Y,
+            ),
+            ViewMode::State => (100.0, 100.0, 50.0, 50.0),
+        }
+    }
+
+    pub(crate) fn order_plugins_layout(
+        &mut self,
+        panel_rect: eframe::egui::Rect,
+        mode: PluginOrderMode,
+    ) {
+        let mut plugin_ids: Vec<u64> = self
+            .workspace_manager
+            .workspace
+            .plugins
+            .iter()
+            .filter(|plugin| {
+                !self
+                    .behavior_manager
+                    .cached_behaviors
+                    .get(&plugin.kind)
+                    .map(|b| b.external_window)
+                    .unwrap_or(false)
+            })
+            .map(|plugin| plugin.id)
+            .collect();
+
+        let name_by_kind = self.get_name_by_kind();
+        let by_id: HashMap<u64, (String, i32)> = self
+            .workspace_manager
+            .workspace
+            .plugins
+            .iter()
+            .map(|plugin| {
+                let name = name_by_kind
+                    .get(&plugin.kind)
+                    .cloned()
+                    .unwrap_or_else(|| Self::display_kind(&plugin.kind));
+                (plugin.id, (name, plugin.priority))
+            })
+            .collect();
+        let mut connection_counts: HashMap<u64, usize> = HashMap::new();
+        for conn in &self.workspace_manager.workspace.connections {
+            *connection_counts.entry(conn.from_plugin).or_insert(0) += 1;
+            *connection_counts.entry(conn.to_plugin).or_insert(0) += 1;
+        }
+
+        plugin_ids.sort_by(|left, right| match mode {
+            PluginOrderMode::Name => {
+                let left_name = by_id
+                    .get(left)
+                    .map(|v| v.0.as_str())
+                    .unwrap_or_default()
+                    .to_ascii_lowercase();
+                let right_name = by_id
+                    .get(right)
+                    .map(|v| v.0.as_str())
+                    .unwrap_or_default()
+                    .to_ascii_lowercase();
+                left_name.cmp(&right_name).then_with(|| left.cmp(right))
+            }
+            PluginOrderMode::Id => left.cmp(right),
+            PluginOrderMode::Priority => {
+                let left_priority = by_id.get(left).map(|v| v.1).unwrap_or(0);
+                let right_priority = by_id.get(right).map(|v| v.1).unwrap_or(0);
+                left_priority.cmp(&right_priority).then_with(|| left.cmp(right))
+            }
+            PluginOrderMode::Connections => {
+                let left_connections = connection_counts.get(left).copied().unwrap_or(0);
+                let right_connections = connection_counts.get(right).copied().unwrap_or(0);
+                right_connections
+                    .cmp(&left_connections)
+                    .then_with(|| left.cmp(right))
+            }
+        });
+
+        let (x_step, y_step, x_offset, y_offset) = Self::plugin_layout_grid_for_view(self.view_mode);
+        let usable_width = (panel_rect.width() - x_offset * 2.0).max(x_step);
+        let cols = ((usable_width / x_step).floor() as usize).max(1);
+
+        for (idx, plugin_id) in plugin_ids.iter().enumerate() {
+            let col = idx % cols;
+            let row = idx / cols;
+            let pos = panel_rect.min
+                + eframe::egui::vec2(
+                    x_offset + (col as f32 * x_step),
+                    y_offset + (row as f32 * y_step),
+                );
+            match self.view_mode {
+                ViewMode::Cards => {
+                    self.plugin_positions.insert(*plugin_id, pos);
+                }
+                ViewMode::State => {
+                    self.state_plugin_positions.insert(*plugin_id, pos);
+                }
+            }
+        }
+    }
+
     /// Drains plugin compatibility warnings and shows them as notifications.
     ///
     /// # Side Effects
@@ -287,6 +403,9 @@ impl GuiApp {
         self.plotter_manager
             .plotter_preview_settings
             .remove(&removed_id);
+        self.plugin_positions.remove(&removed_id);
+        self.state_plugin_positions.remove(&removed_id);
+        self.plugin_rects.remove(&removed_id);
 
         if let Err(err) = self
             .plugin_manager
@@ -368,6 +487,9 @@ impl GuiApp {
             }
             self.plotter_manager.plotters.remove(id);
             self.plotter_manager.plotter_preview_settings.remove(id);
+            self.plugin_positions.remove(id);
+            self.state_plugin_positions.remove(id);
+            self.plugin_rects.remove(id);
         }
 
         self.scan_detected_plugins();
@@ -449,6 +571,9 @@ impl GuiApp {
             }
             self.plotter_manager.plotters.remove(id);
             self.plotter_manager.plotter_preview_settings.remove(id);
+            self.plugin_positions.remove(id);
+            self.state_plugin_positions.remove(id);
+            self.plugin_rects.remove(id);
         }
 
         if path.as_os_str().is_empty() {

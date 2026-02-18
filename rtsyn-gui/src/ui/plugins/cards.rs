@@ -31,6 +31,19 @@ pub(super) struct PluginRenderContext {
 }
 
 impl GuiApp {
+    fn plugin_section_header(
+        forced_open: Option<bool>,
+        title: egui::RichText,
+        starts_expanded: bool,
+    ) -> egui::CollapsingHeader {
+        let header = egui::CollapsingHeader::new(title);
+        if let Some(open) = forced_open {
+            header.open(Some(open))
+        } else {
+            header.default_open(starts_expanded)
+        }
+    }
+
     /// Renders interactive plugin cards in the main workspace panel.
     ///
     /// This is the core function for rendering plugin instances as interactive cards
@@ -82,8 +95,6 @@ impl GuiApp {
         panel_rect: egui::Rect,
         only_connected: Option<bool>,
     ) {
-        const CARD_WIDTH: f32 = 280.0;
-        const CARD_FIXED_HEIGHT: f32 = 132.0;
         const PANEL_PAD: f32 = 8.0;
         let mut pending_info: Option<String> = None;
         let connected_input_ports: HashMap<u64, HashSet<String>> =
@@ -135,13 +146,16 @@ impl GuiApp {
         let mut pending_enforce_connection = false;
 
         let mut index = 0usize;
-        let max_per_row = ((panel_rect.width() / 240.0).floor() as usize).max(1);
+        let (x_step, y_step, x_offset, y_offset) = Self::plugin_layout_grid_for_view(self.view_mode);
+        let usable_width = (panel_rect.width() - x_offset * 2.0).max(x_step);
+        let max_per_row = ((usable_width / x_step).floor() as usize).max(1);
         let mut workspace_changed = false;
         let mut recompute_plotter_needed = false;
         let right_down = ctx.input(|i| i.pointer.secondary_down());
         let card_height_cap = (panel_rect.height() - PANEL_PAD * 2.0).max(220.0);
-        let scroll_max_height = (card_height_cap - CARD_FIXED_HEIGHT).max(72.0);
+        let scroll_max_height = (card_height_cap - Self::PLUGIN_CARD_FIXED_HEIGHT).max(72.0);
         let mut plugin_to_select: Option<u64> = None;
+        let forced_sections_open = self.pending_plugin_sections_open;
 
         // Build set of highlighted plugins if filtering
         let highlighted_plugins = self.get_highlighted_plugins();
@@ -198,20 +212,16 @@ impl GuiApp {
             let col = index % max_per_row;
             let row = index / max_per_row;
             let default_pos = panel_rect.min
-                + egui::vec2(12.0 + (col as f32 * 240.0), 12.0 + (row as f32 * 140.0));
+                + egui::vec2(
+                    x_offset + (col as f32 * x_step),
+                    y_offset + (row as f32 * y_step),
+                );
             let requested_pos = self
                 .plugin_positions
                 .get(&plugin.id)
                 .cloned()
                 .unwrap_or(default_pos);
-            let min_x = panel_rect.left() + PANEL_PAD;
-            let max_x = (panel_rect.right() - CARD_WIDTH - PANEL_PAD).max(min_x);
-            let min_y = panel_rect.top() + PANEL_PAD;
-            let max_y = (panel_rect.bottom() - card_height_cap - PANEL_PAD).max(min_y);
-            let pos = egui::pos2(
-                requested_pos.x.clamp(min_x, max_x),
-                requested_pos.y.clamp(min_y, max_y),
-            );
+            let pos = requested_pos;
             let area_id = egui::Id::new(("plugin_window", plugin.id));
             let mut plugin_changed = false;
             let current_id = self.connection_editor.plugin_id;
@@ -246,11 +256,11 @@ impl GuiApp {
             }
             let response = egui::Area::new(area_id)
                 .order(egui::Order::Middle)
-                .default_pos(pos)
+                .current_pos(pos)
                 .movable(!right_down)
                 .constrain_to(panel_rect)
                 .show(ctx, |ui| {
-                    ui.set_width(CARD_WIDTH);
+                    ui.set_width(Self::PLUGIN_CARD_WIDTH);
                     ui.set_max_height(card_height_cap);
 
                     frame.show(ui, |ui| {
@@ -388,12 +398,13 @@ impl GuiApp {
                                                     }
 
                                                     if !schema.fields.is_empty() {
-                                                        egui::CollapsingHeader::new(
+                                                        Self::plugin_section_header(
+                                                            forced_sections_open,
                                                             RichText::new("\u{f013}  Variables")
                                                                 .size(13.0)
                                                                 .strong(),
+                                                            starts_expanded,
                                                         )
-                                                        .default_open(starts_expanded)
                                                         .show(ui, |ui| {
                                                             ui.add_space(4.0);
                                                             let label_w = 140.0;
@@ -607,10 +618,13 @@ impl GuiApp {
                                                     vars.sort_by(|a, b| a.0.cmp(&b.0));
                                                 }
                                                 if !vars.is_empty() {
-                                                    egui::CollapsingHeader::new(
-                                                        RichText::new("\u{f013}  Variables").size(13.0).strong()  // gear icon
+                                                    Self::plugin_section_header(
+                                                        forced_sections_open,
+                                                        RichText::new("\u{f013}  Variables")
+                                                            .size(13.0)
+                                                            .strong(), // gear icon
+                                                        starts_expanded,
                                                     )
-                                                    .default_open(starts_expanded)
                                                     .show(ui, |ui| {
                                                         ui.add_space(4.0);
                                                         for (name, _default_value) in vars {
@@ -746,10 +760,13 @@ impl GuiApp {
                                                     schema.variables.clone()
                                                 };
                                                 if !vars.is_empty() && is_app_plugin {
-                                                    egui::CollapsingHeader::new(
-                                                        RichText::new("\u{f0ae}  Variables").size(13.0).strong()
+                                                    Self::plugin_section_header(
+                                                        forced_sections_open,
+                                                        RichText::new("\u{f0ae}  Variables")
+                                                            .size(13.0)
+                                                            .strong(),
+                                                        starts_expanded,
                                                     )
-                                                    .default_open(starts_expanded)
                                                     .show(ui, |ui| {
                                                         ui.add_space(4.0);
                                                         let label_w = 140.0;
@@ -1027,12 +1044,13 @@ impl GuiApp {
 
                                                 // Inputs second
                                                 if !parsed_schema.inputs.is_empty() {
-                                                    egui::CollapsingHeader::new(
+                                                    Self::plugin_section_header(
+                                                        forced_sections_open,
                                                         RichText::new("\u{f090}  Inputs")
                                                             .size(13.0)
                                                             .strong(), // sign-in icon with space
+                                                        starts_expanded,
                                                     )
-                                                    .default_open(starts_expanded)
                                                     .show(ui, |ui| {
                                                         ui.add_space(4.0);
                                                         for entry in &parsed_schema.inputs {
@@ -1059,12 +1077,13 @@ impl GuiApp {
 
                                                 // Outputs third
                                                 if !parsed_schema.outputs.is_empty() {
-                                                    egui::CollapsingHeader::new(
+                                                    Self::plugin_section_header(
+                                                        forced_sections_open,
                                                         RichText::new("\u{f08b}  Outputs")
                                                             .size(13.0)
                                                             .strong(), // sign-out icon with space
+                                                        starts_expanded,
                                                     )
-                                                    .default_open(starts_expanded)
                                                     .show(ui, |ui| {
                                                         ui.add_space(4.0);
                                                         for entry in &parsed_schema.outputs {
@@ -1100,12 +1119,15 @@ impl GuiApp {
                                                 }
 
                                                 if !parsed_schema.variables.is_empty() {
-                                                    egui::CollapsingHeader::new(
-                                                        RichText::new("\u{f085}  Internal variables")
-                                                            .size(13.0)
-                                                            .strong(),
+                                                    Self::plugin_section_header(
+                                                        forced_sections_open,
+                                                        RichText::new(
+                                                            "\u{f085}  Internal variables",
+                                                        )
+                                                        .size(13.0)
+                                                        .strong(),
+                                                        starts_expanded,
                                                     )
-                                                    .default_open(starts_expanded)
                                                     .show(ui, |ui| {
                                                         ui.add_space(4.0);
                                                         for entry in &parsed_schema.variables {
@@ -1328,11 +1350,8 @@ impl GuiApp {
                     });
                 });
 
-            let clamped_pos = egui::pos2(
-                response.response.rect.min.x.clamp(min_x, max_x),
-                response.response.rect.min.y.clamp(min_y, max_y),
-            );
-            self.plugin_positions.insert(plugin.id, clamped_pos);
+            self.plugin_positions
+                .insert(plugin.id, response.response.rect.min);
             self.plugin_rects.insert(plugin.id, response.response.rect);
 
             // Move connected plugins to top so they render above connections

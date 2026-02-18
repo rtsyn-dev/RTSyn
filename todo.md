@@ -77,7 +77,7 @@
 - [x] "State view" mode on new "View" tab, where the cards are changed by circles (that doesnt show buttons, variables or anithing besides the id and name as in the cards) BUT preserve the cross to close, and the right click card menu (with add connection, plugin config, etc.)
 - [x] Add clear workspace to return to default
 - [x] Restart should clear errors in plugins (like inf)
-- [ ] Add plugin order buttons
+- [x] Add plugin order buttons
 - [x] When reinstalled on loaded workspace, reset button dissapears
 - [x] Plugin creator options (start active etc)
 - [x] Add "sections start undropped" and make the dropdown sections start closed

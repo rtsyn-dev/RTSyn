@@ -275,6 +275,8 @@ impl GuiApp {
         self.highlight_mode = HighlightMode::None;
         self.plugin_manager.next_plugin_id = 1;
         self.plugin_manager.available_plugin_ids.clear();
+        self.plugin_positions.clear();
+        self.state_plugin_positions.clear();
         self.windows.plugin_selected_index = None;
         self.windows.plugin_config_id = None;
         self.windows.plugin_config_open = false;

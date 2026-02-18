@@ -34,7 +34,7 @@ impl GuiApp {
 
             let response = egui::Area::new(egui::Id::new(("state_circle", plugin_id)))
                 .order(egui::Order::Middle)
-                .default_pos(pos + egui::vec2(-render_ctx.circle_radius, -render_ctx.circle_radius))
+                .current_pos(pos + egui::vec2(-render_ctx.circle_radius, -render_ctx.circle_radius))
                 .movable(true)
                 .constrain_to(panel_rect)
                 .show(ctx, |ui| {
@@ -58,8 +58,10 @@ impl GuiApp {
                     resp
                 });
 
-            self.plugin_positions
-                .insert(*plugin_id, response.response.rect.min);
+            // Keep state positions as node centers so drag state is stable frame-to-frame.
+            let node_center = response.response.rect.min
+                + egui::vec2(render_ctx.circle_radius, render_ctx.circle_radius);
+            self.state_plugin_positions.insert(*plugin_id, node_center);
 
             if only_connected == Some(true) {
                 ctx.move_to_top(response.response.layer_id);
@@ -219,7 +221,7 @@ impl GuiApp {
                 50.0 + row as f32 * render_ctx.spacing,
             );
 
-        self.plugin_positions
+        self.state_plugin_positions
             .get(&plugin_id)
             .copied()
             .unwrap_or(default_pos)

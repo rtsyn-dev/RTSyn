@@ -81,6 +81,7 @@ impl GuiApp {
             new_plugin_draft: NewPluginDraft::default(),
             seen_compatibility_warnings: HashSet::new(),
             plugin_positions: HashMap::new(),
+            state_plugin_positions: HashMap::new(),
             plugin_rects: HashMap::new(),
             connections_view_enabled: true,
             connection_clicked_this_frame: false,
@@ -112,6 +113,8 @@ impl GuiApp {
             uml_export_height: 1080,
             uml_preview_zoom: 0.0,
             view_mode: ViewMode::default(),
+            pending_plugin_sections_open: None,
+            pending_plugin_order: None,
             plugin_name_cache: None,
             display_schema_cache: RefCell::new(HashMap::new()),
         };

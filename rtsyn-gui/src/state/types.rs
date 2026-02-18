@@ -83,3 +83,11 @@ impl Default for ViewMode {
         ViewMode::Cards
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PluginOrderMode {
+    Name,
+    Id,
+    Priority,
+    Connections,
+}

@@ -61,6 +61,7 @@ impl GuiApp {
                             self.plotter_manager.plotters.clear();
                             self.apply_workspace_settings();
                             self.plugin_positions.clear();
+                            self.state_plugin_positions.clear();
                         }
                         self.scan_workspaces();
                         self.show_info("Workspace", &format!("Workspace '{}' deleted", name));

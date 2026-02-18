@@ -34,8 +34,8 @@ use rtsyn_cli::plugin_creator::PluginKindType;
 use rtsyn_core::plugin::{InstalledPlugin, PluginManager};
 use rtsyn_core::workspace::WorkspaceManager;
 use state::{
-    ConfirmAction, ConnectionEditorHost, FrequencyUnit, PeriodUnit, StateSync, ViewMode,
-    WorkspaceDialogMode, WorkspaceTimingTab,
+    ConfirmAction, ConnectionEditorHost, FrequencyUnit, PeriodUnit, PluginOrderMode, StateSync,
+    ViewMode, WorkspaceDialogMode, WorkspaceTimingTab,
 };
 use utils::{
     distance_to_segment, has_rt_capabilities, spawn_file_dialog_thread, zenity_file_dialog,
@@ -436,6 +436,7 @@ struct GuiApp {
     new_plugin_draft: NewPluginDraft,
     seen_compatibility_warnings: HashSet<String>,
     plugin_positions: HashMap<u64, egui::Pos2>,
+    state_plugin_positions: HashMap<u64, egui::Pos2>,
     plugin_rects: HashMap<u64, egui::Rect>,
     connections_view_enabled: bool,
     connection_clicked_this_frame: bool,
@@ -467,6 +468,8 @@ struct GuiApp {
     uml_export_height: u32,
     uml_preview_zoom: f32,
     view_mode: ViewMode,
+    pending_plugin_sections_open: Option<bool>,
+    pending_plugin_order: Option<PluginOrderMode>,
     plugin_name_cache: Option<std::collections::HashMap<String, String>>,
     display_schema_cache: RefCell<HashMap<String, ParsedDisplaySchema>>,
 }
@@ -741,6 +744,41 @@ impl eframe::App for GuiApp {
                             };
                             ui.close_menu();
                         }
+
+                        ui.separator();
+                        let is_cards_view = matches!(self.view_mode, ViewMode::Cards);
+                        if ui
+                            .add_enabled(is_cards_view, egui::Button::new("Collapse all plugins"))
+                            .clicked()
+                        {
+                            self.pending_plugin_sections_open = Some(false);
+                            ui.close_menu();
+                        }
+                        if ui
+                            .add_enabled(is_cards_view, egui::Button::new("Expand all plugins"))
+                            .clicked()
+                        {
+                            self.pending_plugin_sections_open = Some(true);
+                            ui.close_menu();
+                        }
+                        ui.menu_button("Order plugins", |ui| {
+                            if ui.button("By name").clicked() {
+                                self.pending_plugin_order = Some(PluginOrderMode::Name);
+                                ui.close_menu();
+                            }
+                            if ui.button("By id").clicked() {
+                                self.pending_plugin_order = Some(PluginOrderMode::Id);
+                                ui.close_menu();
+                            }
+                            if ui.button("By priority").clicked() {
+                                self.pending_plugin_order = Some(PluginOrderMode::Priority);
+                                ui.close_menu();
+                            }
+                            if ui.button("By connections").clicked() {
+                                self.pending_plugin_order = Some(PluginOrderMode::Connections);
+                                ui.close_menu();
+                            }
+                        });
                     });
 
                     ui.menu_button("Runtime", |ui| {
@@ -793,6 +831,9 @@ impl eframe::App for GuiApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.add_space(8.0);
             let panel_rect = ui.max_rect();
+            if let Some(mode) = self.pending_plugin_order.take() {
+                self.order_plugins_layout(panel_rect, mode);
+            }
 
             // Reset connection click flag at start of frame
             self.connection_clicked_this_frame = false;
@@ -827,6 +868,7 @@ impl eframe::App for GuiApp {
                     }
                 }
             }
+            self.pending_plugin_sections_open = None;
 
             if ctx.input(|i| i.pointer.primary_clicked()) {
                 if let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) {
