@@ -672,6 +672,11 @@ impl eframe::App for GuiApp {
                             self.open_manage_workspaces();
                             ui.close_menu();
                         }
+                        ui.separator();
+                        if ui.button("Clear Workspace").clicked() {
+                            self.clear_workspace_to_default();
+                            ui.close_menu();
+                        }
                     });
 
                     ui.menu_button("Plugins", |ui| {

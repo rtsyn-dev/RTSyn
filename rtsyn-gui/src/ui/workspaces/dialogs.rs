@@ -110,7 +110,13 @@ impl GuiApp {
                 self.workspace_dialog.edit_path = None;
             }
             WorkspaceDialogMode::Save => {
-                self.workspace_dialog.name_input = self.workspace_manager.workspace.name.clone();
+                if self.workspace_manager.workspace_path.as_os_str().is_empty()
+                    && self.workspace_manager.workspace.name == "default"
+                {
+                    self.workspace_dialog.name_input.clear();
+                } else {
+                    self.workspace_dialog.name_input = self.workspace_manager.workspace.name.clone();
+                }
                 self.workspace_dialog.description_input =
                     self.workspace_manager.workspace.description.clone();
                 self.workspace_dialog.edit_path = None;

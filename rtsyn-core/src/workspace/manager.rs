@@ -277,11 +277,15 @@ impl WorkspaceManager {
         }
         std::fs::remove_file(&path).map_err(|e| format!("Failed to delete workspace: {e}"))?;
         if self.workspace_path == path {
-            self.workspace = Self::empty_workspace("default", self.runtime_defaults.clone());
-            self.workspace_path = PathBuf::new();
-            self.workspace_dirty = true;
+            self.clear_workspace_to_default();
         }
         Ok(())
+    }
+
+    pub fn clear_workspace_to_default(&mut self) {
+        self.workspace = Self::empty_workspace("default", self.runtime_defaults.clone());
+        self.workspace_path = PathBuf::new();
+        self.workspace_dirty = true;
     }
 
     pub fn update_runtime_defaults(&mut self, settings: WorkspaceSettings) -> Result<(), String> {

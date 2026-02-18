@@ -269,4 +269,15 @@ impl GuiApp {
             }
         }
     }
+
+    pub(crate) fn clear_workspace_to_default(&mut self) {
+        self.workspace_manager.clear_workspace_to_default();
+        self.highlight_mode = HighlightMode::None;
+        self.plugin_manager.next_plugin_id = 1;
+        self.plugin_manager.available_plugin_ids.clear();
+        self.windows.plugin_selected_index = None;
+        self.windows.plugin_config_id = None;
+        self.windows.plugin_config_open = false;
+        self.show_info("Workspace", "Workspace cleared");
+    }
 }
