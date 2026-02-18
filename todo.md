@@ -79,7 +79,7 @@
 - [ ] On workspace load, start plugins with a iteration of difference maybe
 - [ ] Restart should clear errors in plugins (like inf)
 - [ ] Add plugin order buttons
-- [ ] When reinstalled on loaded workspace, reset button dissapears
+- [x] When reinstalled on loaded workspace, reset button dissapears
 - [x] Plugin creator options (start active etc)
 - [x] Add "sections start undropped" and make the dropdown sections start closed
 - [x] One loading workspace, dont keep start and stop and obey plugin loading attribute

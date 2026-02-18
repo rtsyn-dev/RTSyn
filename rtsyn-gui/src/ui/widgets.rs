@@ -4,6 +4,7 @@
 //! parts of the application, promoting consistency and reducing duplication.
 
 use eframe::egui;
+use crate::utils::truncate_string;
 
 /// Renders a key-value row with wrapped label text and custom value UI.
 ///
@@ -29,11 +30,17 @@ pub fn kv_row_wrapped(
     value_ui: impl FnOnce(&mut egui::Ui),
 ) {
     ui.horizontal(|ui| {
+        let max_chars = ((label_w / 7.0).floor() as usize).max(10);
+        let display_label = truncate_string(label, max_chars);
         ui.allocate_ui_with_layout(
             egui::vec2(label_w, 0.0),
-            egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true),
+            egui::Layout::left_to_right(egui::Align::Center),
             |ui| {
-                ui.label(label);
+                let response = ui.add_sized(
+                    [label_w, 0.0],
+                    egui::Label::new(display_label).wrap(false),
+                );
+                response.on_hover_text(label);
             },
         );
         ui.add_space(8.0);
