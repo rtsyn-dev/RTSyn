@@ -175,6 +175,26 @@ impl GuiApp {
     /// - Marks workspace as dirty
     /// - Shows error notification if plugin ID is invalid
     pub(crate) fn duplicate_plugin(&mut self, plugin_id: u64) {
+        if let Some(source) = self
+            .workspace_manager
+            .workspace
+            .plugins
+            .iter()
+            .find(|p| p.id == plugin_id)
+        {
+            let kind = source.kind.clone();
+            let library_path = source
+                .config
+                .get("library_path")
+                .and_then(|v| v.as_str())
+                .map(std::path::PathBuf::from);
+            self.ensure_plugin_behavior_cached_with_path(&kind, library_path.as_ref());
+            if let Some(behavior) = self.behavior_manager.cached_behaviors.get(&kind) {
+                self.plugin_manager
+                    .plugin_behaviors
+                    .insert(kind.clone(), behavior.clone());
+            }
+        }
         let new_id = match self
             .plugin_manager
             .duplicate_plugin_in_workspace(&mut self.workspace_manager.workspace, plugin_id)

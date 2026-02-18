@@ -4,7 +4,7 @@ use workspace::WorkspaceDefinition;
 
 use crate::connection_cache::{build_connection_cache, RuntimeConnectionCache};
 use crate::message_handler::{LogicMessage, LogicSettings};
-use crate::plugin_manager::{runtime_plugin_loads_started, DynamicPluginInstance, RuntimePlugin};
+use crate::plugin_manager::{DynamicPluginInstance, RuntimePlugin};
 #[cfg(feature = "comedi")]
 use comedi_daq_plugin::ComediDaqPlugin;
 use csv_recorder_plugin::CsvRecorderedPlugin;
@@ -73,9 +73,7 @@ pub fn process_message(
                 if let std::collections::hash_map::Entry::Vacant(e) =
                     plugin_running.entry(plugin.id)
                 {
-                    if let Some(instance) = plugin_instances.get(&plugin.id) {
-                        e.insert(runtime_plugin_loads_started(instance));
-                    }
+                    e.insert(plugin.running);
                 }
             }
 

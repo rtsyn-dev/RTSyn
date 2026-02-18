@@ -12,7 +12,7 @@ use workspace::{order_plugins_for_execution, WorkspaceDefinition};
 use crate::connection_cache::{build_connection_cache, RuntimeConnectionCache};
 use crate::message_handler::{LogicMessage, LogicSettings, LogicState};
 use crate::plugin_manager::{
-    runtime_plugin_loads_started, set_dynamic_config_patch, DynamicPluginInstance, RuntimePlugin,
+    set_dynamic_config_patch, DynamicPluginInstance, RuntimePlugin,
 };
 #[cfg(feature = "comedi")]
 use crate::plugin_processors::process_comedi_daq;
@@ -107,9 +107,7 @@ pub fn run_runtime_loop(
                             if let std::collections::hash_map::Entry::Vacant(e) =
                                 plugin_running.entry(plugin.id)
                             {
-                                if let Some(instance) = plugin_instances.get(&plugin.id) {
-                                    e.insert(runtime_plugin_loads_started(instance));
-                                }
+                                e.insert(plugin.running);
                             }
                         }
 

@@ -1,5 +1,6 @@
 use rtsyn_core::plugin::{
-    plugin_display_name, InstalledPlugin, PluginCatalog, PluginManifest, PluginMetadataSource,
+    plugin_display_name, InstalledPlugin, PluginCatalog, PluginManager, PluginManifest,
+    PluginMetadataSource,
 };
 use std::path::PathBuf;
 use std::time::Duration;
@@ -183,4 +184,51 @@ fn install_rejects_dynamic_plugin_with_wrong_api_version() {
         .install_plugin_from_folder(&plugin_dir, true, true, &NoMetadata)
         .expect_err("install should fail");
     assert!(err.contains("Incompatible plugin API version in manifest"));
+}
+
+#[test]
+fn duplicate_plugin_uses_behavior_default_running_state() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let install_db = temp.path().join("installed_plugins.json");
+    let mut manager = PluginManager::new(install_db);
+    manager.plugin_behaviors.insert(
+        "dup_kind".to_string(),
+        rtsyn_plugin::ui::PluginBehavior {
+            loads_started: false,
+            ..Default::default()
+        },
+    );
+
+    let mut workspace = WorkspaceDefinition {
+        name: "ws".to_string(),
+        description: String::new(),
+        target_hz: 1000,
+        plugins: vec![PluginDefinition {
+            id: 1,
+            kind: "dup_kind".to_string(),
+            config: serde_json::json!({}),
+            priority: 99,
+            running: true,
+        }],
+        connections: Vec::new(),
+        settings: workspace::WorkspaceSettings::default(),
+    };
+    manager.sync_next_plugin_id(workspace.plugins.iter().map(|p| p.id).max());
+
+    let new_id = manager
+        .duplicate_plugin_in_workspace(&mut workspace, 1)
+        .expect("duplicate plugin");
+    let duplicate = workspace
+        .plugins
+        .iter()
+        .find(|p| p.id == new_id)
+        .expect("duplicated plugin present");
+
+    assert!(!duplicate.running);
+    assert!(workspace
+        .plugins
+        .iter()
+        .find(|p| p.id == 1)
+        .expect("source plugin present")
+        .running);
 }

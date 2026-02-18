@@ -629,12 +629,18 @@ impl PluginManager {
             self.next_plugin_id += 1;
             id
         });
+        let duplicate_kind = source.kind.clone();
+        let duplicate_running = self
+            .plugin_behaviors
+            .get(&duplicate_kind)
+            .map(|b| b.loads_started)
+            .unwrap_or(source.running);
         let plugin = PluginDefinition {
             id,
-            kind: source.kind,
+            kind: duplicate_kind,
             config: source.config,
             priority: source.priority,
-            running: source.running,
+            running: duplicate_running,
         };
         workspace.plugins.push(plugin);
         Ok(id)

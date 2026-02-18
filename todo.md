@@ -60,19 +60,18 @@
 - [x] If cli view is aiming to an unexistent plugin, show error
 - [x] Change plugin config ID badge on plugin config menu so its the same as the plugin card
 - [ ] Sometimes the plotter window cant be closed
-- [ ] Add id to ports for cli
 - [x] Add a function that returns a uml diagram from the runtime
 - [x] Both `daemon plugin add` and daemon `runtime plugin add` do the same
 - [x] Add help tab
 - [ ] Maybe connect gui to daemon and make both processes modify the same one?
 - [x] Change runtime plugin functions to plugin, and change the "list" into "available"
-- [ ] Change needs connections to be needs_outputs and needs_inputs (daq constraint, to have atleast one but doesnt need both)
+- [x] Change needs connections to be needs_outputs and needs_inputs (daq constraint, to have atleast one but doesnt need both)
 - [ ] Add a settings section for default paths (for plugins, for images, for data etc)
 - [x] Fix no wrap with long names in plugins
 - [ ] Delete three dots and make title white on loading/building plugin
 - [ ] Checkbox on plugin config "Show on UML diagram"
 - [x] Plotter on remove connection of i_n-1, glitches the plot (appears i_0 with no input)
-- [ ] When duplicating a plugin, it should load with the state of the plugin when added (it loads starting when it should load paused due duplicated plugin have loads started as false)
+- [x] When duplicating a plugin, it should load with the state of the plugin when added (it loads starting when it should load paused due duplicated plugin have loads started as false)
 - [x] Move plotter scale configuration to settings and better temporal scaling.
 - [x] On click on connection, highlight it, put it over any window/plugin BUT the plugins that is connected (from them it shall remain background). When click is done elsewhere, put it on background of the rest of windows/cards (as normal). On hover when is over plugins and windows it MUST show the hover details.
 - [x] "State view" mode on new "View" tab, where the cards are changed by circles (that doesnt show buttons, variables or anithing besides the id and name as in the cards) BUT preserve the cross to close, and the right click card menu (with add connection, plugin config, etc.)
