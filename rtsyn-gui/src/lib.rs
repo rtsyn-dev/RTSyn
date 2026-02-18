@@ -1,6 +1,7 @@
 use eframe::{egui, egui::RichText};
 use rtsyn_runtime::spawn_runtime;
 use rtsyn_runtime::{LogicMessage, LogicState};
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::process;
@@ -30,7 +31,7 @@ mod utils;
 use managers::{FileDialogManager, NotificationHandler, PlotterManager, PluginBehaviorManager};
 use plotter::LivePlotter;
 use rtsyn_cli::plugin_creator::PluginKindType;
-use rtsyn_core::plugin::PluginManager;
+use rtsyn_core::plugin::{InstalledPlugin, PluginManager};
 use rtsyn_core::workspace::WorkspaceManager;
 use state::{
     ConfirmAction, ConnectionEditorHost, FrequencyUnit, PeriodUnit, StateSync, ViewMode,
@@ -42,6 +43,82 @@ use utils::{
 };
 
 const DEDICATED_PLOTTER_VIEW_KINDS: &[&str] = &["live_plotter"];
+
+#[derive(Clone)]
+pub(crate) struct DisplayEntry {
+    pub(crate) key: String,
+    pub(crate) label: String,
+}
+
+impl DisplayEntry {
+    fn from_raw(entry: &str) -> Self {
+        if let Some((key, label)) = entry.split_once('|') {
+            Self {
+                key: key.trim().to_string(),
+                label: label.trim().to_string(),
+            }
+        } else {
+            let trimmed = entry.trim();
+            Self {
+                key: trimmed.to_string(),
+                label: trimmed.to_string(),
+            }
+        }
+    }
+
+    fn from_key(key: &str) -> Self {
+        let trimmed = key.trim();
+        Self {
+            key: trimmed.to_string(),
+            label: trimmed.to_string(),
+        }
+    }
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct ParsedDisplaySchema {
+    pub(crate) inputs: Vec<DisplayEntry>,
+    pub(crate) outputs: Vec<DisplayEntry>,
+    pub(crate) variables: Vec<DisplayEntry>,
+}
+
+impl ParsedDisplaySchema {
+    fn from_installed(plugin: &InstalledPlugin) -> Self {
+        let schema = plugin.display_schema.as_ref();
+        Self {
+            inputs: Self::entries(
+                schema.map(|schema| schema.inputs.as_slice()),
+                plugin.metadata_inputs.iter().map(String::as_str),
+            ),
+            outputs: Self::entries(
+                schema.map(|schema| schema.outputs.as_slice()),
+                plugin.metadata_outputs.iter().map(String::as_str),
+            ),
+            variables: Self::entries(
+                schema.map(|schema| schema.variables.as_slice()),
+                plugin
+                    .metadata_variables
+                    .iter()
+                    .map(|(name, _)| name.as_str()),
+            ),
+        }
+    }
+
+    fn entries<'a>(
+        primary: Option<&[String]>,
+        fallback: impl Iterator<Item = &'a str>,
+    ) -> Vec<DisplayEntry> {
+        if let Some(list) = primary {
+            if !list.is_empty() {
+                return list
+                    .iter()
+                    .map(|entry| DisplayEntry::from_raw(entry))
+                    .collect();
+            }
+        }
+        fallback.map(DisplayEntry::from_key).collect()
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct GuiConfig {
@@ -390,6 +467,7 @@ struct GuiApp {
     uml_preview_zoom: f32,
     view_mode: ViewMode,
     plugin_name_cache: Option<std::collections::HashMap<String, String>>,
+    display_schema_cache: RefCell<HashMap<String, ParsedDisplaySchema>>,
 }
 
 impl GuiApp {

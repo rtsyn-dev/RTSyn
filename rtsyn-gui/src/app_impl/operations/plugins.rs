@@ -340,6 +340,7 @@ impl GuiApp {
                 return;
             }
         };
+        self.invalidate_display_schema_cache();
 
         let removed_ids = self.plugin_manager.remove_plugins_by_kind_from_workspace(
             &mut self.workspace_manager.workspace,
@@ -400,6 +401,7 @@ impl GuiApp {
             self.show_info("Plugin Install Error", &self.status.clone());
             return;
         }
+        self.invalidate_display_schema_cache();
         self.status = "Plugin installed".to_string();
         self.drain_plugin_compatibility_warnings_to_notifications();
     }
@@ -459,6 +461,7 @@ impl GuiApp {
             self.show_info("Plugin Refresh Error", &self.status.clone());
             return;
         }
+        self.invalidate_display_schema_cache();
         self.status = "Plugin refreshed".to_string();
         self.invalidate_name_cache();
         self.drain_plugin_compatibility_warnings_to_notifications();
@@ -488,6 +491,7 @@ impl GuiApp {
     /// - Drains compatibility warnings to notifications
     pub(crate) fn load_installed_plugins(&mut self) {
         self.plugin_manager.load_installed_plugins();
+        self.invalidate_display_schema_cache();
         self.drain_plugin_compatibility_warnings_to_notifications();
     }
 

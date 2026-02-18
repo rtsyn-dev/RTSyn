@@ -149,7 +149,14 @@ impl GuiApp {
         // Check if we should highlight plugin borders (for connection highlight mode)
         let has_connection_highlight = !matches!(self.highlight_mode, HighlightMode::None);
 
-        for plugin in &mut self.workspace_manager.workspace.plugins {
+        let plugin_count = self.workspace_manager.workspace.plugins.len();
+        for idx in 0..plugin_count {
+            let kind = {
+                let plugin_ref = &self.workspace_manager.workspace.plugins[idx];
+                plugin_ref.kind.clone()
+            };
+            let parsed_schema = self.parsed_display_schema_for_kind(&kind);
+            let plugin = &mut self.workspace_manager.workspace.plugins[idx];
             // Apply filter if specified
             if let Some(want_connected) = only_connected {
                 let is_highlighted = highlighted_plugins.contains(&plugin.id);
@@ -726,7 +733,7 @@ impl GuiApp {
                                             .find(|p| p.manifest.kind == plugin.kind)
                                             .map(|p| (p.display_schema.clone(), p.ui_schema.clone()))
                                             .unwrap_or((None, None));
-                                        if let Some(schema) = display_schema.as_ref() {
+                if let Some(schema) = display_schema.as_ref() {
                                                 // Variables section for app plugins
                                                 let vars: Vec<String> = if is_app_plugin {
                                                     ui_schema
@@ -1019,27 +1026,29 @@ impl GuiApp {
                                                 }
 
                                                 // Inputs second
-                                                if !schema.inputs.is_empty() {
+                                                if !parsed_schema.inputs.is_empty() {
                                                     egui::CollapsingHeader::new(
-                                                        RichText::new("\u{f090}  Inputs").size(13.0).strong()  // sign-in icon with space
+                                                        RichText::new("\u{f090}  Inputs")
+                                                            .size(13.0)
+                                                            .strong(), // sign-in icon with space
                                                     )
                                                     .default_open(starts_expanded)
                                                     .show(ui, |ui| {
                                                         ui.add_space(4.0);
-                                                        for input_entry in &schema.inputs {
-                                                            let (input_key, input_label) =
-                                                                Self::split_display_entry(input_entry);
-                                                            let key_owned = input_key.to_string();
+                                                        for entry in &parsed_schema.inputs {
+                                                            let key_owned = entry.key.clone();
                                                             let value = input_values
                                                                 .get(&(plugin.id, key_owned.clone()))
                                                                 .copied()
                                                                 .unwrap_or(0.0);
                                                             let mut value_text = format!("{value:.4}");
-                                                            kv_row_wrapped(ui, input_label, 140.0, |ui| {
+                                                            kv_row_wrapped(ui, &entry.label, 140.0, |ui| {
                                                                 ui.add_enabled_ui(false, |ui| {
                                                                     ui.add_sized(
                                                                         [80.0, 0.0],
-                                                                        egui::TextEdit::singleline(&mut value_text)
+                                                                        egui::TextEdit::singleline(
+                                                                            &mut value_text,
+                                                                        ),
                                                                     );
                                                                 });
                                                             });
@@ -1049,35 +1058,39 @@ impl GuiApp {
                                                 }
 
                                                 // Outputs third
-                                                if !schema.outputs.is_empty() {
+                                                if !parsed_schema.outputs.is_empty() {
                                                     egui::CollapsingHeader::new(
-                                                        RichText::new("\u{f08b}  Outputs").size(13.0).strong()  // sign-out icon with space
+                                                        RichText::new("\u{f08b}  Outputs")
+                                                            .size(13.0)
+                                                            .strong(), // sign-out icon with space
                                                     )
                                                     .default_open(starts_expanded)
                                                     .show(ui, |ui| {
                                                         ui.add_space(4.0);
-                                                        for output_entry in &schema.outputs {
-                                                            let (output_key, output_label) =
-                                                                Self::split_display_entry(output_entry);
-                                                            let key_owned = output_key.to_string();
+                                                        for entry in &parsed_schema.outputs {
+                                                            let key_owned = entry.key.clone();
                                                             let value = computed_outputs
-                                                                .get(&(plugin.id, key_owned.clone()))
+                                                                .get(&(plugin.id, key_owned))
                                                                 .copied()
                                                                 .unwrap_or(0.0);
                                                             let mut value_text = if value == 0.0 {
                                                                 "0".to_string()
-                                                            } else if (value.fract() - 0.0).abs() < f64::EPSILON {
+                                                            } else if (value.fract() - 0.0).abs()
+                                                                < f64::EPSILON
+                                                            {
                                                                 format!("{value:.0}")
                                                             } else if value.abs() < 1e-3 {
                                                                 format!("{value:.3e}")
                                                             } else {
                                                                 format!("{value:.6}")
                                                             };
-                                                            kv_row_wrapped(ui, output_label, 140.0, |ui| {
+                                                            kv_row_wrapped(ui, &entry.label, 140.0, |ui| {
                                                                 ui.add_enabled_ui(false, |ui| {
                                                                     ui.add_sized(
                                                                         [80.0, 0.0],
-                                                                        egui::TextEdit::singleline(&mut value_text)
+                                                                        egui::TextEdit::singleline(
+                                                                            &mut value_text,
+                                                                        ),
                                                                     );
                                                                 });
                                                             });
@@ -1086,17 +1099,17 @@ impl GuiApp {
                                                     });
                                                 }
 
-                                                if !schema.variables.is_empty() {
+                                                if !parsed_schema.variables.is_empty() {
                                                     egui::CollapsingHeader::new(
-                                                        RichText::new("\u{f085}  Internal variables").size(13.0).strong()
+                                                        RichText::new("\u{f085}  Internal variables")
+                                                            .size(13.0)
+                                                            .strong(),
                                                     )
                                                     .default_open(starts_expanded)
                                                     .show(ui, |ui| {
                                                         ui.add_space(4.0);
-                                                        for var_entry in &schema.variables {
-                                                            let (var_key, var_label) =
-                                                                Self::split_display_entry(var_entry);
-                                                            let key_owned = var_key.to_string();
+                                                        for entry in &parsed_schema.variables {
+                                                            let key_owned = entry.key.clone();
                                                             let value = internal_variable_values
                                                                 .get(&(plugin.id, key_owned.clone()))
                                                                 .cloned()
@@ -1105,7 +1118,7 @@ impl GuiApp {
                                                                         plugin.kind.as_str(),
                                                                         "csv_recorder" | "live_plotter"
                                                                     ) {
-                                                                        match var_key {
+                                                                        match entry.key.as_str() {
                                                                             "input_count" => {
                                                                                 serde_json::Value::from(0)
                                                                             }
@@ -1134,15 +1147,9 @@ impl GuiApp {
                                                                                         .abs()
                                                                                         < f64::EPSILON
                                                                                 {
-                                                                                    format!(
-                                                                                        "{:.0}",
-                                                                                        v
-                                                                                    )
+                                                                                    format!("{:.0}", v)
                                                                                 } else {
-                                                                                    format!(
-                                                                                        "{:.4}",
-                                                                                        v
-                                                                                    )
+                                                                                    format!("{:.4}", v)
                                                                                 }
                                                                             })
                                                                             .unwrap_or_else(|| value.to_string())
@@ -1150,11 +1157,13 @@ impl GuiApp {
                                                                 }
                                                                 _ => value.to_string(),
                                                             };
-                                                            kv_row_wrapped(ui, var_label, 140.0, |ui| {
+                                                            kv_row_wrapped(ui, &entry.label, 140.0, |ui| {
                                                                 ui.add_enabled_ui(false, |ui| {
                                                                     ui.add_sized(
                                                                         [80.0, 0.0],
-                                                                        egui::TextEdit::singleline(&mut value_text)
+                                                                        egui::TextEdit::singleline(
+                                                                            &mut value_text,
+                                                                        ),
                                                                     );
                                                                 });
                                                             });

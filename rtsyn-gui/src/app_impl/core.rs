@@ -3,13 +3,14 @@ use crate::managers::{
 };
 use crate::state;
 use crate::state::{ConnectionEditorHost, FrequencyUnit, PeriodUnit, StateSync, ViewMode};
-use crate::GuiApp;
 use crate::HighlightMode;
 use crate::NewPluginDraft;
+use crate::{GuiApp, ParsedDisplaySchema};
 use eframe::egui::{self};
 use rtsyn_core::plugin::PluginManager;
 use rtsyn_core::workspace::WorkspaceManager;
 use rtsyn_runtime::{LogicMessage, LogicState};
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender};
@@ -111,6 +112,7 @@ impl GuiApp {
             uml_preview_zoom: 0.0,
             view_mode: ViewMode::default(),
             plugin_name_cache: None,
+            display_schema_cache: RefCell::new(HashMap::new()),
         };
         for warning in app.plugin_manager.take_compatibility_warnings() {
             app.show_info("Plugin Compatibility", &warning);
@@ -119,6 +121,27 @@ impl GuiApp {
         app.refresh_installed_plugin_metadata_cache();
         app.apply_workspace_settings();
         app
+    }
+
+    pub(crate) fn parsed_display_schema_for_kind(&self, kind: &str) -> ParsedDisplaySchema {
+        if let Some(cached) = self.display_schema_cache.borrow().get(kind) {
+            return cached.clone();
+        }
+        let parsed = self
+            .plugin_manager
+            .installed_plugins
+            .iter()
+            .find(|plugin| plugin.manifest.kind == kind)
+            .map(|plugin| ParsedDisplaySchema::from_installed(plugin))
+            .unwrap_or_default();
+        self.display_schema_cache
+            .borrow_mut()
+            .insert(kind.to_string(), parsed.clone());
+        parsed
+    }
+
+    pub(crate) fn invalidate_display_schema_cache(&self) {
+        self.display_schema_cache.borrow_mut().clear();
     }
 
     /// Handles double-click on a plugin - highlights all its connections.
