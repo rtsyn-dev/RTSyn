@@ -5,11 +5,15 @@ use std::ffi::c_void;
 #[derive(Debug)]
 struct MockOut5 {
     out: f64,
+    emit_inf: bool,
 }
 
 impl MockOut5 {
     fn new() -> Self {
-        Self { out: 5.0 }
+        Self {
+            out: 5.0,
+            emit_inf: false,
+        }
     }
 }
 
@@ -47,8 +51,18 @@ extern "C" fn outputs_json(_handle: *mut c_void) -> PluginString {
     PluginString::from_string("[\"out\"]".to_string())
 }
 
-extern "C" fn set_config_json(_handle: *mut c_void, _data: *const u8, _len: usize) {
-    // no config
+extern "C" fn set_config_json(handle: *mut c_void, data: *const u8, len: usize) {
+    if handle.is_null() || data.is_null() || len == 0 {
+        return;
+    }
+    let instance = unsafe { &mut *(handle as *mut MockOut5) };
+    let bytes = unsafe { std::slice::from_raw_parts(data, len) };
+    let Ok(cfg) = serde_json::from_slice::<serde_json::Value>(bytes) else {
+        return;
+    };
+    if let Some(v) = cfg.get("emit_inf").and_then(|v| v.as_bool()) {
+        instance.emit_inf = v;
+    }
 }
 
 extern "C" fn set_input(_handle: *mut c_void, _name: *const u8, _len: usize, _value: f64) {
@@ -59,9 +73,12 @@ extern "C" fn process(handle: *mut c_void, _tick: u64, _period_seconds: f64) {
     if handle.is_null() {
         return;
     }
-    // out stays constant at 5.0
     let instance = unsafe { &mut *(handle as *mut MockOut5) };
-    instance.out = 5.0;
+    instance.out = if instance.emit_inf {
+        f64::INFINITY
+    } else {
+        5.0
+    };
 }
 
 extern "C" fn get_output(handle: *mut c_void, name: *const u8, len: usize) -> f64 {

@@ -113,3 +113,84 @@ fn runtime_executes_dynamic_mock_plugin_and_emits_outputs() {
         last_tick
     );
 }
+
+#[test]
+fn restart_plugin_clears_inf_error_state_for_dynamic_plugin() {
+    let (logic_tx, logic_state_rx) = spawn_runtime().expect("failed to spawn runtime");
+
+    let settings = LogicSettings {
+        cores: vec![0],
+        period_seconds: 0.001,
+        time_scale: 1_000.0,
+        time_label: "time_ms".to_string(),
+        max_integration_steps: 50,
+        ui_hz: 500.0,
+    };
+    logic_tx
+        .send(LogicMessage::UpdateSettings(settings))
+        .unwrap();
+
+    let lib_path = find_cdylib("mock_out_5_rs_runtime");
+    let workspace = WorkspaceDefinition {
+        name: "test".to_string(),
+        description: "".to_string(),
+        target_hz: 1000,
+        plugins: vec![PluginDefinition {
+            id: 1,
+            kind: "mock_out_5_rs_runtime".to_string(),
+            config: json!({
+                "library_path": lib_path.to_string_lossy().to_string()
+            }),
+            priority: 0,
+            running: true,
+        }],
+        connections: vec![],
+        settings: WorkspaceSettings::default(),
+    };
+    logic_tx
+        .send(LogicMessage::UpdateWorkspace(workspace))
+        .unwrap();
+    logic_tx
+        .send(LogicMessage::SetPluginRunning(1, true))
+        .unwrap();
+
+    // Force plugin into an inf-producing state.
+    logic_tx
+        .send(LogicMessage::SetPluginVariable(
+            1,
+            "emit_inf".to_string(),
+            json!(true),
+        ))
+        .unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut saw_sanitized_inf = false;
+    while Instant::now() < deadline {
+        if let Ok(state) = logic_state_rx.recv_timeout(Duration::from_millis(50)) {
+            if let Some(v) = state.outputs.get(&(1, "out".to_string())) {
+                if *v == 0.0 {
+                    saw_sanitized_inf = true;
+                    break;
+                }
+            }
+        }
+    }
+    assert!(saw_sanitized_inf, "did not observe sanitized inf output");
+
+    logic_tx.send(LogicMessage::RestartPlugin(1)).unwrap();
+    logic_tx
+        .send(LogicMessage::SetPluginRunning(1, true))
+        .unwrap();
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        if let Ok(state) = logic_state_rx.recv_timeout(Duration::from_millis(50)) {
+            if let Some(v) = state.outputs.get(&(1, "out".to_string())) {
+                if (*v - 5.0).abs() < 1e-6 {
+                    return;
+                }
+            }
+        }
+    }
+    panic!("restart did not clear inf state back to nominal output");
+}
