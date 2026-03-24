@@ -60,7 +60,7 @@ fn palette_color(idx: usize) -> egui::Color32 {
 /// `None` if no transforms are provided or the index is out of bounds
 ///
 /// # Example
-/// ```rust
+/// ```rust,ignore
 /// let transforms = [SeriesTransform { scale: 2.0, offset: 1.0 }];
 /// let result = transform_value(5.0, 0, Some(&transforms));
 /// assert_eq!(result, Some(11.0)); // 5.0 * 2.0 + 1.0

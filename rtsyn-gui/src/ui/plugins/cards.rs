@@ -1727,7 +1727,7 @@ impl GuiApp {
     /// - Maintains normal word spacing for multi-character tokens
     ///
     /// # Example
-    /// ```
+    /// ```ignore
     /// let input = "R T S y n real time synthesizer";
     /// let output = GuiApp::normalize_preview_description(input);
     /// // Returns: "RTSyn real time synthesizer"

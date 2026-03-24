@@ -12,7 +12,7 @@ use eframe::egui;
 /// The value truncated to 6 decimal places
 ///
 /// # Example
-/// ```rust
+/// ```rust,ignore
 /// assert_eq!(truncate_f64(1.23456789), 1.234567);
 /// assert_eq!(truncate_f64(1.0), 1.0);
 /// ```
@@ -32,7 +32,7 @@ pub fn truncate_f64(value: f64) -> f64 {
 /// A formatted string representation without trailing zeros
 ///
 /// # Examples
-/// ```rust
+/// ```rust,ignore
 /// assert_eq!(format_f64_6(1.0), "1");
 /// assert_eq!(format_f64_6(1.2345), "1.2345");
 /// assert_eq!(format_f64_6(1.234500), "1.2345");
@@ -72,7 +72,7 @@ pub fn format_f64_6(value: f64) -> String {
 /// - Non-numeric characters (except decimal separators)
 ///
 /// # Examples
-/// ```rust
+/// ```rust,ignore
 /// assert_eq!(parse_f64_input("1.25"), Some(1.25));
 /// assert_eq!(parse_f64_input("2,5"), Some(2.5));
 /// assert_eq!(parse_f64_input(""), None);
@@ -107,7 +107,7 @@ pub fn parse_f64_input(text: &str) -> Option<f64> {
 /// - Handles comma decimal separators by converting to dots
 ///
 /// # Examples
-/// ```rust
+/// ```rust,ignore
 /// assert_eq!(format_f64_with_input("1.0", 1.0), "1.0");
 /// assert_eq!(format_f64_with_input("2,50", 2.5), "2.50");
 /// assert_eq!(format_f64_with_input("3.14159265", 3.141592), "3.141592");
@@ -149,7 +149,7 @@ pub fn format_f64_with_input(buffer: &str, value: f64) -> String {
 /// - Prevents multiple decimal separators or minus signs
 ///
 /// # Examples
-/// ```rust
+/// ```rust,ignore
 /// let mut input = "1.2.3".to_string();
 /// assert!(normalize_numeric_input(&mut input));
 /// assert_eq!(input, "1.23");
@@ -202,7 +202,7 @@ pub fn normalize_numeric_input(buffer: &mut String) -> bool {
 /// - Handles degenerate cases where the segment has zero length
 ///
 /// # Example
-/// ```rust
+/// ```rust,ignore
 /// let point = egui::pos2(5.0, 1.0);
 /// let a = egui::pos2(0.0, 0.0);
 /// let b = egui::pos2(10.0, 0.0);

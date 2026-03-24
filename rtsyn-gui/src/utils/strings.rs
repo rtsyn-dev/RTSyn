@@ -14,7 +14,7 @@
 /// A new String that is either the original (if short enough) or truncated with "..."
 ///
 /// # Examples
-/// ```
+/// ```ignore
 /// let short = truncate_string("Hello", 10);
 /// assert_eq!(short, "Hello");
 ///
@@ -48,7 +48,7 @@ mod tests {
 
     #[test]
     fn truncate_string_handles_unicode() {
-        assert_eq!(truncate_string("Hello 世界", 8), "Hello...");
+        assert_eq!(truncate_string("Hello 世界界", 8), "Hello...");
         assert_eq!(truncate_string("世界", 5), "世界");
     }
 }

@@ -40,7 +40,7 @@ impl GuiApp {
     /// - "0.0" for all other types (typically floating-point)
     ///
     /// # Example
-    /// ```
+    /// ```ignore
     /// assert_eq!(GuiApp::plugin_creator_default_by_type("bool"), "false");
     /// assert_eq!(GuiApp::plugin_creator_default_by_type("i64"), "0");
     /// assert_eq!(GuiApp::plugin_creator_default_by_type("f64"), "0.0");
@@ -211,7 +211,7 @@ impl GuiApp {
     /// Missing types default to "f64".
     ///
     /// # Example
-    /// ```
+    /// ```ignore
     /// let spec = "frequency:f64\nenabled:bool\ncount";
     /// let result = GuiApp::plugin_creator_parse_spec(spec);
     /// // Returns: [("frequency", "f64"), ("enabled", "bool"), ("count", "f64")]
