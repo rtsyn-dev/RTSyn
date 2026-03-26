@@ -1,4 +1,3 @@
-pub mod connection_handler;
 pub mod plugin_handler;
 pub mod runtime_handler;
 
@@ -23,6 +22,35 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::Duration;
+
+pub fn plugin_inputs(installed: &[InstalledPlugin], kind: &str) -> Vec<String> {
+    installed
+        .iter()
+        .find(|p| p.manifest.kind == kind)
+        .map(|p| p.metadata_inputs.clone())
+        .unwrap_or_default()
+}
+
+pub fn plugin_outputs(installed: &[InstalledPlugin], kind: &str) -> Vec<String> {
+    installed
+        .iter()
+        .find(|p| p.manifest.kind == kind)
+        .map(|p| p.metadata_outputs.clone())
+        .unwrap_or_default()
+}
+
+pub fn source_port_is_valid(kind: &str, requested_port: &str, outputs: &[String]) -> bool {
+    if outputs.iter().any(|p| p == requested_port) {
+        return true;
+    }
+    if kind == "performance_monitor" {
+        return matches!(
+            requested_port,
+            "period_us" | "latency_us" | "jitter_us" | "max_period_us"
+        );
+    }
+    false
+}
 
 fn plugin_library_path(installed: &[InstalledPlugin], kind: &str) -> Option<String> {
     installed
@@ -495,16 +523,12 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
                     }
                 } else {
                     let installed = &state.catalog.manager.installed_plugins;
-                    let from_outputs = connection_handler::plugin_outputs(installed, &from_kind);
+                    let from_outputs = plugin_outputs(installed, &from_kind);
                     if from_outputs.is_empty() {
                         DaemonResponse::Error {
                             message: "Source plugin outputs not available".to_string(),
                         }
-                    } else if !connection_handler::source_port_is_valid(
-                        &from_kind,
-                        &from_port,
-                        &from_outputs,
-                    ) {
+                    } else if !source_port_is_valid(&from_kind, &from_port, &from_outputs) {
                         DaemonResponse::Error {
                             message: "Source port not found".to_string(),
                         }
@@ -513,7 +537,7 @@ fn handle_client(stream: UnixStream, state: &mut DaemonState) -> Result<(), Stri
                             .as_ref()
                             .map(|p| p.kind.clone())
                             .unwrap_or_default();
-                        let to_inputs = connection_handler::plugin_inputs(installed, &to_kind);
+                        let to_inputs = plugin_inputs(installed, &to_kind);
                         if is_extendable_inputs(&to_kind) {
                             if to_port == "in" {
                                 DaemonResponse::Error {
