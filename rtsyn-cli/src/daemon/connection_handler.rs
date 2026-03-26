@@ -5,7 +5,7 @@ use rtsyn_core::workspace::WorkspaceManager;
 use rtsyn_runtime::LogicMessage;
 use std::sync::mpsc;
 
-fn plugin_inputs(installed: &[InstalledPlugin], kind: &str) -> Vec<String> {
+pub fn plugin_inputs(installed: &[InstalledPlugin], kind: &str) -> Vec<String> {
     installed
         .iter()
         .find(|p| p.manifest.kind == kind)
@@ -13,7 +13,7 @@ fn plugin_inputs(installed: &[InstalledPlugin], kind: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn plugin_outputs(installed: &[InstalledPlugin], kind: &str) -> Vec<String> {
+pub fn plugin_outputs(installed: &[InstalledPlugin], kind: &str) -> Vec<String> {
     installed
         .iter()
         .find(|p| p.manifest.kind == kind)
@@ -21,7 +21,7 @@ fn plugin_outputs(installed: &[InstalledPlugin], kind: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn source_port_is_valid(kind: &str, requested_port: &str, outputs: &[String]) -> bool {
+pub fn source_port_is_valid(kind: &str, requested_port: &str, outputs: &[String]) -> bool {
     if outputs.iter().any(|p| p == requested_port) {
         return true;
     }
@@ -145,7 +145,8 @@ pub fn connection_add(
             };
         }
 
-        let next_idx = next_available_extendable_input_index(&workspace_manager.workspace, to_plugin);
+        let next_idx =
+            next_available_extendable_input_index(&workspace_manager.workspace, to_plugin);
         let to_idx = extendable_input_index(&to_port);
         let has_existing_port = workspace_manager
             .workspace
@@ -257,3 +258,4 @@ pub fn connection_remove_index(
         }
     }
 }
+

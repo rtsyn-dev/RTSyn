@@ -1,5 +1,5 @@
-use crate::protocol::{DaemonResponse, RuntimeSettingsOptions};
-use rtsyn_core::workspace::{runtime_settings_options, RuntimeSettingsSaveTarget, WorkspaceManager};
+use crate::protocol::DaemonResponse;
+use rtsyn_core::workspace::{RuntimeSettingsSaveTarget, WorkspaceManager};
 use rtsyn_runtime::{LogicMessage, LogicSettings};
 use std::sync::mpsc;
 
@@ -68,30 +68,9 @@ pub fn runtime_settings_restore(
     }
 }
 
-pub fn runtime_settings_options() -> DaemonResponse {
-    let options = runtime_settings_options();
-    DaemonResponse::RuntimeSettingsOptions {
-        options: RuntimeSettingsOptions {
-            frequency_units: options
-                .frequency_units
-                .into_iter()
-                .map(str::to_string)
-                .collect(),
-            period_units: options
-                .period_units
-                .into_iter()
-                .map(str::to_string)
-                .collect(),
-            min_frequency_value: options.min_frequency_value,
-            min_period_value: options.min_period_value,
-            max_integration_steps_min: options.max_integration_steps_min,
-            max_integration_steps_max: options.max_integration_steps_max,
-        },
-    }
-}
-
 pub fn runtime_uml_diagram(workspace_manager: &WorkspaceManager) -> DaemonResponse {
     DaemonResponse::RuntimeUmlDiagram {
         uml: workspace_manager.current_workspace_uml_diagram(),
     }
 }
+
