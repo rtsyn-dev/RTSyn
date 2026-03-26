@@ -1,5 +1,6 @@
 use crate::commands::*;
 use crate::output::*;
+use rtsyn_cli::protocol::PluginRequest;
 use rtsyn_cli::{
     client, daemon,
     plugin_creator::{
@@ -59,15 +60,14 @@ fn handle_daemon_command(command: DaemonCommands) -> Result<(), Box<dyn std::err
 
 fn handle_plugin_command(command: PluginCommands) -> Result<(), Box<dyn std::error::Error>> {
     let mut available_json_query = false;
-    let mut runtime_list_json_query = false;
-    let request = match command {
+    let plugin_request = match command {
         PluginCommands::New => {
             if let Err(err) = run_plugin_creator_wizard() {
                 print_error(&err);
             }
             return Ok(());
         }
-        PluginCommands::Add { name } => DaemonRequest::PluginAdd { name },
+        PluginCommands::Add { name } => PluginRequest::PluginAdd { name },
         PluginCommands::Install { path } => {
             let install_path = std::path::Path::new(&path);
             let absolute_path = if install_path.is_absolute() {
@@ -81,38 +81,24 @@ fn handle_plugin_command(command: PluginCommands) -> Result<(), Box<dyn std::err
                     }
                 }
             };
-            DaemonRequest::PluginInstall {
+            PluginRequest::PluginInstall {
                 path: absolute_path.to_string_lossy().to_string(),
             }
         }
-        PluginCommands::Reinstall { name } => DaemonRequest::PluginReinstall { name },
-        PluginCommands::Rebuild { name } => DaemonRequest::PluginRebuild { name },
-        PluginCommands::Remove { id } => DaemonRequest::PluginRemove { id },
-        PluginCommands::Uninstall { name } => DaemonRequest::PluginUninstall { name },
+        PluginCommands::Reinstall { name } => PluginRequest::PluginReinstall { name },
+        PluginCommands::Rebuild { name } => PluginRequest::PluginRebuild { name },
+        PluginCommands::Remove { id } => PluginRequest::PluginRemove { id },
+        PluginCommands::Uninstall { name } => PluginRequest::PluginUninstall { name },
         PluginCommands::Available { json_query } => {
             available_json_query = json_query;
-            DaemonRequest::PluginList
+            PluginRequest::PluginList
         }
-        PluginCommands::List { json_query } => {
-            runtime_list_json_query = json_query;
-            DaemonRequest::RuntimeList
-        }
-        PluginCommands::Show { id } => DaemonRequest::RuntimeShow { id },
-        PluginCommands::Set { id, json } => DaemonRequest::RuntimeSetVariables { id, json },
-        PluginCommands::View { id } => {
-            if let Err(err) = spawn_daemon_viewer(id) {
-                print_error(&err);
-            }
-            return Ok(());
-        }
-        PluginCommands::Start { id } => DaemonRequest::RuntimePluginStart { id },
-        PluginCommands::Stop { id } => DaemonRequest::RuntimePluginStop { id },
-        PluginCommands::Restart { id } => DaemonRequest::RuntimePluginRestart { id },
     };
+
+    let request = DaemonRequest::DaemonPluginRequest { plugin_request };
+
     match client::send_request(&request) {
-        Ok(response) => {
-            handle_plugin_response(response, available_json_query, runtime_list_json_query)
-        }
+        Ok(response) => handle_plugin_response(response, available_json_query),
         Err(err) => print_error(&err),
     }
     Ok(())
@@ -175,7 +161,23 @@ fn handle_connection_command(
 
 fn handle_runtime_command(command: RuntimeCommands) -> Result<(), Box<dyn std::error::Error>> {
     let mut settings_json_query = false;
+    let mut runtime_list_json_query = false;
     let request = match command {
+        RuntimeCommands::List { json_query } => {
+            runtime_list_json_query = json_query;
+            DaemonRequest::RuntimeList
+        }
+        RuntimeCommands::Show { id } => DaemonRequest::RuntimeShow { id },
+        RuntimeCommands::Set { id, json } => DaemonRequest::RuntimeSetVariables { id, json },
+        RuntimeCommands::View { id } => {
+            if let Err(err) = spawn_daemon_viewer(id) {
+                print_error(&err);
+            }
+            return Ok(());
+        }
+        RuntimeCommands::Start { id } => DaemonRequest::RuntimePluginStart { id },
+        RuntimeCommands::Stop { id } => DaemonRequest::RuntimePluginStop { id },
+        RuntimeCommands::Restart { id } => DaemonRequest::RuntimePluginRestart { id },
         RuntimeCommands::Settings { command } => match command {
             RuntimeSettingsCommands::Show { json_query } => {
                 settings_json_query = json_query;
@@ -192,7 +194,11 @@ fn handle_runtime_command(command: RuntimeCommands) -> Result<(), Box<dyn std::e
         RuntimeCommands::UmlDiagram => DaemonRequest::RuntimeUmlDiagram,
     };
     match client::send_request(&request) {
-        Ok(response) => handle_runtime_response(response, settings_json_query),
+        Ok(response) => handle_runtime_response(
+            response,
+            settings_json_query,
+            runtime_list_json_query,
+        ),
         Err(err) => print_error(&err),
     }
     Ok(())
@@ -206,11 +212,7 @@ fn handle_daemon_response(response: DaemonResponse) {
     }
 }
 
-fn handle_plugin_response(
-    response: DaemonResponse,
-    available_json_query: bool,
-    runtime_list_json_query: bool,
-) {
+fn handle_plugin_response(response: DaemonResponse, available_json_query: bool) {
     match response {
         DaemonResponse::Ok { message } => print_info(&message),
         DaemonResponse::Error { message } => print_error(&message),
@@ -223,18 +225,6 @@ fn handle_plugin_response(
                 return;
             }
             print_plugin_list(&plugins);
-        }
-        DaemonResponse::RuntimeList { plugins } => {
-            if runtime_list_json_query {
-                let json =
-                    serde_json::to_string_pretty(&plugins).unwrap_or_else(|_| "[]".to_string());
-                println!("{json}");
-                return;
-            }
-            print_runtime_list(&plugins);
-        }
-        DaemonResponse::RuntimeShow { id, kind, state } => {
-            print_runtime_show(id, &kind, &state);
         }
         _ => {}
     }
@@ -262,10 +252,26 @@ fn handle_connection_response(response: DaemonResponse) {
     }
 }
 
-fn handle_runtime_response(response: DaemonResponse, settings_json_query: bool) {
+fn handle_runtime_response(
+    response: DaemonResponse,
+    settings_json_query: bool,
+    runtime_list_json_query: bool,
+) {
     match response {
         DaemonResponse::Ok { message } => print_info(&message),
         DaemonResponse::Error { message } => print_error(&message),
+        DaemonResponse::RuntimeList { plugins } => {
+            if runtime_list_json_query {
+                let json =
+                    serde_json::to_string_pretty(&plugins).unwrap_or_else(|_| "[]".to_string());
+                println!("{json}");
+                return;
+            }
+            print_runtime_list(&plugins);
+        }
+        DaemonResponse::RuntimeShow { id, kind, state } => {
+            print_runtime_show(id, &kind, &state);
+        }
         DaemonResponse::RuntimeSettings { settings } => {
             if settings_json_query {
                 let json =

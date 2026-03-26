@@ -286,7 +286,7 @@ fn runtime_list_reflects_workspace() {
     assert!(wait_for_daemon(exe));
 
     let output = Command::new(exe)
-        .args(["daemon", "plugin", "list"])
+        .args(["daemon", "runtime", "list"])
         .output()
         .expect("list runtime plugins");
     let output = String::from_utf8_lossy(&output.stdout);
@@ -300,7 +300,7 @@ fn runtime_list_reflects_workspace() {
     assert!(!stderr.contains("[RTSyn][ERROR]"));
 
     let output = Command::new(exe)
-        .args(["daemon", "plugin", "list"])
+        .args(["daemon", "runtime", "list"])
         .output()
         .expect("list runtime plugins after add");
     let output = String::from_utf8_lossy(&output.stdout);
@@ -564,11 +564,11 @@ fn runtime_plugin_set_updates_config() {
     assert!(!stderr.contains("[RTSyn][ERROR]"));
 
     let _ = Command::new(exe)
-        .args(["daemon", "plugin", "start", "1"])
+        .args(["daemon", "runtime", "start", "1"])
         .status();
 
     let status = Command::new(exe)
-        .args(["daemon", "plugin", "set", "1", "{\"max_latency_us\":2000}"])
+        .args(["daemon", "runtime", "set", "1", "{\"max_latency_us\":2000}"])
         .status()
         .expect("set runtime plugin variables");
     assert!(status.success());
@@ -576,7 +576,7 @@ fn runtime_plugin_set_updates_config() {
     let mut found = false;
     for _ in 0..20 {
         let output = Command::new(exe)
-            .args(["daemon", "plugin", "show", "1"])
+            .args(["daemon", "runtime", "show", "1"])
             .output()
             .expect("show runtime plugin");
         let stdout = String::from_utf8_lossy(&output.stdout);

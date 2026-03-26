@@ -66,29 +66,6 @@ pub enum PluginCommands {
         #[arg(long, alias = "jq")]
         json_query: bool,
     },
-    List {
-        #[arg(long, alias = "jq")]
-        json_query: bool,
-    },
-    Show {
-        id: u64,
-    },
-    Set {
-        id: u64,
-        json: String,
-    },
-    View {
-        id: u64,
-    },
-    Start {
-        id: u64,
-    },
-    Stop {
-        id: u64,
-    },
-    Restart {
-        id: u64,
-    },
 }
 
 #[derive(Subcommand)]
@@ -136,6 +113,29 @@ pub enum ConnectionCommands {
 
 #[derive(Subcommand)]
 pub enum RuntimeCommands {
+    List {
+        #[arg(long, alias = "jq")]
+        json_query: bool,
+    },
+    Show {
+        id: u64,
+    },
+    Set {
+        id: u64,
+        json: String,
+    },
+    View {
+        id: u64,
+    },
+    Start {
+        id: u64,
+    },
+    Stop {
+        id: u64,
+    },
+    Restart {
+        id: u64,
+    },
     Settings {
         #[command(subcommand)]
         command: RuntimeSettingsCommands,

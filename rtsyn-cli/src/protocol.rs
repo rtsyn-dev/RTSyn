@@ -53,27 +53,24 @@ pub struct RuntimeSettingsOptions {
     pub max_integration_steps_min: usize,
     pub max_integration_steps_max: usize,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum PluginRequest {
+    PluginList,
+    PluginInstall { path: String },
+    PluginUninstall { name: String },
+    PluginReinstall { name: String },
+    PluginRebuild { name: String },
+    PluginAdd { name: String },
+    PluginRemove { id: u64 },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DaemonRequest {
-    PluginList,
-    PluginInstall {
-        path: String,
-    },
-    PluginUninstall {
-        name: String,
-    },
-    PluginReinstall {
-        name: String,
-    },
-    PluginRebuild {
-        name: String,
-    },
-    PluginAdd {
-        name: String,
-    },
-    PluginRemove {
-        id: u64,
+    DaemonPluginRequest {
+        plugin_request: PluginRequest,
     },
     WorkspaceList,
     WorkspaceLoad {
