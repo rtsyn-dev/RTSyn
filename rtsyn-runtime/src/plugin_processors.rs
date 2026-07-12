@@ -297,6 +297,26 @@ pub fn process_comedi_daq(
         .get("scan_nonce")
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
+    let ai_range_index = plugin
+        .config
+        .get("ai_range_index")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+    let ao_range_index = plugin
+        .config
+        .get("ao_range_index")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+    let ai_aref = plugin
+        .config
+        .get("ai_aref")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
+    let ao_aref = plugin
+        .config
+        .get("ao_aref")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as u32;
 
     let active_inputs = connection_cache
         .incoming_ports_by_plugin
@@ -311,6 +331,7 @@ pub fn process_comedi_daq(
 
     plugin_instance.set_active_ports(&active_inputs, &active_outputs);
     plugin_instance.set_config(device_path.to_string(), scan_devices, scan_nonce);
+    plugin_instance.set_data_config(ai_range_index, ao_range_index, ai_aref, ao_aref);
 
     if !is_running {
         if plugin_instance.is_open() {

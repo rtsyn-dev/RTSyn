@@ -13,16 +13,26 @@ mod comedilib {
 
     #[repr(C)]
     #[derive(Copy, Clone)]
-    pub struct comedi_range {
-        pub min: c_double,
-        pub max: c_double,
-        pub unit: c_uint,
+    pub struct comedi_polynomial_t {
+        pub coefficients: [c_double; 4],
+        pub expansion_origin: c_double,
+        pub order: c_uint,
+    }
+
+    #[repr(C)]
+    pub struct comedi_calibration_t {
+        _private: [u8; 0],
     }
 
     pub type LsamplT = c_uint;
 
+    pub const AREF_GROUND: c_uint = 0;
+    pub const AREF_OTHER: c_uint = 3;
+
     pub const SUBD_AI: c_int = 1;
     pub const SUBD_AO: c_int = 2;
+    pub const TO_PHYSICAL: c_int = 0;
+    pub const FROM_PHYSICAL: c_int = 1;
 
     #[link(name = "comedi")]
     extern "C" {
@@ -35,23 +45,24 @@ mod comedilib {
         pub fn comedi_get_subdevice_type(dev: *mut comedi_t, subdevice: c_uint) -> c_int;
         pub fn comedi_get_n_channels(dev: *mut comedi_t, subdevice: c_uint) -> c_int;
 
-        pub fn comedi_get_range(
-            dev: *mut comedi_t,
+        pub fn comedi_get_default_calibration_path(dev: *mut comedi_t) -> *mut c_char;
+        pub fn comedi_parse_calibration_file(path: *const c_char) -> *mut comedi_calibration_t;
+        pub fn comedi_cleanup_calibration(calibration: *mut comedi_calibration_t);
+        pub fn comedi_get_softcal_converter(
             subdevice: c_uint,
-            chan: c_uint,
+            channel: c_uint,
             range: c_uint,
-        ) -> *mut comedi_range;
-        pub fn comedi_get_maxdata(dev: *mut comedi_t, subdevice: c_uint, chan: c_uint) -> LsamplT;
-
-        pub fn comedi_to_phys(
+            direction: c_int,
+            calibration: *const comedi_calibration_t,
+            polynomial: *mut comedi_polynomial_t,
+        ) -> c_int;
+        pub fn comedi_to_physical(
             data: LsamplT,
-            rng: *const comedi_range,
-            maxdata: LsamplT,
+            polynomial: *const comedi_polynomial_t,
         ) -> c_double;
-        pub fn comedi_from_phys(
+        pub fn comedi_from_physical(
             data: c_double,
-            rng: *const comedi_range,
-            maxdata: LsamplT,
+            polynomial: *const comedi_polynomial_t,
         ) -> LsamplT;
 
         pub fn comedi_data_read(
@@ -98,6 +109,29 @@ mod comedilib {
         let _ = comedi_close(dev);
     }
 
+    pub unsafe fn get_default_calibration_path(dev: *mut comedi_t) -> Result<String, String> {
+        let path = comedi_get_default_calibration_path(dev);
+        if path.is_null() {
+            Err(last_error())
+        } else {
+            Ok(CStr::from_ptr(path).to_string_lossy().to_string())
+        }
+    }
+
+    pub unsafe fn parse_calibration_file(path: &str) -> Result<*mut comedi_calibration_t, String> {
+        let cpath = CString::new(path).map_err(|_| "invalid calibration path".to_string())?;
+        let calibration = comedi_parse_calibration_file(cpath.as_ptr());
+        if calibration.is_null() {
+            Err(last_error())
+        } else {
+            Ok(calibration)
+        }
+    }
+
+    pub unsafe fn cleanup_calibration(calibration: *mut comedi_calibration_t) {
+        comedi_cleanup_calibration(calibration);
+    }
+
     pub unsafe fn get_n_subdevices(dev: *mut comedi_t) -> Result<u32, String> {
         let n = comedi_get_n_subdevices(dev);
         if n < 0 {
@@ -125,44 +159,57 @@ mod comedilib {
         }
     }
 
-    pub unsafe fn get_range(
+    pub unsafe fn get_softcal_converter(
+        subd: u32,
+        chan: u32,
+        range: u32,
+        direction: c_int,
+        calibration: *const comedi_calibration_t,
+    ) -> Result<comedi_polynomial_t, String> {
+        let mut polynomial = comedi_polynomial_t {
+            coefficients: [0.0; 4],
+            expansion_origin: 0.0,
+            order: 0,
+        };
+        let res = comedi_get_softcal_converter(
+            subd as c_uint,
+            chan as c_uint,
+            range as c_uint,
+            direction,
+            calibration,
+            &mut polynomial,
+        );
+        if res < 0 {
+            Err(last_error())
+        } else {
+            Ok(polynomial)
+        }
+    }
+
+    pub unsafe fn to_physical(data: LsamplT, polynomial: &comedi_polynomial_t) -> f64 {
+        comedi_to_physical(data, polynomial as *const comedi_polynomial_t)
+    }
+
+    pub unsafe fn from_physical(data: f64, polynomial: &comedi_polynomial_t) -> LsamplT {
+        comedi_from_physical(data, polynomial as *const comedi_polynomial_t)
+    }
+
+    pub unsafe fn read(
         dev: *mut comedi_t,
         subd: u32,
         chan: u32,
-    ) -> Result<comedi_range, String> {
-        let ptr = comedi_get_range(dev, subd as c_uint, chan as c_uint, 0);
-        if ptr.is_null() {
-            Err(last_error())
-        } else {
-            Ok(*ptr)
-        }
-    }
-
-    pub unsafe fn get_maxdata(dev: *mut comedi_t, subd: u32, chan: u32) -> Result<LsamplT, String> {
-        let val = comedi_get_maxdata(dev, subd as c_uint, chan as c_uint);
-        if val == 0 {
-            let err = comedi_errno();
-            if err != 0 {
-                Err(last_error())
-            } else {
-                Ok(val)
-            }
-        } else {
-            Ok(val)
-        }
-    }
-
-    pub unsafe fn to_phys(data: LsamplT, range: &comedi_range, maxdata: LsamplT) -> f64 {
-        comedi_to_phys(data, range as *const comedi_range, maxdata) as f64
-    }
-
-    pub unsafe fn from_phys(data: f64, range: &comedi_range, maxdata: LsamplT) -> LsamplT {
-        comedi_from_phys(data, range as *const comedi_range, maxdata)
-    }
-
-    pub unsafe fn read(dev: *mut comedi_t, subd: u32, chan: u32) -> Result<LsamplT, String> {
+        range: u32,
+        aref: u32,
+    ) -> Result<LsamplT, String> {
         let mut data: LsamplT = 0;
-        let res = comedi_data_read(dev, subd as c_uint, chan as c_uint, 0, 0, &mut data);
+        let res = comedi_data_read(
+            dev,
+            subd as c_uint,
+            chan as c_uint,
+            range as c_uint,
+            aref as c_uint,
+            &mut data,
+        );
         if res < 0 {
             Err(last_error())
         } else {
@@ -174,15 +221,30 @@ mod comedilib {
         dev: *mut comedi_t,
         subd: u32,
         chan: u32,
+        range: u32,
+        aref: u32,
         data: LsamplT,
     ) -> Result<(), String> {
-        let res = comedi_data_write(dev, subd as c_uint, chan as c_uint, 0, 0, data);
+        let res = comedi_data_write(
+            dev,
+            subd as c_uint,
+            chan as c_uint,
+            range as c_uint,
+            aref as c_uint,
+            data,
+        );
         if res < 0 {
             Err(last_error())
         } else {
             Ok(())
         }
     }
+}
+
+#[derive(Copy, Clone)]
+struct ChannelCalibration {
+    to_converter: Option<comedilib::comedi_polynomial_t>,
+    from_converter: Option<comedilib::comedi_polynomial_t>,
 }
 
 pub struct ComediDaqPlugin {
@@ -194,6 +256,10 @@ pub struct ComediDaqPlugin {
     output_port_names: Vec<String>,
 
     device_path: String,
+    ai_range_index: u32,
+    ao_range_index: u32,
+    ai_aref: u32,
+    ao_aref: u32,
     ai_channels: Vec<(u32, u32)>,
     ao_channels: Vec<(u32, u32)>,
 
@@ -207,10 +273,11 @@ pub struct ComediDaqPlugin {
     active_outputs: Vec<bool>,
     ao_port_names: Vec<String>,
     ai_port_names: Vec<String>,
-    ao_calibration: Vec<Option<(comedilib::comedi_range, comedilib::LsamplT)>>,
-    ai_calibration: Vec<Option<(comedilib::comedi_range, comedilib::LsamplT)>>,
+    ao_calibration: Vec<Option<ChannelCalibration>>,
+    ai_calibration: Vec<Option<ChannelCalibration>>,
     no_device_detected: bool,
     dev: Option<std::ptr::NonNull<comedilib::comedi_t>>,
+    calibration: Option<std::ptr::NonNull<comedilib::comedi_calibration_t>>,
 }
 
 unsafe impl Send for ComediDaqPlugin {}
@@ -232,6 +299,16 @@ impl ComediDaqPlugin {
                 fixed_vars: vec![],
                 default_vars: vec![
                     ("device_path".to_string(), Value::from("/dev/comedi0")),
+                    ("ai_range_index".to_string(), Value::from(0_u64)),
+                    ("ao_range_index".to_string(), Value::from(0_u64)),
+                    (
+                        "ai_aref".to_string(),
+                        Value::from(comedilib::AREF_GROUND as u64),
+                    ),
+                    (
+                        "ao_aref".to_string(),
+                        Value::from(comedilib::AREF_GROUND as u64),
+                    ),
                     ("scan_devices".to_string(), Value::from(false)),
                     ("scan_nonce".to_string(), Value::from(0_u64)),
                 ],
@@ -241,6 +318,10 @@ impl ComediDaqPlugin {
             input_port_names: Vec::new(),
             output_port_names: Vec::new(),
             device_path: "/dev/comedi0".to_string(),
+            ai_range_index: 0,
+            ao_range_index: 0,
+            ai_aref: comedilib::AREF_GROUND,
+            ao_aref: comedilib::AREF_GROUND,
             ai_channels: Vec::new(),
             ao_channels: Vec::new(),
             input_values: HashMap::new(),
@@ -256,6 +337,7 @@ impl ComediDaqPlugin {
             ai_calibration: Vec::new(),
             no_device_detected: false,
             dev: None,
+            calibration: None,
         };
 
         plugin.auto_configure();
@@ -275,6 +357,26 @@ impl ComediDaqPlugin {
         }
         self.last_scan_devices = scan_devices;
         self.last_scan_nonce = scan_nonce;
+    }
+
+    pub fn set_data_config(
+        &mut self,
+        ai_range_index: u32,
+        ao_range_index: u32,
+        ai_aref: u32,
+        ao_aref: u32,
+    ) {
+        let changed = self.ai_range_index != ai_range_index
+            || self.ao_range_index != ao_range_index
+            || self.ai_aref != ai_aref
+            || self.ao_aref != ao_aref;
+        self.ai_range_index = ai_range_index;
+        self.ao_range_index = ao_range_index;
+        self.ai_aref = ai_aref;
+        self.ao_aref = ao_aref;
+        if changed && self.is_open {
+            let _ = self.rebuild_calibration_cache();
+        }
     }
 
     pub fn set_input(&mut self, port_name: &str, value: f64) {
@@ -409,7 +511,7 @@ impl ComediDaqPlugin {
     }
 
     fn rebuild_calibration_cache(&mut self) -> Result<(), PluginError> {
-        let Some(dev) = self.dev.as_ref() else {
+        let Some(_dev) = self.dev.as_ref() else {
             if self.no_device_detected {
                 if let Some(value) = self.output_values.get_mut("no device detected") {
                     *value = 1.0;
@@ -420,24 +522,45 @@ impl ComediDaqPlugin {
             }
             return Ok(());
         };
-        let dev = dev.as_ptr();
+        let Some(calibration) = self.calibration.as_ref() else {
+            return Err(PluginError::ProcessingFailed);
+        };
+        let calibration = calibration.as_ptr();
         self.ao_calibration.clear();
         self.ao_calibration.reserve(self.ao_channels.len());
         for (sd, ch) in &self.ao_channels {
-            let range =
-                unsafe { comedilib::get_range(dev, *sd, *ch) }.map_err(Self::comedi_error)?;
-            let max =
-                unsafe { comedilib::get_maxdata(dev, *sd, *ch) }.map_err(Self::comedi_error)?;
-            self.ao_calibration.push(Some((range, max)));
+            let from_converter = unsafe {
+                comedilib::get_softcal_converter(
+                    *sd,
+                    *ch,
+                    self.ao_range_index,
+                    comedilib::FROM_PHYSICAL,
+                    calibration,
+                )
+            }
+            .map_err(Self::comedi_error)?;
+            self.ao_calibration.push(Some(ChannelCalibration {
+                to_converter: None,
+                from_converter: Some(from_converter),
+            }));
         }
         self.ai_calibration.clear();
         self.ai_calibration.reserve(self.ai_channels.len());
         for (sd, ch) in &self.ai_channels {
-            let range =
-                unsafe { comedilib::get_range(dev, *sd, *ch) }.map_err(Self::comedi_error)?;
-            let max =
-                unsafe { comedilib::get_maxdata(dev, *sd, *ch) }.map_err(Self::comedi_error)?;
-            self.ai_calibration.push(Some((range, max)));
+            let to_converter = unsafe {
+                comedilib::get_softcal_converter(
+                    *sd,
+                    *ch,
+                    self.ai_range_index,
+                    comedilib::TO_PHYSICAL,
+                    calibration,
+                )
+            }
+            .map_err(Self::comedi_error)?;
+            self.ai_calibration.push(Some(ChannelCalibration {
+                to_converter: Some(to_converter),
+                from_converter: None,
+            }));
         }
         Ok(())
     }
@@ -481,22 +604,30 @@ impl Plugin for ComediDaqPlugin {
             } else {
                 0.0
             };
-            let Some((range, max)) = self.ao_calibration.get(idx).and_then(|v| *v) else {
+            let Some(calibration) = self.ao_calibration.get(idx).and_then(|v| *v) else {
                 continue;
             };
-            let raw = unsafe { comedilib::from_phys(value, &range, max) };
-            unsafe { comedilib::write(dev, *sd, *ch, raw) }.map_err(Self::comedi_error)?;
+            let Some(from_converter) = calibration.from_converter else {
+                continue;
+            };
+            let raw = unsafe { comedilib::from_physical(value, &from_converter) };
+            unsafe { comedilib::write(dev, *sd, *ch, self.ao_range_index, self.ao_aref, raw) }
+                .map_err(Self::comedi_error)?;
         }
 
         for (idx, (sd, ch)) in self.ai_channels.iter().enumerate() {
             if !self.active_outputs.get(idx).copied().unwrap_or(false) {
                 continue;
             }
-            let raw = unsafe { comedilib::read(dev, *sd, *ch) }.map_err(Self::comedi_error)?;
-            let Some((range, max)) = self.ai_calibration.get(idx).and_then(|v| *v) else {
+            let raw = unsafe { comedilib::read(dev, *sd, *ch, self.ai_range_index, self.ai_aref) }
+                .map_err(Self::comedi_error)?;
+            let Some(calibration) = self.ai_calibration.get(idx).and_then(|v| *v) else {
                 continue;
             };
-            let phys = unsafe { comedilib::to_phys(raw, &range, max) };
+            let Some(to_converter) = calibration.to_converter else {
+                continue;
+            };
+            let phys = unsafe { comedilib::to_physical(raw, &to_converter) };
 
             if let Some(port) = self.ai_port_names.get(idx) {
                 self.output_values.insert(port.clone(), phys);
@@ -526,11 +657,34 @@ impl Plugin for ComediDaqPlugin {
 
     fn ui_schema(&self) -> Option<UISchema> {
         Some(
-            UISchema::new().field(
-                ConfigField::text("device_path", "Device")
-                    .default_value(Value::String("/dev/comedi0".to_string()))
-                    .hint("Comedi device node (e.g. /dev/comedi0)"),
-            ),
+            UISchema::new()
+                .field(
+                    ConfigField::text("device_path", "Device")
+                        .default_value(Value::String("/dev/comedi0".to_string()))
+                        .hint("Comedi device node (e.g. /dev/comedi0)"),
+                )
+                .field(
+                    ConfigField::integer("ai_range_index", "AI range index")
+                        .default_value(Value::from(0))
+                        .min(0),
+                )
+                .field(
+                    ConfigField::integer("ao_range_index", "AO range index")
+                        .default_value(Value::from(0))
+                        .min(0),
+                )
+                .field(
+                    ConfigField::integer("ai_aref", "AI reference")
+                        .default_value(Value::from(comedilib::AREF_GROUND))
+                        .min(comedilib::AREF_GROUND as i64)
+                        .max(comedilib::AREF_OTHER as i64),
+                )
+                .field(
+                    ConfigField::integer("ao_aref", "AO reference")
+                        .default_value(Value::from(comedilib::AREF_GROUND))
+                        .min(comedilib::AREF_GROUND as i64)
+                        .max(comedilib::AREF_OTHER as i64),
+                ),
         )
     }
 
@@ -549,6 +703,10 @@ impl Plugin for ComediDaqPlugin {
             } else {
                 self.device_path.clone()
             })),
+            "ai_range_index" => Some(Value::from(self.ai_range_index)),
+            "ao_range_index" => Some(Value::from(self.ao_range_index)),
+            "ai_aref" => Some(Value::from(self.ai_aref)),
+            "ao_aref" => Some(Value::from(self.ao_aref)),
             "scan_devices" => Some(Value::Bool(self.last_scan_devices)),
             "scan_nonce" => Some(Value::from(self.last_scan_nonce)),
             _ => None,
@@ -563,6 +721,36 @@ impl Plugin for ComediDaqPlugin {
                         self.device_path = s;
                         self.auto_configure();
                     }
+                }
+            }
+            "ai_range_index" => {
+                if let Some(n) = value.as_u64() {
+                    self.set_data_config(n as u32, self.ao_range_index, self.ai_aref, self.ao_aref);
+                }
+            }
+            "ao_range_index" => {
+                if let Some(n) = value.as_u64() {
+                    self.set_data_config(self.ai_range_index, n as u32, self.ai_aref, self.ao_aref);
+                }
+            }
+            "ai_aref" => {
+                if let Some(n) = value.as_u64() {
+                    self.set_data_config(
+                        self.ai_range_index,
+                        self.ao_range_index,
+                        n as u32,
+                        self.ao_aref,
+                    );
+                }
+            }
+            "ao_aref" => {
+                if let Some(n) = value.as_u64() {
+                    self.set_data_config(
+                        self.ai_range_index,
+                        self.ao_range_index,
+                        self.ai_aref,
+                        n as u32,
+                    );
                 }
             }
             "scan_devices" => {
@@ -591,8 +779,24 @@ impl DeviceDriver for ComediDaqPlugin {
     fn open(&mut self) -> Result<(), PluginError> {
         let device_path = Self::normalize_device_path(&self.device_path);
         let dev = unsafe { comedilib::open(device_path) }.map_err(Self::comedi_error)?;
+        let calibration_path =
+            unsafe { comedilib::get_default_calibration_path(dev) }.map_err(Self::comedi_error)?;
+        let calibration = unsafe { comedilib::parse_calibration_file(&calibration_path) }
+            .map_err(Self::comedi_error)?;
         self.dev = std::ptr::NonNull::new(dev);
-        self.rebuild_calibration_cache()?;
+        self.calibration = std::ptr::NonNull::new(calibration);
+        if let Err(err) = self.rebuild_calibration_cache() {
+            if let Some(dev) = self.dev.take() {
+                unsafe { comedilib::close(dev.as_ptr()) };
+            }
+            if let Some(calibration) = self.calibration.take() {
+                unsafe { comedilib::cleanup_calibration(calibration.as_ptr()) };
+            }
+            self.ao_calibration.clear();
+            self.ai_calibration.clear();
+            self.is_open = false;
+            return Err(err);
+        }
         self.is_open = true;
         Ok(())
     }
@@ -600,6 +804,9 @@ impl DeviceDriver for ComediDaqPlugin {
     fn close(&mut self) -> Result<(), PluginError> {
         if let Some(dev) = self.dev.take() {
             unsafe { comedilib::close(dev.as_ptr()) };
+        }
+        if let Some(calibration) = self.calibration.take() {
+            unsafe { comedilib::cleanup_calibration(calibration.as_ptr()) };
         }
         self.ao_calibration.clear();
         self.ai_calibration.clear();
